@@ -238,7 +238,11 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         driver = DRIVER.read_text()
         send = bridge[bridge.index("public func send(address: String, data: Data) -> Bool"):]
         send = send.split("private func drainClientWritesLocked", 1)[0]
-        self.assertIn("queue.sync", send)
+        # Synchronous across the C-ABI: send runs on the serial BLE queue.
+        # `serialized` is the re-entrancy-safe wrapper (inline when the caller
+        # already owns the queue, otherwise queue.sync), so accept either the
+        # literal `queue.sync` or the `serialized` accessor as the sync gate.
+        self.assertTrue("queue.sync" in send or "serialized {" in send)
         self.assertGreaterEqual(send.count("return false"), 3)
         self.assertIn("? 0 : -1", bindings)
         self.assertIn("raise RuntimeError(f\"columba_ble_send rejected frame", driver)

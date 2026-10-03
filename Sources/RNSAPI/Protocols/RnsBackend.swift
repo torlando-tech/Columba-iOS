@@ -74,7 +74,11 @@ public enum BackendEvent: Equatable, Sendable {
     // RNS.Link events — consumed by lxst-swift for voice calls.
     case linkState(linkId: Int, state: String, reason: String, inbound: Bool, t: Date)
     case linkPacket(linkId: Int, data: Data, t: Date)
-    case linkIdentified(linkId: Int, identityHashHex: String, t: Date)
+    /// `publicKeyHex`: the remote's 64-byte public key (hex) on
+    /// `link_identified`. Lets the consumer compute the caller's
+    /// `<identity>.lxmf.delivery` contact hash. `nil` when the backend can't
+    /// provide it (the identity hash is still usable for a degraded lookup).
+    case linkIdentified(linkId: Int, identityHashHex: String, t: Date, publicKeyHex: String?)
 }
 
 /// Outcome of a blocking propagation-node sync.
@@ -282,17 +286,28 @@ public protocol RnsCore: AnyObject, Sendable {
     /// before `start`.
     func registeredDestinationHashes() async -> [String]
 
-    /// Native Model B BLE peers (reticulum-swift's `BLEInterface` runs in the NE,
+    /// Native Model B BLE peers (the mesh CoreBluetooth radio runs in the NE,
     /// which owns the peers). The dedicated BLE connections screen polls this.
     /// Backends without a native BLE interface return `[]` (default below) — only
     /// `ProxyRnsBackend` overrides it to query the NE over the proxy IPC.
     func bleConnections() async -> [BLEConnectionInfo]
+
+    /// Disconnect a Model B BLE peer by its identity hash (the NE owns the
+    /// radio, so the link is dropped NE-side). Returns true when a connected
+    /// peer with that identity existed. Backends without a native BLE interface
+    /// return false (default below); only `ProxyRnsBackend` overrides it.
+    @discardableResult
+    func disconnectBLEPeer(identityHashHex: String) async -> Bool
 }
 
 public extension RnsCore {
-    /// Default: no native BLE interface ⇒ no peers. Keeps the non-Model-B backends
-    /// (Swift / Python) conforming without each needing a stub.
+    /// Default: no native BLE interface, so no peers. Keeps the non-Model-B
+    /// backends (Swift / Python) conforming without each needing a stub.
     func bleConnections() async -> [BLEConnectionInfo] { [] }
+
+    /// Default: no native BLE interface, so nothing to disconnect.
+    @discardableResult
+    func disconnectBLEPeer(identityHashHex: String) async -> Bool { false }
 
     @discardableResult
     func rememberPeerIdentity(destHashHex: String, publicKey: Data) async -> Bool { false }

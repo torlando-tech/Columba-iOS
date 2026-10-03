@@ -169,7 +169,21 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// itself — it polls this and re-emits `.announce` BackendEvents, exactly
     /// what `SwiftRNSBackend`'s PathTable poller does locally in Model A.
     /// Response payload: JSON `[ProxyHeardAnnounce]`.
+    ///
+    /// NOTE: superseded by `.drainEvents` for the live Model B event path. The
+    /// NE's `drain_events()` drains the FULL event queue (inbound messages,
+    /// delivery proofs, state, link, announces); `.heardAnnounces` maps only
+    /// announce events and would discard the rest the moment it popped them.
+    /// Kept only for compatibility.
     case heardAnnounces
+
+    /// Drain the NE's full event queue (every `rns_bridge._put` kind: inbound,
+    /// delivery, state, link_state, link_packet, link_identified, announce).
+    /// This is the Model B event bridge: the NE owns RNS in-process, so the app
+    /// can't observe delivery directly — it polls this and re-emits each event
+    /// as a `BackendEvent`, exactly what the in-process `PythonRNSBackend`'s
+    /// event drain does locally in Model A. Response payload: JSON `[ProxyEvent]`.
+    case drainEvents
 
     /// Send an LXMF message (mirrors `RnsLxmf.sendLxmfMessage`). The structured
     /// fields the typed seam carries (image / attachments / icon / reply) are
@@ -186,6 +200,12 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// `[BLEPeerSnapshot]`.
     case bleConnections
 
+    /// Disconnect a specific Model B BLE peer by its identity hash. The NE
+    /// owns the radio in Model B, so the app resolves identity→address and
+    /// drops the link NE-side. Response payload: JSON `Bool` (true when a peer
+    /// with that identity was connected and is now dropped).
+    case bleDisconnect(identityHashHex: String)
+
     /// Fetch a NomadNet page over a one-shot RNS Link (mirrors
     /// `RnsNomadnet.fetchNomadNetPage`). Model B runs the fetch NE-side via the
     /// shared `NomadNetFetch` helper (the NE owns transport/identity/pathTable);
@@ -194,11 +214,43 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// reply can't hang. Response payload: JSON-encoded `ProxyNomadNetOutcome`.
     case nomadnetFetch(destHashHex: String, path: String, timeoutSeconds: Double, formFields: [String: String]?)
 
+    // MARK: LXST telephony link ops (mirrors `RnsTelephony`).
+    //
+    // The NE Python RNS owns the live RNS.Link (it already has `open_link` /
+    // `link_send` / `link_identify` / `link_teardown` + the inbound-link +
+    // packet + identify callbacks that feed the `link_*` events). The app's
+    // LXSTSwift `Telephone` drives a Model B `NetworkTransport` that marshals
+    // these four ops across the seam; inbound frames ride the event drain.
+    //
+    /// Open an outbound RNS.Link to a destination (default aspect
+    /// `lxst.telephony`). `identityPublicKeyHex` is the 64-byte public key used
+    /// to build + verify the exact destination when the identity isn't recalled
+    /// yet (may be ""). The NE performs a bounded path request (up to ~10s)
+    /// before reporting unreachable, so the app applies an IPC deadline > 10s.
+    /// Response payload: the NE's raw `{ok, link_id, reason}` JSON (the app
+    /// decodes it; the shape matches the Python `open_link` return exactly).
+    case openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String)
+
+    /// Send opaque bytes over an established link. `dataHex` is the hex payload
+    /// (the NE wraps it in a single RNS.Packet). Response payload: a Bool
+    /// (JSON `true`/`false`) - `ok` from the NE. A per-frame short IPC deadline
+    /// on the app keeps a wedged NE from hanging the audio.
+    case linkSend(linkId: Int, dataHex: String)
+
+    /// Reveal our identity on the link (RNS LINKIDENTIFY) so the remote's
+    /// `link_identified` event fires. Response payload: a Bool (JSON).
+    case linkIdentify(linkId: Int)
+
+    /// Tear down the link from our side (both peers' `link_state=closed` fires).
+    /// Response payload: a Bool (JSON).
+    case linkTeardown(linkId: Int)
+
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
         case op, displayName, destHashHex, content, method, fieldsData
         case path, timeoutSeconds, formFields
+        case aspect, identityPublicKeyHex, linkId, dataHex
     }
 
     /// Stable discriminator strings (decoupled from the Swift case names so a
@@ -206,7 +258,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     private enum Op: String, Codable {
         case start, stop, announce, announceTelephony, statusSnapshot
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
-        case bleConnections, nomadnetFetch
+        case drainEvents, bleConnections, bleDisconnect, nomadnetFetch
+        case openLink, linkSend, linkIdentify, linkTeardown
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -231,6 +284,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(Op.registeredDestinationHashes, forKey: .op)
         case .heardAnnounces:
             try c.encode(Op.heardAnnounces, forKey: .op)
+        case .drainEvents:
+            try c.encode(Op.drainEvents, forKey: .op)
         case .lxmfSend(let destHashHex, let content, let method, let fieldsData):
             try c.encode(Op.lxmfSend, forKey: .op)
             try c.encode(destHashHex, forKey: .destHashHex)
@@ -239,12 +294,30 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(fieldsData, forKey: .fieldsData)
         case .bleConnections:
             try c.encode(Op.bleConnections, forKey: .op)
+        case .bleDisconnect(let identityHashHex):
+            try c.encode(Op.bleDisconnect, forKey: .op)
+            try c.encode(identityHashHex, forKey: .destHashHex)
         case .nomadnetFetch(let destHashHex, let path, let timeoutSeconds, let formFields):
             try c.encode(Op.nomadnetFetch, forKey: .op)
             try c.encode(destHashHex, forKey: .destHashHex)
             try c.encode(path, forKey: .path)
             try c.encode(timeoutSeconds, forKey: .timeoutSeconds)
             try c.encodeIfPresent(formFields, forKey: .formFields)
+        case .openLink(let destHashHex, let aspect, let identityPublicKeyHex):
+            try c.encode(Op.openLink, forKey: .op)
+            try c.encode(destHashHex, forKey: .destHashHex)
+            try c.encode(aspect, forKey: .aspect)
+            try c.encode(identityPublicKeyHex, forKey: .identityPublicKeyHex)
+        case .linkSend(let linkId, let dataHex):
+            try c.encode(Op.linkSend, forKey: .op)
+            try c.encode(linkId, forKey: .linkId)
+            try c.encode(dataHex, forKey: .dataHex)
+        case .linkIdentify(let linkId):
+            try c.encode(Op.linkIdentify, forKey: .op)
+            try c.encode(linkId, forKey: .linkId)
+        case .linkTeardown(let linkId):
+            try c.encode(Op.linkTeardown, forKey: .op)
+            try c.encode(linkId, forKey: .linkId)
         }
     }
 
@@ -268,6 +341,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .registeredDestinationHashes
         case .heardAnnounces:
             self = .heardAnnounces
+        case .drainEvents:
+            self = .drainEvents
         case .lxmfSend:
             self = .lxmfSend(
                 destHashHex: try c.decode(String.self, forKey: .destHashHex),
@@ -277,6 +352,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             )
         case .bleConnections:
             self = .bleConnections
+        case .bleDisconnect:
+            self = .bleDisconnect(identityHashHex: try c.decode(String.self, forKey: .destHashHex))
         case .nomadnetFetch:
             self = .nomadnetFetch(
                 destHashHex: try c.decode(String.self, forKey: .destHashHex),
@@ -284,6 +361,21 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
                 timeoutSeconds: try c.decode(Double.self, forKey: .timeoutSeconds),
                 formFields: try c.decodeIfPresent([String: String].self, forKey: .formFields)
             )
+        case .openLink:
+            self = .openLink(
+                destHashHex: try c.decode(String.self, forKey: .destHashHex),
+                aspect: try c.decode(String.self, forKey: .aspect),
+                identityPublicKeyHex: try c.decode(String.self, forKey: .identityPublicKeyHex)
+            )
+        case .linkSend:
+            self = .linkSend(
+                linkId: try c.decode(Int.self, forKey: .linkId),
+                dataHex: try c.decode(String.self, forKey: .dataHex)
+            )
+        case .linkIdentify:
+            self = .linkIdentify(linkId: try c.decode(Int.self, forKey: .linkId))
+        case .linkTeardown:
+            self = .linkTeardown(linkId: try c.decode(Int.self, forKey: .linkId))
         }
     }
 }
@@ -448,5 +540,106 @@ public struct ProxyHeardAnnounce: Codable, Sendable, Equatable {
         self.interfaceName = interfaceName
         self.hops = hops
         self.timestamp = timestamp
+    }
+}
+
+/// `Codable` mirror of a `rns_bridge` drained event — the union of every
+/// `BackendEvent` kind — Foundation-only so it crosses the NE↔app seam. The NE
+/// maps each `drain_events()` dict (snake_case) onto this; `ProxyRnsBackend`
+/// maps each kind back onto a `BackendEvent` and yields it on `eventStream`, so
+/// the app's existing `for await event in backend.events` consumer
+/// (`handlePythonEvent` → `persistInboundFromPython` / delivery proofs / link)
+/// works unchanged in Model B.
+///
+/// Every field is optional because each `kind` only populates a subset (the
+/// Python `_put` payload is per-kind). `kind` + `t` are always present.
+public struct ProxyEvent: Codable, Sendable, Equatable {
+    public let kind: String
+    /// Epoch seconds.
+    public let t: Double
+
+    // announce
+    public let destHashHex: String?
+    public let appDataHex: String?
+    public let aspect: String?
+    public let publicKeysHex: String?
+    public let interfaceName: String?
+    public let hops: Int?
+
+    // inbound
+    public let sourceHashHex: String?
+    public let messageHashHex: String?
+    public let content: String?
+    public let title: String?
+    /// MessagePack-packed LXMF field map, hex ("" when none).
+    public let fieldsHex: String?
+    /// Delivery method raw value ("opportunistic" / "direct" / "propagated" /
+    /// "paper" / "" when unknown). Shared by inbound and delivery.
+    public let method: String?
+
+    // delivery
+    public let state: String?
+    public let reason: String?
+
+    // signal metrics (inbound)
+    public let rssi: Double?
+    public let snr: Double?
+
+    // link_state / link_packet / link_identified
+    public let linkId: Int?
+    public let dataHex: String?
+    public let identityHashHex: String?
+    public let inbound: Bool?
+    /// `link_identified` only: the remote's 64-byte public key (X25519 ||
+    /// Ed25519), hex. Lets the app compute the caller's
+    /// `<identity>.lxmf.delivery` contact hash (the identity hash alone is not
+    /// enough - the delivery hash derives from the full public-key blob).
+    public let publicKeyHex: String?
+
+    public init(
+        kind: String, t: Double,
+        destHashHex: String? = nil, appDataHex: String? = nil, aspect: String? = nil,
+        publicKeysHex: String? = nil, interfaceName: String? = nil, hops: Int? = nil,
+        sourceHashHex: String? = nil, messageHashHex: String? = nil, content: String? = nil,
+        title: String? = nil, fieldsHex: String? = nil, method: String? = nil,
+        state: String? = nil, reason: String? = nil, rssi: Double? = nil, snr: Double? = nil,
+        linkId: Int? = nil, dataHex: String? = nil, identityHashHex: String? = nil, inbound: Bool? = nil,
+        publicKeyHex: String? = nil
+    ) {
+        self.kind = kind
+        self.t = t
+        self.destHashHex = destHashHex
+        self.appDataHex = appDataHex
+        self.aspect = aspect
+        self.publicKeysHex = publicKeysHex
+        self.interfaceName = interfaceName
+        self.hops = hops
+        self.sourceHashHex = sourceHashHex
+        self.messageHashHex = messageHashHex
+        self.content = content
+        self.title = title
+        self.fieldsHex = fieldsHex
+        self.method = method
+        self.state = state
+        self.reason = reason
+        self.rssi = rssi
+        self.snr = snr
+        self.linkId = linkId
+        self.dataHex = dataHex
+        self.identityHashHex = identityHashHex
+        self.inbound = inbound
+        self.publicKeyHex = publicKeyHex
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, t
+        case destHashHex = "dest_hash", appDataHex = "app_data", aspect
+        case publicKeysHex = "public_keys", interfaceName = "interface_name", hops
+        case sourceHashHex = "source_hash", messageHashHex = "message_hash"
+        case content, title, fieldsHex = "fields_hex", method
+        case state, reason, rssi, snr
+        case linkId = "link_id", dataHex = "data_hex", identityHashHex = "identity_hash"
+        case inbound
+        case publicKeyHex = "public_key"
     }
 }

@@ -11,6 +11,7 @@
 
 import Foundation
 import RNSAPI
+import ColumbaNode
 import LXSTSwift
 import SwiftBLEBridge
 import CryptoKit
@@ -582,6 +583,23 @@ private final class RuntimeActivityMonitorLeaseHolder {
 @MainActor
 public final class AppServices {
 
+    #if DEBUG
+    /// A cold-launch `lxma://test-node-send` deep link is delivered by the OS
+    /// at app launch, BEFORE `startPythonBackend()` registers the `ColumbaTestNodeSend`
+    /// observer, so a bare `NotificationCenter` post is lost (no listener yet).
+    /// The deep-link handler parks the request here; `drainNodeSendProbe()`
+    /// consumes it exactly once (on MainActor) after the observer exists. The
+    /// consume-once guard also prevents a double-run when the post lands while
+    /// the app is already warm (observer + drain both call the same method).
+    ///
+    /// `nonisolated(unsafe)`: the value is a simple value-tuple written by the
+    /// `.onOpenURL` handler (main thread) and read/cleared by the @MainActor
+    /// `drainNodeSendProbe()` - serialized by MainActor in practice, so no
+    /// runtime hazard, and it keeps the (non-isolated) deep-link closure able
+    /// to write it without an actor hop.
+    nonisolated(unsafe) static var pendingNodeSend: (to: String, content: String)?
+    #endif
+
     /// Host:port pair identifying a TCP interface's destination. Used to
     /// detect whether a `connectTCPInterface` call would change the
     /// interface's configuration or just re-apply the same one.
@@ -627,12 +645,12 @@ public final class AppServices {
     /// link leaves `.connecting` or the interface is stopped.
     private var rnodeConnectWatchdog: Task<Void, Never>?
 
-    /// GATED (A5 item 3, RISK 1): when true the RNode Settings badge is driven by the NE's
-    /// authoritative `ne-rnode` status and the app-side BLE link no longer greens it —
-    /// killing the ~10s premature "connected". OFF by default: if `neRNodeStatus()` does not
-    /// report online on a real connect, the badge would never go green, so verify on a
-    /// physical RNode before flipping. Read by `applyRNodeLinkState` and the VM status loop.
-    public static let rnodeBadgeFromNE = false
+    /// The RNode Settings badge is driven by the NE's authoritative `ne-rnode` status.
+    /// In Model B the CoreBluetooth RNode radio runs in the Network Extension (compiled
+    /// into the NE target), so the NE's `online`/`status_reason` IS the source of truth -
+    /// there is no app-side BLE link to proxy from. Read by the VM status loop
+    /// (`refreshNEBackedStatus` / `neRNodeStatus`).
+    public static let rnodeBadgeFromNE = true
 
     /// Auto discovery interface for LAN peer discovery.
     public private(set) var autoInterface: AutoInterface?
@@ -879,6 +897,16 @@ public final class AppServices {
     /// Init to sentinel so the first observation always logs (even if the
     /// count is 0 — that's useful too: "no peers discovered yet").
     private var lastAuxiliaryKey: String = "<uninitialized>"
+
+    /// Online auxiliary peer ids we've already triggered an announce for.
+    /// A newly-spawned online peer (a fresh BLE bond, an auto-connected
+    /// backbone, …) joins the mesh AFTER the startup announce, so it has
+    /// not yet seen our LXMf/telephony services. The transport's
+    /// `setOnInterfacePeerSpawned` callback is a no-op stub in the Compat
+    /// layer, so the intended re-announce-on-peer-spawn never fires; this
+    /// set is the working replacement - the 2s status poll sees the new
+    /// peer here and fires `autoAnnounce()` once per peer.
+    private var announcedOnlineAuxPeers: Set<String> = []
 
     // MARK: - Telephony link bridge state
     //
@@ -1513,7 +1541,13 @@ public final class AppServices {
         //     (triggered by onInterfaceAdded) can send the telephony announce.
         DiagLog.log("[INIT] Step 7b: creating CallManager")
         let cm = CallManager()
-        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        // Model B: resolve the NE proxy backend's RnsTelephony facet lazily
+        // (it may not be assigned until startPythonBackend, and
+        // restartPythonBackend reassigns it).
+        let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
+            await MainActor.run { self?.backend?.telephony }
+        }
+        await cm.initialize(identity: newIdentity, transport: newTransport, pathTable: newPathTable, database: newDatabase, backendProvider: mbProvider)
         cm.callHistoryRepository = self.callHistoryRepository
         self.callManager = cm
         DiagLog.log("[INIT] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
@@ -1739,6 +1773,35 @@ public final class AppServices {
         DiagLog.log("[TUNNEL-GATE] enable: tunnel connected + approval persisted")
         return true
     }
+
+    /// DEBUG-only headless tunnel bring-up for the in-NE Python RNS work.
+    ///
+    /// Mirrors `approveBackgroundDelivery` (install + start + wait + persist
+    /// approval) but does NOT resume the gate continuation - it is driven by
+    /// the `test-start-tunnel` deep link when the app is already past init (so
+    /// no suspended continuation exists). This lets the NE be booted +
+    /// exercised headlessly without the manual BackgroundDeliveryGate tap.
+    /// The system VPN permission (keyed to bundle id + team) is what actually
+    /// lets the tunnel up; once granted once it persists across reinstalls.
+    @discardableResult
+    func startTunnelForTest() async -> Bool {
+        guard let tunnel = tunnelManager else { return false }
+        do {
+            try await tunnel.install()
+            try await tunnel.start()
+        } catch {
+            DiagLog.log("[TEST-START-TUNNEL] start failed: \(error)")
+            return false
+        }
+        guard await tunnel.waitUntilConnected(timeoutMs: 25_000) else {
+            DiagLog.log("[TEST-START-TUNNEL] tunnel did not connect (VPN not allowed?)")
+            return false
+        }
+        SharedDefaults.suite.set(true, forKey: Self.backgroundDeliveryEnabledKey)
+        needsBackgroundDeliveryApproval = false
+        DiagLog.log("[TEST-START-TUNNEL] tunnel connected + approval persisted")
+        return true
+    }
     #endif
 
     /// Start the embedded Python RNS backend.
@@ -1804,13 +1867,9 @@ public final class AppServices {
 
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B: CoreBluetooth lives in the app process, but it is optional. Do not
-        // construct the driver (and trigger iOS authorization) unless onboarding or
-        // Settings recorded an explicit transport opt-in.
-        if ModelBBLEService.shouldStart {
-            ModelBBLEService.shared.start(identityHash: identity.hash)
-        } else {
-            DiagLog.log("[BLE] Model B BLE service skipped — no explicit user opt-in")
-        }
+        // construct the driver (and trigger iOS authorization) unless a BLE interface
+        // is configured and enabled (created by onboarding / Manage Interfaces).
+        syncModelBBLEService()
         #endif
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -1825,7 +1884,18 @@ public final class AppServices {
         // Always copied (regardless of whether BLE is enabled in the
         // current config) so a later restart with BLE-enabled config finds
         // them without an extra deployment step.
-        deployIOSBLEPythonFilesIfPossible(configDir: pyDir)
+        //
+        // Model B: the NE's Python engine reads the App-Group SHARED dir, so
+        // deploy there too (the app-local pyDir above is process-private and the
+        // NE can't see it). Without the shared-dir copy the NE can't `exec()`
+        // IOSBLEInterface.py and the BLE interface never comes up.
+        var deployDirs: [URL] = [pyDir]
+        #if COLUMBA_RUNTIME_MODEL_B
+        if let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
+            deployDirs.append(sharedDir)
+        }
+        #endif
+        deployIOSBLEPythonFilesIfPossible(configDirs: deployDirs)
 
         // Generate the RNS config from user-saved interface entities. The
         // file lands at `<configDir>/config` where Python's
@@ -1849,6 +1919,39 @@ public final class AppServices {
 
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
+
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B: the Reticulum runtime lives in the Network Extension, so the
+        // RNS config (+ identity blob) MUST be written to the SHARED App-Group
+        // container - the app's private Application Support dir (above) is
+        // process-local and the NE cannot see it. The NE's in-NE Python RNS
+        // engine (NEPythonRNS) reads <shared dir>/config + the shared-keychain
+        // identity when it brings the node up. Mirror the private write here so
+        // both the (removed) in-process path and the NE Python path stay valid.
+        if let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
+            try? FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+            try? configText.write(to: sharedDir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+            // The NE keys its config dir by the raw identity hash hex; persist it
+            // (Foundation-only, no PII beyond the hash) so NEPythonRNS resolves
+            // the same <shared dir>/config without re-deriving the RNS hash.
+            SharedDefaults.suite.set(identityHashHex, forKey: "rnsConfigIdentityHashHex")
+            // Mirror the `block_unknown_senders` privacy toggle into the AppGroup
+            // suite so the NE can read it (the app's standard UserDefaults is
+            // unreachable from the extension). The NE passes it to Python so inbound
+            // from unknown senders is dropped BEFORE the NE persists the row.
+            SharedDefaults.suite.set(
+                UserDefaults.standard.bool(forKey: "block_unknown_senders"),
+                forKey: "block_unknown_senders"
+            )
+            // The identity blob co-locates with the config (rns_bridge.start also
+            // accepts identity_bytes, but the file path is the app's canonical
+            // source; the NE reads the shared keychain, so this is belt-and-braces).
+            if let identityBytes {
+                try? identityBytes.write(to: sharedDir.appendingPathComponent("identity.bin"), options: .atomic)
+            }
+            DiagLog.log("[RNS] Model B: shared config written to \(sharedDir.path) (\(interfaces.count) interfaces)")
+        }
+        #endif
 
         #if COLUMBA_RUNTIME_PYTHON
         // IOSBLEInterface starts synchronously inside backend.start(). Install
@@ -2071,6 +2174,25 @@ public final class AppServices {
             }
         }
 
+        // Node-service v1 control-channel test trigger (lxma://test-node-send):
+        // the app-side NodeControlClient stages a submitMessage intent in the
+        // shared store, then drives the NE node owner with hello+admit over the
+        // app->NE transport. This exercises the NEW 0xF5 0x02 path, independent
+        // of the legacy backend.lxmf path above - the device-test seam for the
+        // node contract (contract 6). DEBUG-only (addPythonObserver is #if DEBUG).
+        //
+        // Cold-launch handling: the OS delivers a launch-time --payload-url
+        // BEFORE startPythonBackend registers this observer, so a bare
+        // NotificationCenter post would be lost. The deep-link handler parks
+        // the request in AppServices.pendingNodeSend; drainNodeSendProbe()
+        // (called from this observer AND at the end of startPythonBackend)
+        // consumes it exactly once, covering both warm and cold launches.
+        addPythonObserver("ColumbaTestNodeSend") { [weak self] _ in
+            Task { @MainActor in
+                await self?.drainNodeSendProbe()
+            }
+        }
+
         // Listen for test-telemetry deep links — the Tests/interop/ harness
         // uses these to pin `RnsTelemetry.sendLocationTelemetry` /
         // `sendTelemetryCease` on the active backend without driving the
@@ -2121,6 +2243,24 @@ public final class AppServices {
                 DiagLog.log("[TEST-RESTART] invoking restartPythonBackend")
                 await self.restartPythonBackend()
                 DiagLog.log("[TEST-RESTART] done")
+            }
+        }
+
+        // Headless tunnel bring-up for the in-NE Python RNS work. Bypasses the
+        // BackgroundDeliveryGate (which needs a manual tap) so the NE process can
+        // be booted + exercised via `devicectl ... --payload-url`. DEBUG only.
+        addPythonObserver("ColumbaTestStartTunnel") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                let ok = await self.startTunnelForTest()
+                DiagLog.log("[TEST-START-TUNNEL] done ok=\(ok)")
+            }
+        }
+        addPythonObserver("ColumbaTestStopTunnel") { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.tunnelManager?.stop()
+                DiagLog.log("[TEST-STOP-TUNNEL] stopped")
             }
         }
 
@@ -2523,7 +2663,63 @@ public final class AppServices {
             }
         }
         #endif // DEBUG — test-only deep-link observers
+
+        // Consume a cold-launch test-node-send deep link that arrived before the
+        // observer above was registered (startPythonBackend runs at init-complete,
+        // after the OS delivers a launch-time --payload-url). Consume-once.
+        #if DEBUG
+        await drainNodeSendProbe()
+        #endif
     }
+
+    #if DEBUG
+    /// Drive the node-contract control channel once (stage in the shared store,
+    /// hello + admit over the app->NE transport) and log the committed
+    /// disposition. DEBUG-only test seam.
+    private func runNodeSendProbe(to: String, content: String) async {
+        guard let tunnel = tunnelManager else {
+            DiagLog.log("[TEST-NODE-SEND] no tunnelManager (NE session not up)")
+            return
+        }
+        guard let storeURL = AppGroupPaths.nodeServiceStoreURL() else {
+            DiagLog.log("[TEST-NODE-SEND] no shared App-Group store path")
+            return
+        }
+        // The NE tunnel is often still `.connecting` when a cold-launch deep link
+        // is drained right after init; wait for a live session before the
+        // hello+admit round-trip so the control frames reach the node owner.
+        let connected = await tunnel.waitUntilConnected(timeoutMs: 30_000)
+        DiagLog.log("[TEST-NODE-SEND] tunnel connected=\(connected)")
+        guard connected else {
+            DiagLog.log("[TEST-NODE-SEND] tunnel not connected within 30s - aborting")
+            return
+        }
+        let send: @Sendable (Data) async -> Data? = { [weak tunnel] data in
+            guard let tunnel else { return nil }
+            return await tunnel.proxySend(data)
+        }
+        let client = NodeControlClient(send: send, storeURL: storeURL.path)
+        do {
+            let admission = try await client.submitMessage(destinationHex: to, content: content)
+            let r = admission.record
+            DiagLog.log("[TEST-NODE-SEND] commandID=\(admission.commandID.wire.prefix(8))… disposition=\(r.disposition.rawValue) committedThrough=\(r.committedThrough != nil)")
+            if let rej = r.rejection {
+                DiagLog.log("[TEST-NODE-SEND] rejection code=\(rej.code.rawValue) field=\(rej.field ?? "-") msg=\(rej.message ?? "-")")
+            }
+        } catch {
+            DiagLog.log("[TEST-NODE-SEND] error=\(error)")
+        }
+    }
+
+    /// Consume a cold-launch `test-node-send` deep link parked in
+    /// `pendingNodeSend` (the OS delivers launch-time --payload-url before
+    /// startPythonBackend registers the observer). Consume-once + MainActor.
+    private func drainNodeSendProbe() async {
+        guard let (to, content) = Self.pendingNodeSend else { return }
+        Self.pendingNodeSend = nil
+        await runNodeSendProbe(to: to, content: content)
+    }
+    #endif
 
     /// Begin consuming queued backend events only after the app has installed its
     /// IncomingMessageHandler. Idempotent across repeated scene initialization.
@@ -2600,6 +2796,19 @@ public final class AppServices {
         if snapshotKey != lastInterfaceSnapshotKey {
             DiagLog.log("[RNS] interfaces=\(snapshotKey)")
             lastInterfaceSnapshotKey = snapshotKey
+            // Model B: the NE-owned interface badges (RNode / BLE / per-relay TCP) are
+            // EVENT-DRIVEN - InterfaceManagementViewModel.refreshNEBackedStatus runs
+            // only on networkStateChangedInApp, never on a timer. A bare RNS interface
+            // online-flip (e.g. the RNode finishing its KISS handshake) posts no push on
+            // its own, so the badge would stay stale ("connecting") even though this
+            // snapshot already reports the interface online. Post on every real
+            // online-state change so the badge re-fetches. Gated to Model B: Model A
+            // drives its badges straight off the Compat stubs / native registry this same
+            // call updates, and adding a push there would recreate the ~10/s app<->NE IPC
+            // flood the event-driven design removed.
+            if BackendPreference.modelB {
+                NotificationObserver.postNetworkStateChanged()
+            }
         }
         // The config section name PythonConfigWriter wrote is the matching
         // key — it's stable across the bridge and unique per entity.
@@ -2688,6 +2897,27 @@ public final class AppServices {
         if auxKey != lastAuxiliaryKey {
             DiagLog.log("[RNS] auxiliary interfaces (\(auxiliary.count)): \(auxKey)")
             lastAuxiliaryKey = auxKey
+        }
+        // Re-announce when a new online auxiliary peer spawns (a BLE phone that
+        // bonds mid-session, a fresh auto-connected backbone). The transport's
+        // onInterfacePeerSpawned callback is a no-op stub in the Compat layer,
+        // so without this a peer that joins AFTER the startup announce never
+        // learns our LXMf/telephony services and its link sits as a zombie
+        // ("no real data") - RNS keeps the GATT link up and exchanging the
+        // handshake, but no announces/messages ever flow. The 2s poll is the
+        // working trigger: it sees the new online peer here. Drop a peer from
+        // the set when it goes offline so a reconnect re-announces.
+        let onlineAuxIds = Set(auxiliary.filter(\.online).map(\.id))
+        let newOnlinePeers = onlineAuxIds.subtracting(announcedOnlineAuxPeers)
+        announcedOnlineAuxPeers = onlineAuxIds
+        if !newOnlinePeers.isEmpty {
+            let policy = AutoAnnouncePolicy.current()
+            if policy.masterEnabled, policy.onPeerSpawned {
+                DiagLog.log("[AUTO_ANNOUNCE] new online aux peer(s) \(newOnlinePeers.sorted().joined(separator: ", ")) - firing")
+                await autoAnnounce()
+            } else {
+                DiagLog.log("[AUTO_ANNOUNCE] new online aux peer(s) \(newOnlinePeers.sorted().joined(separator: ", ")) - on-peer-spawn gate off, skipping")
+            }
         }
         for (entityId, status) in byEntity {
             let newState: InterfaceState = status.online ? .connected : .disconnected
@@ -2789,6 +3019,27 @@ public final class AppServices {
         }
     }
 
+    /// The honest result of a user "Apply" of staged interface changes
+    /// (`applyInterfaceChanges`). Callers MUST branch on this rather than
+    /// assuming success: a change that is only persisted (and needs a relaunch)
+    /// or a failed config write / restart must not be reported as applied.
+    public enum InterfaceApplyOutcome: Equatable {
+        /// The change is LIVE on the running node now (Model B: the NE node
+        /// restarted and re-read the fresh config; Python: hot add/remove ran).
+        case applied
+        /// The change is persisted to disk but NOT live on the running node; it
+        /// takes effect on the next clean relaunch. (Model B with an enabled
+        /// AutoInterface, where a same-process re-init is unsafe; or Python with
+        /// no running backend.)
+        case persistedRequiresRelaunch
+        /// The config could not be written to disk, so the node still reads the
+        /// stale config. The edit did NOT take effect.
+        case configWriteFailed
+        /// The config was written but the node restart (Model B) threw - the
+        /// stack is down and the change is not live.
+        case restartFailed
+    }
+
     /// True when the configured interface set contains an AutoInterface — the
     /// one case where a SAME-PROCESS Reticulum re-initialization is unsafe
     /// (issue #193 / Greptile P1 #2). `AutoInterface.detach()` only sets
@@ -2835,6 +3086,17 @@ public final class AppServices {
     /// LIVE must check this rather than assume success.
     @discardableResult
     public func restartPythonBackend() async -> PythonBackendRestartOutcome {
+        await withLifecycleOperation {
+            await restartPythonBackendUnlocked()
+        }
+    }
+
+    /// Lock-free restart body. Callers MUST already hold the lifecycle-operation
+    /// lock (`restartPythonBackend` does; `applyInterfaceChangesUnlocked` does,
+    /// since it runs inside `withLifecycleOperation`). Calling the *locked*
+    /// `restartPythonBackend()` from within `withLifecycleOperation` would
+    /// deadlock on the non-reentrant `lifecycleOperationActive` guard.
+    private func restartPythonBackendUnlocked() async -> PythonBackendRestartOutcome {
         guard let identity = pythonStartIdentity else {
             DiagLog.log("[RNS] restartPythonBackend skipped — backend was never started")
             return .skipped
@@ -2856,16 +3118,14 @@ public final class AppServices {
         }
         DiagLog.log("[RNS] restartPythonBackend: config written (\(fresh.count) interfaces); restarting in-process")
         do {
-            try await withLifecycleOperation {
-                await shutdownUnlocked()
-                // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
-                try? await Task.sleep(for: .milliseconds(200))
-                try await initializeUnlocked(
-                    identity: identity,
-                    identityHash: identity.hexHash,
-                    tcpServerAddress: addr
-                )
-            }
+            await shutdownUnlocked()
+            // Small delay to ensure clean shutdown (matches switchIdentityUnlocked).
+            try? await Task.sleep(for: .milliseconds(200))
+            try await initializeUnlocked(
+                identity: identity,
+                identityHash: identity.hexHash,
+                tcpServerAddress: addr
+            )
         } catch {
             // shutdownUnlocked() has already run (backend = nil, isConnected =
             // false) and the re-init threw — the stack is now DOWN. Do NOT post
@@ -2946,6 +3206,19 @@ public final class AppServices {
         do {
             try configText.write(to: configFile, atomically: true, encoding: .utf8)
             DiagLog.log("[RNS] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
+
+            // Model B: the NE reads config from the shared App-Group dir, not the
+            // private app dir. Without this write the NE would re-read the stale
+            // shared config on .start and ignore the new interfaces.
+            #if COLUMBA_RUNTIME_MODEL_B
+            if let identityHashHex = SharedDefaults.suite.string(forKey: "rnsConfigIdentityHashHex"),
+               let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
+                try? FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+                try configText.write(to: sharedDir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+                DiagLog.log("[RNS] Model B: shared config updated (\(interfaces.count) interfaces)")
+            }
+            #endif
+
             return true
         } catch {
             DiagLog.log("[RNS] config write FAILED: \(error)")
@@ -2975,36 +3248,76 @@ public final class AppServices {
     /// exit), so re-adding the same AutoInterface mid-session may collide —
     /// TCP is unaffected.
     @MainActor
-    public func applyInterfaceChanges() async {
+    public func applyInterfaceChanges() async -> InterfaceApplyOutcome {
         await withLifecycleOperation {
             await applyInterfaceChangesUnlocked()
         }
     }
 
-    private func applyInterfaceChangesUnlocked() async {
+    private func applyInterfaceChangesUnlocked() async -> InterfaceApplyOutcome {
         // Model B: the NE owns the RNS node + all interfaces; the app's `backend` here is
-        // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`. The
-        // python-shaped hot-add/-remove path below is therefore both wrong (it would error
-        // on every relay) AND unnecessary — `InterfaceRepository.saveInterfaces()` already
-        // wrote the shared `interfacesKey` and posted `configChanged`, which the NE observes
-        // (`startTCPRelayConfigObserver` → `reconcileTCPRelays`) to live-reconcile its
-        // `ne-tcp-relay-*` interfaces. So a relay add/edit/remove takes effect with NO VPN
-        // restart. Nothing more to do app-side; bail before the python path.
+        // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`.
+        //
+        // The in-NE Python RNS engine (NEPythonRNS) does NOT live-reconcile the way the
+        // deleted C++ engine did: `rns_bridge` has no add_interface / remove_interface
+        // ops, and RNS 1.1.x interface changes are restart-gated anyway. So a Model B
+        // interface add/edit/toggle/delete is applied by (1) rewriting the SHARED
+        // App-Group config file the NE reads and (2) restarting the NE's Python node
+        // over IPC (`.stop` + `.start`), which re-reads the fresh config. This replaces
+        // the old "the NE observes configChanged and reconciles" behavior, which lived
+        // in the C++ engine that no longer exists.
         if BackendPreference.modelB {
-            DiagLog.log("[RNS-HOT] modelB: interface change handed to NE via configChanged (no app-side hot-add)")
-            return
+            let fresh = InterfaceRepository().getEnabledInterfaces()
+            // The shared config write is the mechanism the NE node re-reads on
+            // restart, so a failed write means the node would come back with the
+            // STALE config - do not restart, and report the failure (Issue 3).
+            let configWritten = await writePythonConfig(interfaces: fresh)
+            if !configWritten {
+                DiagLog.log("[RNS-HOT] modelB: shared config write FAILED; not restarting (the NE would re-read the stale config)")
+                return .configWriteFailed
+            }
+            // Bring the app-side CoreBluetooth radio + seam up (or down) to match the
+            // new interface set BEFORE restarting the NE node: the NE's reticulum-swift
+            // BLEInterface drives the radio over that seam, so the seam must be listening
+            // first. A runtime BLE-interface enable would otherwise leave the NE with a
+            // BLEInterface but no radio behind it, so peers could never connect.
+            syncModelBBLEService()
+            DiagLog.log("[RNS-HOT] modelB: shared config rewritten (\(fresh.count) interfaces); restarting NE python node")
+            let outcome = await restartPythonBackendUnlocked()
+            DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
+            // Map the restart outcome to an honest Apply result (Issue 2): a
+            // same-process restart refused by the AutoInterface guard, or a
+            // never-started backend, persists the change for the next relaunch;
+            // a throw means the stack is down.
+            switch outcome {
+            case .applied:
+                return .applied
+            case .requiresRelaunch, .skipped:
+                return .persistedRequiresRelaunch
+            case .failed:
+                return .restartFailed
+            }
         }
 
         let fresh = InterfaceRepository().getEnabledInterfaces()
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
-        // 1. Durability — always persist, even if there's no live backend.
-        _ = await writePythonConfig(interfaces: fresh)
+        // 1. Durability — persist first: the hot add/remove below reads each new
+        // section from THIS file (`hotAddInterface` assumes the section is present;
+        // `backend.addInterface(name:)` makes Python read it back). So a failed
+        // write is NOT a mere cold-launch problem - it leaves the new/edited
+        // interface missing from the file the live hot-add reads, so the change
+        // would not go live even though we'd report success (Issue 2). Gate on it.
+        let configWritten = await writePythonConfig(interfaces: fresh)
+        guard configWritten else {
+            DiagLog.log("[RNS-HOT] applyInterfaceChanges: config write FAILED; not hot-adding (the live add would read a stale file)")
+            return .configWriteFailed
+        }
 
         guard let backend = backend else {
-            DiagLog.log("[RNS-HOT] no running backend — config written, applies on next launch")
+            DiagLog.log("[RNS-HOT] no running backend - config written, applies on next launch")
             pythonInterfaceEntities = freshById
-            return
+            return .persistedRequiresRelaunch
         }
 
         let live = pythonInterfaceEntities
@@ -3046,6 +3359,7 @@ public final class AppServices {
 
         // 5. Keep the status-poll's matching set in sync with what's live.
         pythonInterfaceEntities = freshById
+        return .applied
     }
 
     /// Hot-add one interface to the running Python stack and seed its Swift
@@ -3554,12 +3868,20 @@ public final class AppServices {
                 userInfo: ["linkId": linkId, "data": data]
             )
             await self.dispatchLinkPacket(linkId: UInt64(linkId), data: data)
-        case .linkIdentified(let linkId, let identityHashHex, _):
+        case .linkIdentified(let linkId, let identityHashHex, _, let publicKeyHex):
             DiagLog.log("[RNS] link \(linkId) identified=\(identityHashHex.prefix(8))")
             NotificationCenter.default.post(
                 name: Notification.Name("ColumbaPythonLinkIdentified"),
                 object: nil,
-                userInfo: ["linkId": linkId, "identityHashHex": identityHashHex]
+                userInfo: [
+                    "linkId": linkId,
+                    "identityHashHex": identityHashHex,
+                    // The caller's 64-byte public key (hex) so the Model B voice
+                    // transport can compute the <identity>.lxmf.delivery contact
+                    // hash. Absent (not in userInfo) when the backend couldn't
+                    // provide it (Model A in-process path).
+                    "publicKeyHex": publicKeyHex,
+                ]
             )
             await self.dispatchLinkIdentified(linkId: UInt64(linkId), identityHashHex: identityHashHex)
         }
@@ -3691,7 +4013,19 @@ public final class AppServices {
         #if os(iOS)
         DiagLog.log("[INIT2] Step 7b: creating CallManager")
         let cm = CallManager()
-        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase)
+        // Model B: the NE proxy backend is created by startPythonBackend AFTER
+        // this step, so hand the transport a lazy provider that resolves the
+        // live `RnsTelephony` facet at call time (it also survives
+        // restartPythonBackend reassigning `self.backend`). Model A builds its
+        // in-process transport from `transport` and ignores this.
+        #if COLUMBA_RUNTIME_MODEL_B
+        let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
+            await MainActor.run { self?.backend?.telephony }
+        }
+        #else
+        let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = nil
+        #endif
+        await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase, backendProvider: mbProvider)
         cm.callHistoryRepository = self.callHistoryRepository
         self.callManager = cm
         DiagLog.log("[INIT2] Step 7b done, telephonyDest=\(cm.telephonyDestination?.hexHash ?? "nil")")
@@ -4419,17 +4753,38 @@ public final class AppServices {
     /// so the files are in place whether or not the current config has BLE
     /// enabled. A subsequent restart with BLE-enabled config then works
     /// without a separate deploy step.
-    private func deployIOSBLEPythonFilesIfPossible(configDir: URL) {
-        let fm = FileManager.default
-        guard let bundleAppDir = Bundle.main.url(forResource: "app", withExtension: nil) else {
-            DiagLog.log("[BLE_DIAG] app/ bundle resource missing — skipping deploy")
+    ///
+    /// `configDirs` may include both the app-local dir and the App-Group shared
+    /// dir (Model B): the NE's Python engine reads the shared dir, so the
+    /// `IOSBLEInterface.py`/`IOSBLEDriver.py` must land there too or RNS can't
+    /// `exec()` them.
+    ///
+    /// In Model B the `app/` Python files are bundled inside the NE appex, not
+    /// at the top level of the app bundle. We resolve the source dir from the
+    /// app bundle first (Model A / in-app Python), then fall back to the NE
+    /// appex.
+    private func deployIOSBLEPythonFilesIfPossible(configDirs: [URL]) {
+        guard !configDirs.isEmpty else {
+            DiagLog.log("[BLE_DIAG] no config dirs — skipping deploy")
             return
         }
-        let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
-        do {
-            try fm.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
-        } catch {
-            DiagLog.log("[BLE_DIAG] failed to create interfaces dir: \(error)")
+
+        let fm = FileManager.default
+        var sourceAppDir = Bundle.main.url(forResource: "app", withExtension: nil)
+
+        // Model B: Python runtime is in the NE appex
+        if sourceAppDir == nil {
+            let appexDir = Bundle.main.bundleURL
+                .appendingPathComponent("PlugIns/ColumbaNetworkExtension.appex", isDirectory: true)
+            let candidate = appexDir.appendingPathComponent("app", isDirectory: true)
+            if fm.fileExists(atPath: candidate.path) {
+                sourceAppDir = candidate
+                DiagLog.log("[BLE_DIAG] using NE appex app/ dir: \(candidate.path)")
+            }
+        }
+
+        guard let bundleAppDir = sourceAppDir else {
+            DiagLog.log("[BLE_DIAG] app/ bundle resource missing — skipping deploy")
             return
         }
 
@@ -4439,24 +4794,33 @@ public final class AppServices {
             (subdirectory: "rnode", name: "IOSRNodeInterface.py"),
             (subdirectory: "rnode", name: "IOSRNodeDriver.py")
         ]
-        for file in files {
-            let src = bundleAppDir
-                .appendingPathComponent(file.subdirectory, isDirectory: true)
-                .appendingPathComponent(file.name)
-            guard fm.fileExists(atPath: src.path) else {
-                DiagLog.log("[RNS_NATIVE] bundled Python interface missing: \(src.path)")
+        for configDir in configDirs {
+            let interfacesDir = configDir.appendingPathComponent("interfaces", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: interfacesDir, withIntermediateDirectories: true)
+            } catch {
+                DiagLog.log("[BLE_DIAG] failed to create interfaces dir: \(error)")
                 continue
             }
-            let name = file.name
-            let dst = interfacesDir.appendingPathComponent(name)
-            if fm.fileExists(atPath: dst.path) {
-                try? fm.removeItem(at: dst)
-            }
-            do {
-                try fm.copyItem(at: src, to: dst)
-                DiagLog.log("[RNS_NATIVE] Deployed \(name) to \(dst.path)")
-            } catch {
-                DiagLog.log("[RNS_NATIVE] Failed to copy \(name): \(error)")
+            for file in files {
+                let src = bundleAppDir
+                    .appendingPathComponent(file.subdirectory, isDirectory: true)
+                    .appendingPathComponent(file.name)
+                guard FileManager.default.fileExists(atPath: src.path) else {
+                    DiagLog.log("[RNS_NATIVE] bundled Python interface missing: \(src.path)")
+                    continue
+                }
+                let name = file.name
+                let dst = interfacesDir.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: dst.path) {
+                    try? FileManager.default.removeItem(at: dst)
+                }
+                do {
+                    try FileManager.default.copyItem(at: src, to: dst)
+                    DiagLog.log("[RNS_NATIVE] Deployed \(name) to \(dst.path)")
+                } catch {
+                    DiagLog.log("[RNS_NATIVE] Failed to copy \(name): \(error)")
+                }
             }
         }
     }
@@ -4562,47 +4926,41 @@ public final class AppServices {
 
     private func startRNodeInterfaceUnlocked(config rnodeConfig: RNodeConfig, name: String) async throws {
         #if COLUMBA_RUNTIME_MODEL_B
-        // Model B: the RNode protocol stack (RNodeInterface + KISS framing) runs in the
-        // Network Extension — the app hosts ONLY the CoreBluetooth NUS radio. Start the
-        // app-side seam server FIRST (so it's listening when the NE responds), then
-        // persist the radio config for the NE, which (re)builds its RNodeInterface on
-        // the change notification and drives connect/send/disconnect over the seam.
-        // UI-facing Compat interface object; its `.state` is driven by the app-side
-        // radio's BLE link state via the onLinkStateChange callback below (the NE owns
-        // the authoritative RNodeInterface, but the BLE link state is a good proxy and
-        // the app has it directly).
+        // Model B: the RNode protocol stack AND the CoreBluetooth NUS radio both run in
+        // the Network Extension's embedded Python RNS node (the radio is compiled into
+        // the NE target and resolves the `columba_rnode_session_*` C-ABI in-process).
+        // The app hosts NO RNode radio here. It persists the radio config for the NE
+        // (it (re)builds its IOSRNodeInterface on the change notification and drives
+        // open/read/write/close in-process) and shows the UI-facing interface stub.
+        //
+        // The Settings "connected" badge is driven by the NE's authoritative
+        // `online` state via the interface status poll (the `.rnode` case in
+        // `applyPythonInterfaceStatus` mirrors it onto `self.rnodeInterface`).
         let uiInterface = RNodeInterface(config: rnodeConfig, name: name)
         uiInterface.state = .connecting
         self.rnodeInterface = uiInterface
 
-        // Watchdog: if the link never reports connected/failed — the NE never sent
-        // `.connect` (config read-after-write race exhausted), or the radio scans
-        // forever on a name mismatch — surface a timeout instead of a perpetual
-        // "Connecting…". Cancelled in applyRNodeLinkState / stopRNodeInterface.
+        // Watchdog: if the NE never reports the RNode interface online (config not
+        // reloaded, or the radio scans forever on a name mismatch), surface a timeout
+        // instead of a perpetual "Connecting…". Cancelled when the status poll turns
+        // the badge connected/failed, or when the interface is stopped. 40 s covers
+        // the NE's own RNode connect (BLE link + KISS handshake).
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            try? await Task.sleep(nanoseconds: 40_000_000_000)
             // `try?` swallows the cancellation; be explicit so a future `await` in
             // stopRNodeInterface can't let a cancelled watchdog fire a spurious failure.
             guard !Task.isCancelled else { return }
             guard let self, let iface = self.rnodeInterface, iface.state == .connecting else { return }
             iface.state = .connectionFailed(
-                underlying: "RNode didn't connect — check Bluetooth is on and Background Delivery is enabled, then try again"
+                underlying: "RNode didn't connect. Check Bluetooth is on and Background Delivery is enabled, then try again"
             )
             NotificationObserver.postNetworkStateChanged()
         }
 
-        guard ModelBRNodeService.shared.start(onLinkStateChange: { [weak self] linkState, reason in
-            self?.applyRNodeLinkState(linkState, reason)
-        }) else {
-            // The failure callback is dispatched onto the next main-queue turn.
-            // Stop the watchdog synchronously so it cannot later replace the
-            // actionable restore-identifier failure with a generic timeout.
-            rnodeConnectWatchdog?.cancel()
-            rnodeConnectWatchdog = nil
-            return
-        }
-
+        // Persist the radio config so the NE (re)builds its Python IOSRNodeInterface
+        // with the right device name / radio parameters. `saveToAppGroup` posts the
+        // change notification the NE's config observer reacts to.
         let seamConfig = RNodeSeamConfig(
             deviceName: rnodeConfig.deviceName,
             frequency: rnodeConfig.frequency,
@@ -4613,9 +4971,9 @@ public final class AppServices {
             stAlock: rnodeConfig.stAlock,
             ltAlock: rnodeConfig.ltAlock
         )
-        seamConfig.saveToAppGroup()  // posts rnodeConfigChanged → NE (re)builds its RNodeInterface
+        seamConfig.saveToAppGroup()
 
-        logger.info("RNodeInterface (Model B) started: \(name)")
+        logger.info("RNodeInterface (Model B, NE-owned radio) started: \(name)")
         #elseif COLUMBA_RUNTIME_PYTHON
         // Python owns the RNS interface + KISS/RNode protocol. The custom
         // IOSRNodeInterface loaded during backend startup drives the native
@@ -4657,12 +5015,12 @@ public final class AppServices {
         #if COLUMBA_RUNTIME_MODEL_B
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = nil
-        // Clear the NE's RNode config (→ it tears down its RNodeInterface) and stop the
-        // app-side radio server.
+        // Clear the NE's RNode config (the NE owns the CoreBluetooth radio, so it
+        // tears down its IOSRNodeInterface AND its live GATT session in response).
         RNodeSeamConfig.clearFromAppGroup()
-        ModelBRNodeService.shared.stop()
         rnodeInterface = nil
-        logger.info("RNodeInterface (Model B) stopped")
+        NotificationObserver.postNetworkStateChanged()
+        logger.info("RNodeInterface (Model B, NE-owned radio) stopped")
         #elseif COLUMBA_RUNTIME_PYTHON
         PythonRNodeBLEBridge.shared.setStateHandler(nil)
         if closeAllPythonSessions {
@@ -4679,34 +5037,6 @@ public final class AppServices {
         logger.info("RNodeInterface (Python + native BLE bridge) stopped")
         #endif
     }
-
-    #if COLUMBA_RUNTIME_MODEL_B
-    /// Reflect the app-side RNode radio's BLE link state onto the UI-facing Compat
-    /// interface object + refresh the UI. The NE owns the authoritative `RNodeInterface`;
-    /// the BLE link state is a good-enough proxy for the Settings "connected" indicator.
-    private func applyRNodeLinkState(_ linkState: RNodeLinkState, _ reason: String?) {
-        let mapped: InterfaceState
-        switch linkState {
-        case .disconnected: mapped = .disconnected
-        case .connecting:   mapped = .connecting
-        // GATED: when the NE-authoritative badge is on, the BLE link reaching `.connected`
-        // is only a proxy (the NE may still be building its RNodeInterface), so hold at
-        // `.connecting` and let `neRNodeStatus()` green the badge. Off → BLE link greens it.
-        case .connected:    mapped = Self.rnodeBadgeFromNE ? .connecting : .connected
-        case .failed:       mapped = .connectionFailed(underlying: reason ?? "RNode radio link failed")
-        }
-        DispatchQueue.main.async { [weak self] in
-            self?.rnodeInterface?.state = mapped
-            // The link reported a definitive state — stand the connect watchdog down.
-            if case .connecting = mapped {} else {
-                self?.rnodeConnectWatchdog?.cancel()
-                self?.rnodeConnectWatchdog = nil
-            }
-            NotificationObserver.postNetworkStateChanged()
-        }
-    }
-    #endif
-
 
     /// Initialize the base stack (identity, transport, router) without a TCP interface.
     ///
@@ -4812,7 +5142,19 @@ public final class AppServices {
         #if os(iOS)
         if callManager == nil, let identity = self.identity, let transport = self.transport, let pt = pathTable, let db = database {
             let cm = CallManager()
-            await cm.initialize(identity: identity, transport: transport, pathTable: pt, database: db)
+            // Model B: resolve the NE proxy backend's RnsTelephony facet lazily
+            // (it may not be assigned until startPythonBackend, and
+            // restartPythonBackend reassigns it). Model A ignores the provider
+            // and builds its in-process transport from `transport`.
+            #if COLUMBA_RUNTIME_MODEL_B
+            let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
+                await MainActor.run { self?.backend?.telephony }
+            }
+            #else
+            let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = nil
+            #endif
+            await cm.initialize(identity: identity, transport: transport, pathTable: pt, database: db, backendProvider: mbProvider)
+            cm.callHistoryRepository = self.callHistoryRepository
             self.callManager = cm
         }
         #endif
@@ -4830,22 +5172,23 @@ public final class AppServices {
     #if canImport(CoreBluetooth)
     /// Get snapshot of all BLE peer connection info for UI display.
     ///
-    /// The actual peer state lives in `SwiftBLEBridge.shared` — that's the
-    /// process-wide CoreBluetooth singleton our Python `IOSBLEDriver` calls
-    /// into via ctypes. Compat's `BLEInterface.getConnectionInfos()` was a
-    /// `[]` stub, which is why BLEConnectionsView showed nothing even when
-    /// a peer was visible in Network Status. Map the bridge's
-    /// `BleConnectionDetails` → `BLEConnectionInfo` here so the dedicated
-    /// connections screen renders real peers.
+    /// Model B: the mesh CoreBluetooth radio runs in the Network Extension
+    /// (SwiftBLEBridge, linked into the NE target), so the app's own
+    /// `SwiftBLEBridge.shared` is a dormant singleton that never sees peers.
+    /// Round-trip the live peer list to the NE via the proxy backend, which
+    /// reads them from the in-extension radio. Model A: the in-app radio is
+    /// the source of truth, so read `SwiftBLEBridge.shared` directly.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
-        // Model B: the BLE radio + reticulum-swift `BLEInterface` run across the NE
-        // seam, NOT `SwiftBLEBridge` (the Model A Python-path CoreBluetooth
-        // singleton). Query the NE's native peers over the proxy IPC. The Model A
-        // `SwiftBLEBridge` path below only applies when Model B is off.
-        if BackendPreference.modelB {
-            return await backend?.bleConnections() ?? []
+        #if COLUMBA_RUNTIME_MODEL_B
+        if BackendPreference.modelB, let backend = backend {
+            return await backend.bleConnections()
         }
-        guard bleInterface != nil else { return [] }
+        #endif
+        // Model A (and any non-Model-B path that falls through here): the
+        // in-app radio is the source of truth. Read the peer connection
+        // details directly from SwiftBLEBridge.shared. (In Model B the early
+        // return above handles the query, so this branch only runs for the
+        // in-app radio.)
         let details = SwiftBLEBridge.shared.getConnectionDetails()
         // Group by identity. When a peer is connected via BOTH central
         // and peripheral roles (each direction opens its own GATT link),
@@ -4924,18 +5267,47 @@ public final class AppServices {
     }
 
     private func disconnectBLEPeerUnlocked(identityHex: String) async {
-        // Resolve identity → address via the bridge; if found, ask the
-        // bridge to drop the GATT connection. The Compat stub's
-        // disconnectPeer was a no-op, so this is the path that actually
-        // closes the link.
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B: the radio is in the NE, so the link is dropped there.
+        if BackendPreference.modelB, let backend = backend {
+            await backend.disconnectBLEPeer(identityHashHex: identityHex)
+            return
+        }
+        #endif
+        // Model A: resolve identity → address via the in-app bridge and drop
+        // the GATT connection directly.
         if let address = SwiftBLEBridge.shared.getPeerAddress(identityHashHex: identityHex) {
             SwiftBLEBridge.shared.disconnect(address: address)
         }
     }
 
     /// Whether BLE interface is currently active.
+    /// Model A: the app's Compat `BLEInterface` is non-nil. Model B: the
+    /// radio lives in the Network Extension (the app no longer runs a
+    /// CoreBluetooth host), so the app's notion of "active" is that a BLE
+    /// interface is enabled in the config; the NE drives the radio and the
+    /// connections screen shows the live peer list via the proxy query.
     public var isBLEActive: Bool {
+        #if COLUMBA_RUNTIME_MODEL_B
+        InterfaceRepository().getEnabledInterfaces().contains { $0.type == .ble }
+        #else
         bleInterface != nil
+        #endif
+    }
+    #endif
+
+    #if COLUMBA_RUNTIME_MODEL_B
+    /// Phase 2: the mesh CoreBluetooth radio now runs in the Network Extension
+    /// (SwiftBLEBridge is linked into the NE target and driven in-process by the
+    /// NE's Python driver). The app no longer runs a CoreBluetooth host, so this
+    /// used-to-start-the-app-radio hook is now a no-op: the NE owns the radio,
+    /// and a second app-side `SwiftBLEBridge` instance would fight the NE's over
+    /// the same GATT service (the "second central drops the first" failure mode).
+    /// Kept as a no-op rather than deleted because its call sites (backend
+    /// start + interface Apply) still run, and the app-side seam files it
+    /// started are removed in a follow-up commit after on-device verify.
+    func syncModelBBLEService() {
+        DiagLog.log("[BLE] Model B: mesh radio runs in the NE; no app-side host (Phase 2)")
     }
     #endif
 
@@ -5355,25 +5727,47 @@ public final class AppServices {
     public func neTcpRelayStatuses() async -> [(entityId: String, online: Bool, lastError: String?)] {
         guard BackendPreference.modelB, let backend = backend else { return [] }
         let snap = await backend.statusSnapshot()
-        return (snap?.interfaces ?? []).compactMap { iface in
-            guard iface.sectionName.hasPrefix("ne-tcp-relay-") else { return nil }
-            let entityId = String(iface.sectionName.dropFirst("ne-tcp-relay-".count))
-            return (entityId: entityId, online: iface.online, lastError: iface.lastError)
+        let ifaces = snap?.interfaces ?? []
+        // Match NE interfaces to app entities by the config section name the writer
+        // emits: `sectionName(for:)` is `<sanitized-name>-<entityid6>` (or just
+        // `<entityid6>` when the name is blank). The old `ne-tcp-relay-<full-uuid>`
+        // prefix was the C++ engine's naming, which no longer exists; the Python
+        // engine uses the writer's name, so match by that exact name (with a
+        // suffix fallback in case the writer's sanitize differs). Keep every
+        // matched interface (online OR offline) so the consumer can badge
+        // disconnected / error, not just connected.
+        return InterfaceRepository().getEnabledInterfaces().compactMap { entity in
+            guard entity.type == .tcpClient else { return nil }
+            let suffix = String(entity.id.prefix(6))
+            guard !suffix.isEmpty else { return nil }
+            let canonical = PythonConfigWriter.sectionName(for: entity)
+            // Exact writer name first (authoritative), then full id, then suffix.
+            let match = ifaces.first(where: { $0.sectionName == canonical })
+                ?? ifaces.first(where: { $0.sectionName == entity.id })
+                ?? ifaces.first(where: { $0.sectionName.hasSuffix("-\(suffix)") || $0.sectionName == suffix })
+            guard let iface = match else { return nil }
+            return (entityId: entity.id, online: iface.online, lastError: iface.lastError)
         }
     }
 
-    /// NE-authoritative status for the single Model B RNode interface (`ne-rnode`, the id
-    /// the NE assigns at `NEReticulumNode` setup). Returns nil when no RNode interface is in
-    /// the snapshot. `lastError` only carries a real RNode reason once reticulum-swift
-    /// forwards `lastErrorDescription` for RNode (B5B); until then a down RNode reads as
-    /// "connecting". Consumed (gated) by `InterfaceManagementViewModel.refreshNEBackedStatus`.
-    public func neRNodeStatus() async -> (online: Bool, lastError: String?)? {
+    /// NE-authoritative status for the single Model B RNode interface. In Model B the
+    /// CoreBluetooth RNode radio runs in the Network Extension, so the NE's `online` /
+    /// `status_reason` for the RNode interface IS the badge source of truth. The
+    /// interface is matched by the SAME section name the config writer emits for the
+    /// enabled `.rnode` entity (`PythonConfigWriter.sectionName`), so this can never
+    /// drift from the name actually written to the RNS config. Returns nil when no RNode
+    /// interface is configured or not yet in the snapshot. Consumed (gated on
+    /// `rnodeBadgeFromNE`) by `InterfaceManagementViewModel.refreshNEBackedStatus`.
+    public func neRNodeStatus() async -> (online: Bool, lastError: String?, statusReason: String?)? {
         guard BackendPreference.modelB, let backend = backend else { return nil }
+        let entity = InterfaceRepository().getEnabledInterfaces().first(where: { $0.type == .rnode })
+        guard let entity else { return nil }
+        let expected = PythonConfigWriter.sectionName(for: entity)
         let snap = await backend.statusSnapshot()
-        guard let iface = (snap?.interfaces ?? []).first(where: { $0.sectionName == "ne-rnode" }) else {
+        guard let iface = (snap?.interfaces ?? []).first(where: { $0.sectionName == expected }) else {
             return nil
         }
-        return (online: iface.online, lastError: iface.lastError)
+        return (online: iface.online, lastError: iface.lastError, statusReason: iface.statusReason)
     }
 
     /// One-shot transport status snapshot from the active backend. The Python backend

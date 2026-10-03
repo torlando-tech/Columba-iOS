@@ -27,6 +27,13 @@ let package = Package(
     products: [
         .library(name: "RNSAPI", targets: ["RNSAPI"]),
         .library(name: "SwiftBLEBridge", targets: ["SwiftBLEBridge"]),
+        // Durable app/NE seam backbone for the node-service v1 contract
+        // (.scratch/ne-node-contract). Engine-agnostic: canonical encoding,
+        // stage-first durable admission, the bounded control channel, and the
+        // NodeEngine adapter. Both the app (typed facade) and the NE (node
+        // owner) link this. No protocol engine in here - Python RNS /
+        // Reticulum-Go / microReticulum plug in behind the engine-adapter seam.
+        .library(name: "ColumbaNode", targets: ["ColumbaNode"]),
     ],
     dependencies: [
         // Transport-agnostic LXST voice library (owns the Opus/Codec2 codecs
@@ -42,6 +49,22 @@ let package = Package(
             path: "Sources/RNSAPI",
             // libsqlite3 (system) backs LXMFDatabase's on-disk persistence.
             linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
+
+        // ──────── ColumbaNode: durable app/NE seam (node-service v1) ────────
+        // System sqlite3 via a C target whose include/ exposes a clang module
+        // (header + `link "sqlite3"`); a C target puts include/ on the search
+        // path so `import SQLite3Shim` resolves on both Linux and Darwin.
+        .target(
+            name: "SQLite3Shim",
+            path: "Sources/SQLite3Shim",
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
+        .target(
+            name: "ColumbaNode",
+            dependencies: ["SQLite3Shim"],
+            path: "Sources/ColumbaNode",
+            resources: []
         ),
 
         // ──────── SwiftBLEBridge: CoreBluetooth wrapper for ble-reticulum ──
@@ -68,6 +91,11 @@ let package = Package(
             name: "SwiftBLEBridgeTests",
             dependencies: ["SwiftBLEBridge"],
             path: "Tests/SwiftBLEBridgeTests"
+        ),
+        .testTarget(
+            name: "ColumbaNodeTests",
+            dependencies: ["ColumbaNode"],
+            path: "Tests/ColumbaNodeTests"
         ),
     ]
 )

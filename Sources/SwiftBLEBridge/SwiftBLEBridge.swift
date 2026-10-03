@@ -57,6 +57,10 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // MARK: - State
 
     internal let queue = DispatchQueue(label: "network.columba.ble", qos: .userInitiated)
+
+    /// Token for `serialized`: `DispatchQueue.getSpecific` returns it only
+    /// while the current thread is executing a block ON `queue`.
+    private static let queueSpecificKey = DispatchSpecificKey<Void>()
     private var callbackInvoker: BleCallbackInvoker?
     private var isStartedFlag: Bool = false
     private var localIdentity: Data = Data()
@@ -66,6 +70,42 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // for the lifetime of the bridge.
     private var centralManager: CBCentralManager?
     private var peripheralManager: CBPeripheralManager?
+
+    /// True when this bridge runs inside an app extension (a Network Extension
+    /// in Model B). `Bundle.main.bundlePath` ends in `.appex` for extensions.
+    /// A per-target `#if` cannot express this: the SwiftBLEBridge package is
+    /// compiled ONCE and linked into both the app and the NE, so the process
+    /// kind is detected at runtime instead.
+    private var isAppExtension: Bool {
+        Bundle.main.bundlePath.hasSuffix(".appex")
+    }
+
+    /// Options for the mesh `CBCentralManager`. In a normal app this opts into
+    /// CoreBluetooth background state restoration, which iOS uses to relaunch
+    /// the app on a BLE event for a preserved peer. That opt-in REQUIRES the
+    /// app-level `bluetooth-central` background entitlement, which a Network
+    /// Extension does NOT have. Constructing a central with the restore
+    /// identifier in an extension trips an internal CoreBluetooth `NSAssert`
+    /// (SIGABRT / abort trap 6) the instant the manager is built, so the NE
+    /// would crash-loop on every `startTunnel` (reads as a Bluetooth
+    /// permission prompt flashing every few seconds). In an extension we pass
+    /// no options; the NE cannot (and does not need) background BLE
+    /// restoration. An empty options dict is equivalent to the no-options
+    /// initializer the proven in-NE probe used.
+    private var centralRestoreOptions: [String: Any] {
+        isAppExtension
+            ? [:]
+            : [CBCentralManagerOptionRestoreIdentifierKey: CoreBluetoothRestoreIdentifiers.meshCentral]
+    }
+
+    /// Options for the mesh `CBPeripheralManager`. Same extension rule as the
+    /// central (the `bluetooth-peripheral` background entitlement is app-only),
+    /// so the same `NSAssert` crash applies and we pass no options in the NE.
+    private var peripheralRestoreOptions: [String: Any] {
+        isAppExtension
+            ? [:]
+            : [CBPeripheralManagerOptionRestoreIdentifierKey: CoreBluetoothRestoreIdentifiers.meshPeripheral]
+    }
 
     // RSSI throttling for didDiscover. Per-peer "last reported" so we
     // don't flood the Python callback path. Matches Android's pattern.
@@ -135,28 +175,67 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     /// preserved state. The process-wide registry also reserves the distinct
     /// RNode central identifier owned by ReticulumSwift's BLETransport.
 
-    public override init() { super.init() }
+    public override init() {
+        super.init()
+        queue.setSpecific(key: Self.queueSpecificKey, value: ())
+    }
+
+    /// Run `body` serialized on `queue`, but execute it INLINE when the
+    /// calling thread already owns `queue` (i.e. we are inside a
+    /// CoreBluetooth delegate callback or a Python callback re-entrant into
+    /// the C-ABI). A plain `queue.sync` from such an on-queue caller would
+    /// deadlock: libdispatch aborts with "dispatch_sync called on queue
+    /// already owned by current thread". The new ble-reticulum wheel calls
+    /// `columba_ble_get_peer_role` from `on_device_discovered`, which arrives
+    /// on this queue, so every accessor must be re-entrancy-safe.
+    ///
+    /// Safe to run inline because `queue` is the single serializer for all
+    /// bridge state: an on-queue caller already holds the lock, so inlining
+    /// reads/writes the same state without a second hop.
+    private func serialized<T>(_ body: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: Self.queueSpecificKey) != nil {
+            return body()
+        }
+        return queue.sync(execute: body)
+    }
 
     // MARK: - Public API
 
     public var isStarted: Bool {
-        queue.sync { isStartedFlag }
+        serialized { isStartedFlag }
     }
 
     public func setCallbackInvoker(_ invoker: BleCallbackInvoker?) {
-        queue.sync {
+        serialized {
             self.callbackInvoker = invoker
         }
     }
 
     public func setIdentity(_ identity: Data) {
-        queue.sync {
+        serialized {
             localIdentity = identity
         }
     }
 
     public func configurePower(_ settings: BlePowerSettings) {
-        queue.sync { powerSettings = settings }
+        serialized { powerSettings = settings }
+    }
+
+    /// Block until all in-flight work on the bridge's serial queue has
+    /// completed. The NE calls this on a node (re)start, BEFORE it invalidates
+    /// queued BLE events (see `NEPythonBridgeHook.discardPendingEvents`), so
+    /// that every delegate callback from the previous incarnation has already
+    /// handed its event to the hook (capturing the old generation) and is
+    /// therefore dropped by the generation check. This is what makes "old BLE
+    /// events reach the new node" impossible by construction: after the drain,
+    /// the only events that capture the new generation are genuinely
+    /// post-restart ones. Re-entrancy-safe: a no-op when the caller already
+    /// owns the queue (it cannot `queue.sync` from its own queue).
+    public func drainQueue() {
+        if DispatchQueue.getSpecific(key: Self.queueSpecificKey) != nil {
+            return
+        }
+        queue.sync { }
     }
 
     /// Replay native links that survived a Python backend restart or a
@@ -184,7 +263,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     /// Re-publish the native identity for a surviving link when Python has
     /// lost its address mapping. Returns false when no identified peer exists.
     public func requestIdentityResync(address: String) -> Bool {
-        queue.sync {
+        serialized {
             guard let invoker = callbackInvoker else { return false }
             if let identity = gattClients[address]?.peerIdentity {
                 invoker.invoke(slot: .onIdentityReceived, args: [address, hex(identity)])
@@ -206,7 +285,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         txCharUuid: String,
         identityCharUuid: String
     ) {
-        queue.sync {
+        serialized {
             guard !isStartedFlag else { return }
             self.serviceCBUUID = CBUUID(string: serviceUuid)
             self.rxCharCBUUID = CBUUID(string: rxCharUuid)
@@ -257,20 +336,14 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
                 self.centralManager = CBCentralManager(
                     delegate: self,
                     queue: queue,
-                    options: [
-                        CBCentralManagerOptionRestoreIdentifierKey:
-                            CoreBluetoothRestoreIdentifiers.meshCentral
-                    ]
+                    options: centralRestoreOptions
                 )
             }
             if self.peripheralManager == nil {
                 self.peripheralManager = CBPeripheralManager(
                     delegate: self,
                     queue: queue,
-                    options: [
-                        CBPeripheralManagerOptionRestoreIdentifierKey:
-                            CoreBluetoothRestoreIdentifiers.meshPeripheral
-                    ]
+                    options: peripheralRestoreOptions
                 )
             }
             self.isStartedFlag = true
@@ -320,25 +393,19 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     /// only today — see the DELIVERY CAVEAT in `start(...)`). The app's launch
     /// path should kick the backend's BLE bring-up alongside calling this.
     public func restoreAtLaunch() {
-        queue.sync {
+        serialized {
             if self.centralManager == nil {
                 self.centralManager = CBCentralManager(
                     delegate: self,
                     queue: queue,
-                    options: [
-                        CBCentralManagerOptionRestoreIdentifierKey:
-                            CoreBluetoothRestoreIdentifiers.meshCentral
-                    ]
+                    options: centralRestoreOptions
                 )
             }
             if self.peripheralManager == nil {
                 self.peripheralManager = CBPeripheralManager(
                     delegate: self,
                     queue: queue,
-                    options: [
-                        CBPeripheralManagerOptionRestoreIdentifierKey:
-                            CoreBluetoothRestoreIdentifiers.meshPeripheral
-                    ]
+                    options: peripheralRestoreOptions
                 )
             }
         }
@@ -369,7 +436,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     public func stop() {
         rssiPollTask?.cancel()
         rssiPollTask = nil
-        queue.sync {
+        serialized {
             guard isStartedFlag else { return }
             if let cm = centralManager, cm.isScanning { cm.stopScan() }
             if let pm = peripheralManager {
@@ -583,7 +650,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     }
 
     public func send(address: String, data: Data) -> Bool {
-        queue.sync {
+        serialized {
             // Central role: queue + drain under transmit-queue backpressure.
             // writeValue(.withoutResponse) silently drops once CoreBluetooth's
             // per-peripheral queue is full (iOS 11+), so gate on
@@ -654,7 +721,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     // MARK: - Queries
 
     public func getConnectedPeers() -> [String] {
-        queue.sync {
+        serialized {
             var peers: [String] = []
             peers.append(contentsOf: gattClients
                 .filter { $0.value.state == .established }
@@ -724,14 +791,14 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     }
 
     public func getPeerIdentity(address: String) -> String? {
-        queue.sync {
+        serialized {
             if let c = gattClients[address], let id = c.peerIdentity { return hex(id) }
             if let s = gattServerPeers[address], let id = s.identity { return hex(id) }
             return nil
         }
     }
     public func getPeerAddress(identityHashHex: String) -> String? {
-        queue.sync {
+        serialized {
             for (addr, client) in gattClients {
                 if let id = client.peerIdentity, hex(id) == identityHashHex { return addr }
             }
@@ -742,7 +809,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         }
     }
     public func getPeerRssi(address: String) -> Int? {
-        queue.sync {
+        serialized {
             // Only report a FRESH `readRSSI()` sample from an established
             // central-side GATT client. No discovery/scan-time fallback:
             // `lastDiscoveryReport` holds the RSSI from the initial scan,
@@ -766,21 +833,21 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         }
     }
     public func getPeerRole(address: String) -> BleConnectionRole? {
-        queue.sync {
+        serialized {
             if gattClients[address]?.state == .established { return .central }
             if gattServerPeers[address]?.state == .established { return .peripheral }
             return nil
         }
     }
     public func getPeerMtu(address: String) -> Int? {
-        queue.sync {
+        serialized {
             if let client = gattClients[address], client.state == .established { return client.mtu }
             if let peer = gattServerPeers[address], peer.state == .established { return peer.mtu }
             return nil
         }
     }
     public func getConnectionDetails() -> [BleConnectionDetails] {
-        queue.sync {
+        serialized {
             var details: [BleConnectionDetails] = []
             for (addr, client) in gattClients {
                 // Prefer the fresh `readRSSI()` sample if we have one;
@@ -1031,7 +1098,19 @@ extension SwiftBLEBridge: CBCentralManagerDelegate {
             emitInfo("ignored stale didFailToConnect addr=\(address)")
             return
         }
-        emitError("warning", "didFailToConnect addr=\(address) error=\(String(describing: error))")
+        // CBError 14 = "Peer removed pairing information": the remote side
+        // cleared its bond, so the central's cached bond is now stale and
+        // every reconnect is rejected with the same error. iOS exposes NO
+        // public API to clear the central's cached bond (CBCentralManager has
+        // no remove(_:)), so retrying just spins. Drop the cached peripheral
+        // (lets discovery re-find it) and surface pairing-required; the user
+        // resolves it by forgetting the device in Settings > Bluetooth.
+        if let cbErr = error as? CBError, cbErr.code.rawValue == 14 {
+            emitInfo("pairing-required: peer removed bond, reconnect will be rejected until the device is re-paired addr=\(address)")
+            discoveredPeripherals.removeValue(forKey: address)
+        } else {
+            emitError("warning", "didFailToConnect addr=\(address) error=\(String(describing: error))")
+        }
         cancelConnectionTimeoutLocked(address: address)
         gattClients.removeValue(forKey: address)
     }

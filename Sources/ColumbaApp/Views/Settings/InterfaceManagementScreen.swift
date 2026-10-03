@@ -121,9 +121,11 @@ struct InterfaceManagementScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                // Only shown when an explicit Apply is required (Python backend).
-                // On the Swift / Model B build the NE reconciles each change live
-                // on save, so there's nothing to apply and the button is omitted.
+                // Shown when there are staged interface changes awaiting Apply.
+                // All builds stage edits (a user may batch several changes) and
+                // apply them in one shot: Model B rewrites the shared config and
+                // restarts the in-NE Python RNS node once; Python hot-adds /
+                // hot-removes the delta on a running Transport.
                 if viewModel.requiresExplicitApply,
                    viewModel.hasPendingChanges || viewModel.isApplyingChanges {
                     Button {

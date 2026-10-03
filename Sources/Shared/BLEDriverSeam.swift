@@ -2,72 +2,72 @@
 //  BLEDriverSeam.swift
 //  Shared
 //
-//  The NE↔app marshaling for Model B BLE. reticulum-swift already ships the
-//  proven Swift BLE mesh stack (`BLEInterface`, `BLEPeerInterface`,
-//  `CoreBluetoothBLEDriver`, `BLEDriver`/`BLEPeerConnection`, fragmentation). The
-//  ONLY missing piece for Model B is the cross-process seam, because RNS runs in
-//  the Network Extension but CoreBluetooth must run in the app:
+//  The NE↔app marshaling for Model B BLE. The NE runs the Python RNS engine,
+//  which loads `IOSBLEInterface.py` → `IOSBLEDriver.py`. The driver calls
+//  `columba_ble_*` C-ABI symbols via `ctypes.CDLL(None)`. In the NE those
+//  symbols are implemented by `NEBLECABIBridge` (a thin forwarder that sends
+//  commands over this seam to the app). The app hosts `SwiftBLEBridge`
+//  (the real CoreBluetooth radio, the same singleton the shipping Python
+//  path uses).
 //
-//      NE:  ReticulumSwift.BLEInterface  ──uses──▶  AppGroupBLEDriver : BLEDriver
-//                                                   AppGroupBLEPeerConnection : BLEPeerConnection
-//                                                            │  (App-Group)
-//      app: CoreBluetoothBLEDriver (real) ◀── App-Group server ─┘
+//      NE:  IOSBLEDriver (Python) ──CDLL──▶ NEBLECABIBridge : columba_ble_*
+//                                                   │  (App-Group seam)
+//      app: SwiftBLEBridge (real CoreBluetooth) ◀── AppGroupBLEServer ─┘
 //
-//  This file defines the WIRE between them: a transport-agnostic message enum
-//  marshaling the `BLEDriver` + `BLEPeerConnection` protocol surface, plus a
-//  compact binary codec. Direction is by transport, not by type:
-//   • Commands  (NE→app)  ride the `e2a` queue, tag `.bleControl`.
-//   • Events    (app→NE)  ride the `a2e` queue, tag `.bleControl`.
-//   • Fragments (both)    ride the queues tag `.bleMesh`, body `[addr][fragment]`
-//     — high-rate, so `sendFragment`/`receivedFragment` are ALSO modeled here for
-//     completeness but the transport routes them as raw frames, not via this codec.
+//  This file defines the WIRE: a transport-agnostic message enum marshaling
+//  the `columba_ble_*` C-ABI command surface (NE→app) + the SwiftBLEBridge
+//  callback events (app→NE), plus a compact binary codec.
 //
-//  Methods that return a value across the process boundary (`connect`,
-//  `readIdentity`, `readRemoteRssi`, the local-state query) carry a `reqId` so the
-//  NE can resume the awaiting continuation when the matching `*Result` arrives.
-//  Per locked decision #1, the synchronous-decision callbacks (`should_connect`,
-//  duplicate-identity) live entirely app-side and never cross this seam.
+//  Direction is by transport queue, not by type:
+//   • Commands  (NE→app)  ride the `bleSeamN2A` queue.
+//   • Events    (app→NE)  ride the `bleSeamA2N` queue.
+//
+//  Value-returning C-ABI calls (`columba_ble_get_peer_role/mtu/rssi`) do NOT
+//  cross the seam as round trips: the NE forwarder keeps a small per-peer
+//  cache (mtu from `mtuNegotiated`, rssi from `deviceDiscovered`, role
+//  derived from who initiated the link) and answers them locally, so the
+//  synchronous Python `ctypes` call never blocks on a cross-process hop.
 //
 
 import Foundation
 
 // MARK: - Message
 
-/// One message on the BLE driver seam. `reqId` correlates a request with its
-/// `*Result` reply for the value-returning driver/connection methods.
+/// One message on the BLE driver seam. Commands (NE→app) map 1:1 to the
+/// `columba_ble_*` C-ABI op surface that `IOSBLEDriver.py` calls; events
+/// (app→NE) mirror `SwiftBLEBridge`'s `BleCallbackSlot` invocations.
 public enum BLEDriverSeamMessage: Equatable, Sendable {
-    // ── Commands: NE → app (drive `CoreBluetoothBLEDriver`) ──
-    case startAdvertising
-    case stopAdvertising
+    // ── Commands: NE → app (drive SwiftBLEBridge) ──
+    case start(serviceUuid: String, rxCharUuid: String, txCharUuid: String, identityCharUuid: String)
+    case stop
+    case setIdentity(identity: Data)
     case startScanning
     case stopScanning
-    case connect(reqId: UInt32, address: String)
+    case startAdvertising(deviceName: String, identity: Data)
+    case stopAdvertising
+    case connect(address: String)
     case disconnect(address: String)
-    case shutdown
-    case queryLocalState(reqId: UInt32)             // localAddress + isRunning
-    // per-connection commands (address identifies the BLEPeerConnection)
-    case sendFragment(address: String, data: Data)  // data-path (see header)
-    case readIdentity(reqId: UInt32, address: String)
-    case writeIdentity(address: String, identity: Data)
-    case readRemoteRssi(reqId: UInt32, address: String)
-    case closeConnection(address: String)
+    case send(address: String, data: Data)
+    case syncExistingConnections
+    case requestIdentityResync(address: String)
+    case configurePower(address: String, txPowerDbm: Int32)
 
-    // ── Events / results: app → NE (feed `BLEInterface`'s streams) ──
-    case discovered(address: String, rssi: Int16, identity: Data?)
-    case incomingConnection(address: String, mtu: UInt16, identity: Data?)
-    case connectionLost(address: String)
-    case receivedFragment(address: String, data: Data)  // data-path (see header)
-    case connectResult(reqId: UInt32, address: String, mtu: UInt16, identity: Data?, error: String?)
-    case readIdentityResult(reqId: UInt32, identity: Data?, error: String?)
-    case readRemoteRssiResult(reqId: UInt32, rssi: Int16, error: String?)
-    case queryLocalStateResult(reqId: UInt32, localAddress: String?, isRunning: Bool)
+    // ── Events: app → NE (invoke Python driver callbacks) ──
+    case deviceDiscovered(address: String, name: String, rssi: Int16)
+    case deviceConnected(address: String, peerIdentity: Data?)
+    case deviceDisconnected(address: String)
+    case dataReceived(address: String, data: Data)
+    case mtuNegotiated(address: String, mtu: UInt16)
+    case identityReceived(address: String, identityHex: String)
+    case addressChanged(old: String, new: String, identityHash: String)
+    case error(severity: String, message: String)
 
     fileprivate enum Tag: UInt8 {
-        case startAdvertising = 1, stopAdvertising, startScanning, stopScanning
-        case connect, disconnect, shutdown, queryLocalState
-        case sendFragment, readIdentity, writeIdentity, readRemoteRssi, closeConnection
-        case discovered = 64, incomingConnection, connectionLost, receivedFragment
-        case connectResult, readIdentityResult, readRemoteRssiResult, queryLocalStateResult
+        case start = 1, stop, setIdentity, startScanning, stopScanning
+        case startAdvertising, stopAdvertising, connect, disconnect, send
+        case syncExistingConnections, requestIdentityResync, configurePower
+        case deviceDiscovered = 64, deviceConnected, deviceDisconnected
+        case dataReceived, mtuNegotiated, identityReceived, addressChanged, error
     }
 
     // MARK: Encode
@@ -75,43 +75,44 @@ public enum BLEDriverSeamMessage: Equatable, Sendable {
     public func encode() -> Data {
         var w = SeamWriter()
         switch self {
-        case .startAdvertising: w.tag(.startAdvertising)
-        case .stopAdvertising:  w.tag(.stopAdvertising)
-        case .startScanning:    w.tag(.startScanning)
-        case .stopScanning:     w.tag(.stopScanning)
-        case .shutdown:         w.tag(.shutdown)
-        case let .connect(reqId, address):
-            w.tag(.connect); w.u32(reqId); w.str(address)
-        case let .disconnect(address):
-            w.tag(.disconnect); w.str(address)
-        case let .queryLocalState(reqId):
-            w.tag(.queryLocalState); w.u32(reqId)
-        case let .sendFragment(address, data):
-            w.tag(.sendFragment); w.str(address); w.data(data)
-        case let .readIdentity(reqId, address):
-            w.tag(.readIdentity); w.u32(reqId); w.str(address)
-        case let .writeIdentity(address, identity):
-            w.tag(.writeIdentity); w.str(address); w.data(identity)
-        case let .readRemoteRssi(reqId, address):
-            w.tag(.readRemoteRssi); w.u32(reqId); w.str(address)
-        case let .closeConnection(address):
-            w.tag(.closeConnection); w.str(address)
-        case let .discovered(address, rssi, identity):
-            w.tag(.discovered); w.str(address); w.i16(rssi); w.optData(identity)
-        case let .incomingConnection(address, mtu, identity):
-            w.tag(.incomingConnection); w.str(address); w.u16(mtu); w.optData(identity)
-        case let .connectionLost(address):
-            w.tag(.connectionLost); w.str(address)
-        case let .receivedFragment(address, data):
-            w.tag(.receivedFragment); w.str(address); w.data(data)
-        case let .connectResult(reqId, address, mtu, identity, error):
-            w.tag(.connectResult); w.u32(reqId); w.str(address); w.u16(mtu); w.optData(identity); w.optStr(error)
-        case let .readIdentityResult(reqId, identity, error):
-            w.tag(.readIdentityResult); w.u32(reqId); w.optData(identity); w.optStr(error)
-        case let .readRemoteRssiResult(reqId, rssi, error):
-            w.tag(.readRemoteRssiResult); w.u32(reqId); w.i16(rssi); w.optStr(error)
-        case let .queryLocalStateResult(reqId, localAddress, isRunning):
-            w.tag(.queryLocalStateResult); w.u32(reqId); w.optStr(localAddress); w.bool(isRunning)
+        case let .start(s, rx, tx, id):
+            w.tag(.start); w.str(s); w.str(rx); w.str(tx); w.str(id)
+        case .stop:
+            w.tag(.stop)
+        case let .setIdentity(id):
+            w.tag(.setIdentity); w.data(id)
+        case .startScanning: w.tag(.startScanning)
+        case .stopScanning:  w.tag(.stopScanning)
+        case let .startAdvertising(name, id):
+            w.tag(.startAdvertising); w.str(name); w.data(id)
+        case .stopAdvertising: w.tag(.stopAdvertising)
+        case let .connect(addr):
+            w.tag(.connect); w.str(addr)
+        case let .disconnect(addr):
+            w.tag(.disconnect); w.str(addr)
+        case let .send(addr, data):
+            w.tag(.send); w.str(addr); w.data(data)
+        case .syncExistingConnections: w.tag(.syncExistingConnections)
+        case let .requestIdentityResync(addr):
+            w.tag(.requestIdentityResync); w.str(addr)
+        case let .configurePower(addr, p):
+            w.tag(.configurePower); w.str(addr); w.i32(p)
+        case let .deviceDiscovered(addr, name, rssi):
+            w.tag(.deviceDiscovered); w.str(addr); w.str(name); w.i16(rssi)
+        case let .deviceConnected(addr, id):
+            w.tag(.deviceConnected); w.str(addr); w.optData(id)
+        case let .deviceDisconnected(addr):
+            w.tag(.deviceDisconnected); w.str(addr)
+        case let .dataReceived(addr, data):
+            w.tag(.dataReceived); w.str(addr); w.data(data)
+        case let .mtuNegotiated(addr, mtu):
+            w.tag(.mtuNegotiated); w.str(addr); w.u16(mtu)
+        case let .identityReceived(addr, id):
+            w.tag(.identityReceived); w.str(addr); w.str(id)
+        case let .addressChanged(old, new, id):
+            w.tag(.addressChanged); w.str(old); w.str(new); w.str(id)
+        case let .error(sev, msg):
+            w.tag(.error); w.str(sev); w.str(msg)
         }
         return w.out
     }
@@ -123,27 +124,28 @@ public enum BLEDriverSeamMessage: Equatable, Sendable {
         let raw = try r.u8()
         guard let tag = Tag(rawValue: raw) else { throw SeamError.unknownTag(raw) }
         switch tag {
-        case .startAdvertising: self = .startAdvertising
-        case .stopAdvertising:  self = .stopAdvertising
-        case .startScanning:    self = .startScanning
-        case .stopScanning:     self = .stopScanning
-        case .shutdown:         self = .shutdown
-        case .connect:          self = .connect(reqId: try r.u32(), address: try r.str())
-        case .disconnect:       self = .disconnect(address: try r.str())
-        case .queryLocalState:  self = .queryLocalState(reqId: try r.u32())
-        case .sendFragment:     self = .sendFragment(address: try r.str(), data: try r.data())
-        case .readIdentity:     self = .readIdentity(reqId: try r.u32(), address: try r.str())
-        case .writeIdentity:    self = .writeIdentity(address: try r.str(), identity: try r.data())
-        case .readRemoteRssi:   self = .readRemoteRssi(reqId: try r.u32(), address: try r.str())
-        case .closeConnection:  self = .closeConnection(address: try r.str())
-        case .discovered:       self = .discovered(address: try r.str(), rssi: try r.i16(), identity: try r.optData())
-        case .incomingConnection: self = .incomingConnection(address: try r.str(), mtu: try r.u16(), identity: try r.optData())
-        case .connectionLost:   self = .connectionLost(address: try r.str())
-        case .receivedFragment: self = .receivedFragment(address: try r.str(), data: try r.data())
-        case .connectResult:    self = .connectResult(reqId: try r.u32(), address: try r.str(), mtu: try r.u16(), identity: try r.optData(), error: try r.optStr())
-        case .readIdentityResult: self = .readIdentityResult(reqId: try r.u32(), identity: try r.optData(), error: try r.optStr())
-        case .readRemoteRssiResult: self = .readRemoteRssiResult(reqId: try r.u32(), rssi: try r.i16(), error: try r.optStr())
-        case .queryLocalStateResult: self = .queryLocalStateResult(reqId: try r.u32(), localAddress: try r.optStr(), isRunning: try r.bool())
+        case .start:
+            self = .start(serviceUuid: try r.str(), rxCharUuid: try r.str(), txCharUuid: try r.str(), identityCharUuid: try r.str())
+        case .stop: self = .stop
+        case .setIdentity: self = .setIdentity(identity: try r.data())
+        case .startScanning: self = .startScanning
+        case .stopScanning: self = .stopScanning
+        case .startAdvertising: self = .startAdvertising(deviceName: try r.str(), identity: try r.data())
+        case .stopAdvertising: self = .stopAdvertising
+        case .connect: self = .connect(address: try r.str())
+        case .disconnect: self = .disconnect(address: try r.str())
+        case .send: self = .send(address: try r.str(), data: try r.data())
+        case .syncExistingConnections: self = .syncExistingConnections
+        case .requestIdentityResync: self = .requestIdentityResync(address: try r.str())
+        case .configurePower: self = .configurePower(address: try r.str(), txPowerDbm: try r.i32())
+        case .deviceDiscovered: self = .deviceDiscovered(address: try r.str(), name: try r.str(), rssi: try r.i16())
+        case .deviceConnected: self = .deviceConnected(address: try r.str(), peerIdentity: try r.optData())
+        case .deviceDisconnected: self = .deviceDisconnected(address: try r.str())
+        case .dataReceived: self = .dataReceived(address: try r.str(), data: try r.data())
+        case .mtuNegotiated: self = .mtuNegotiated(address: try r.str(), mtu: try r.u16())
+        case .identityReceived: self = .identityReceived(address: try r.str(), identityHex: try r.str())
+        case .addressChanged: self = .addressChanged(old: try r.str(), new: try r.str(), identityHash: try r.str())
+        case .error: self = .error(severity: try r.str(), message: try r.str())
         }
         try r.expectEnd()
     }
@@ -169,7 +171,8 @@ struct SeamWriter {
         out.append(UInt8((v >> 24) & 0xFF)); out.append(UInt8((v >> 16) & 0xFF))
         out.append(UInt8((v >> 8) & 0xFF));  out.append(UInt8(v & 0xFF))
     }
-    /// UInt16-length-prefixed blob (max 65535 — fine for fragments/identities/addresses).
+    mutating func i32(_ v: Int32) { u32(UInt32(bitPattern: v)) }
+    /// UInt16-length-prefixed blob (max 65535).
     mutating func data(_ d: Data) {
         precondition(d.count <= 0xFFFF, "seam blob too large (\(d.count))")
         u16(UInt16(d.count)); out.append(d)
@@ -194,6 +197,7 @@ struct SeamReader {
         let a = try u8(), b = try u8(), c = try u8(), e = try u8()
         return UInt32(a) << 24 | UInt32(b) << 16 | UInt32(c) << 8 | UInt32(e)
     }
+    mutating func i32() throws -> Int32 { Int32(bitPattern: try u32()) }
     mutating func data() throws -> Data {
         let n = Int(try u16())
         guard d.endIndex - i >= n else { throw SeamError.truncated }
@@ -210,18 +214,18 @@ struct SeamReader {
 
 // MARK: - Transport abstraction
 
-/// Carries `BLEDriverSeamMessage`s across the App-Group. NE: `send` → the NE→app
-/// queue, `inbound` ← the app→NE queue. App: reversed. Injected so both the NE
-/// driver and the app server are unit-testable with an in-memory loopback.
+/// Carries `BLEDriverSeamMessage`s across the App-Group. NE: `send` → the
+/// NE→app queue, `inbound` ← the app→NE queue. App: reversed.
 public protocol BLESeamTransport: AnyObject, Sendable {
     func send(_ message: BLEDriverSeamMessage)
     /// Decoded messages arriving from the other process.
     var inbound: AsyncStream<BLEDriverSeamMessage> { get }
+    /// Begin observing the inbound queue. Call once after construction.
+    func start()
+    /// Stop observing; finishes the inbound stream.
+    func stop()
 }
 
 public enum BLESeamError: Error, Sendable {
-    /// A reply arrived but wasn't the result type the request expected.
-    case unexpectedReply
-    /// The remote (app-side) driver reported a failure.
     case driver(String)
 }

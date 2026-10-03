@@ -225,6 +225,8 @@ class IOSBLEDriver(BLEDriverInterface):
                 RNS.log(f"IOSBLEDriver: on_device_disconnected raised: {e}", RNS.LOG_ERROR)
 
     def _raw_on_data_received(self, address: str, data: bytes) -> None:
+        # [BLE-DIAG] Confirm the NE is receiving BLE data after handshake.
+        _bridge_module.ble_diag(f"data_received addr={address[-8:]} len={len(data)} slot={'set' if self.on_data_received else 'NONE'}")
         # Track the last sender so a delivery-time RSSI query can be
         # attributed to the peer that just delivered data (mirrors
         # Android's `on_data_received`). Done before the callback check so a
@@ -424,6 +426,8 @@ class IOSBLEDriver(BLEDriverInterface):
         _columba_ble_disconnect(address.encode("utf-8"))
 
     def send(self, address: str, data: bytes) -> None:
+        # [BLE-DIAG] Confirm the NE RNS is attempting BLE TX.
+        _bridge_module.ble_diag(f"send addr={address[-8:]} len={len(data)}")
         if _columba_ble_send is None:
             raise RuntimeError("columba_ble_send symbol not found")
         payload = bytes(data)
