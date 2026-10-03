@@ -221,6 +221,23 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
         serialized { powerSettings = settings }
     }
 
+    /// Block until all in-flight work on the bridge's serial queue has
+    /// completed. The NE calls this on a node (re)start, BEFORE it invalidates
+    /// queued BLE events (see `NEPythonBridgeHook.discardPendingEvents`), so
+    /// that every delegate callback from the previous incarnation has already
+    /// handed its event to the hook (capturing the old generation) and is
+    /// therefore dropped by the generation check. This is what makes "old BLE
+    /// events reach the new node" impossible by construction: after the drain,
+    /// the only events that capture the new generation are genuinely
+    /// post-restart ones. Re-entrancy-safe: a no-op when the caller already
+    /// owns the queue (it cannot `queue.sync` from its own queue).
+    public func drainQueue() {
+        if DispatchQueue.getSpecific(key: Self.queueSpecificKey) != nil {
+            return
+        }
+        queue.sync { }
+    }
+
     /// Replay native links that survived a Python backend restart or a
     /// CoreBluetooth state-restoration wake. Android does this when Python
     /// registers `onConnected`; iOS uses an explicit call because all callback

@@ -83,6 +83,9 @@ final class NEPythonBridgeHook: @unchecked Sendable {
             if submittedGen != currentGen {
                 // Stale: the node restarted after this BLE event was queued.
                 // Drop it so it can't reach the new node's callbacks.
+                #if DEBUG
+                ExtensionDiagLog.log("[BLE-NE-GEN] dropped stale BLE event (gen \(submittedGen) -> \(currentGen)); slot carried in payload")
+                #endif
                 return
             }
             self.fn?(fn, object)
@@ -91,13 +94,29 @@ final class NEPythonBridgeHook: @unchecked Sendable {
 
     /// Invalidate all BLE events still queued against the previous node
     /// incarnation. Call at the start of a node (re)start so a stale event is
-    /// never delivered to the new node's callbacks. Bumping `gen` makes every
-    /// already-queued `invoke` closure see a generation mismatch when it runs
-    /// and drop itself (no explicit drain needed).
+    /// never delivered to the new node's callbacks.
+    ///
+    /// Two steps, and the order is load-bearing:
+    ///   1. DRAIN the radio's serial queue (SwiftBLEBridge) so every delegate
+    ///      callback from the previous incarnation has finished handing its
+    ///      event to `invoke` (which captures the OLD generation). Without this,
+    ///      a delegate still in-flight on the radio queue at restart time would
+    ///      capture the NEW generation and be delivered as if it were current -
+    ///      the exact "old BLE event reaches the new node" window the generation
+    ///      counter alone cannot close.
+    ///   2. Bump `gen`. Now every pre-restart event that already sat on
+    ///      pythonQueue sees a mismatch when it runs and drops itself.
+    /// After both steps, the only events that capture the new generation are
+    /// genuinely post-restart ones - the invariant is structural, not timing.
     func discardPendingEvents() {
+        SwiftBLEBridge.shared.drainQueue()
         genLock.lock()
         gen &+= 1
+        let newGen = gen
         genLock.unlock()
+        #if DEBUG
+        ExtensionDiagLog.log("[BLE-NE-GEN] node (re)start: drained radio queue, generation -> \(newGen); pending BLE events from the previous incarnation will be dropped")
+        #endif
     }
 
     /// Wire event delivery to the embedded Python interpreter: forward each
