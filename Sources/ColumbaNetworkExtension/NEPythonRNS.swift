@@ -151,12 +151,21 @@ final class NEPythonRNS: @unchecked Sendable {
     /// `displayName` rides in the `.start` request; it is passed to
     /// `rns_bridge.start` so the startup announce carries it.
     func start(displayName: String) -> String? {
-        // A new node incarnation is beginning. Invalidate any BLE events still
-        // queued from the previous incarnation so a stale event (e.g. a "peer
-        // disconnected" from the old node) is not delivered to THIS node's
-        // callbacks, where it could drop a peer that is connected here.
-        // NEPythonBridgeHook lives in the same NE target. (iter-3 finding.)
-        NEPythonBridgeHook.shared.discardPendingEvents()
+        // A NEW node incarnation is beginning (the node is not currently
+        // running) - invalidate any BLE events still queued from the previous
+        // incarnation so a stale event (e.g. a "peer disconnected" from the old
+        // node) is not delivered to THIS node's callbacks, where it could drop a
+        // peer that is connected here. Only discard on a real (re)start: an
+        // idempotent .start while the node is ALREADY running reuses the same
+        // Python node (isRunning stays true), so its waiting BLE events are
+        // still valid and must NOT be dropped. NEPythonBridgeHook lives in the
+        // same NE target. (iter-3 finding + iter-4 refinement.)
+        stateLock.lock()
+        let restarting = !isRunning
+        stateLock.unlock()
+        if restarting {
+            NEPythonBridgeHook.shared.discardPendingEvents()
+        }
         if NEPythonRuntime.shared.state != .running {
             // CPython not initialized yet (shouldn't happen - startTunnel boots
             // it) - try to init synchronously; if that fails we're not ready.
