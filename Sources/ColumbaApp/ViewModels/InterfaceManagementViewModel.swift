@@ -615,15 +615,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // so it works for the Swift backend too). Multi-TCP reconciliation with
         // main's per-entity tcpInterfaces/tcpEndpoints tracking is deferred to
         // the dual-backend landing.
+        // Only the spinner must always reset. Whether the staged change is
+        // still "pending" depends on the HONEST Apply outcome (Issue 1): a
+        // failed Apply (config write / node restart failed) must keep the
+        // change pending so the Apply button stays and the user can retry,
+        // instead of the button vanishing while the edit is still not live.
         defer {
-            hasPendingChanges = false
             isApplyingChanges = false
-            // The Apply-triggered restart (Model B) / hot reconfig (Python) has now
-            // made the running node match the staged set, so the per-entity staged
-            // badges are stale - clear them so the 1s loop + NE push show the true
-            // (post-restart) state. On a failed apply the loop re-reads the real
-            // (still-old) node state next tick, so this is honest either way.
-            stagedEntityIDs.removeAll()
         }
 
         logger.info("Applying interface changes live (hot add/remove)")
@@ -633,12 +631,21 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // failed config write / restart, must not be announced as "applied".
         switch outcome {
         case .applied:
+            hasPendingChanges = false
+            stagedEntityIDs.removeAll()
             showSuccess("Interface changes applied")
         case .persistedRequiresRelaunch:
+            // Saved to disk (takes effect on the next relaunch). Not live, but
+            // not a failure either: clear pending so the user isn't nudged to
+            // retry an edit that already persisted.
+            hasPendingChanges = false
+            stagedEntityIDs.removeAll()
             showSuccess("Saved - applies on the next app relaunch")
         case .configWriteFailed:
+            // Keep the change pending (Apply button stays) so the user can retry.
             showError("Changes could not be saved (config write failed); the running node is unchanged")
         case .restartFailed:
+            // Keep the change pending (Apply button stays) so the user can retry.
             showError("Interface change was saved but the node restart failed; check the connection")
         }
     }

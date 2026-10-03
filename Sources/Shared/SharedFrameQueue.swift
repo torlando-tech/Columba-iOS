@@ -97,6 +97,13 @@ public enum SharedDefaultsConstants {
     /// propagation sync (the "Sync Now" button — the app can't call the NE's router).
     public static let propagationSyncNowNotificationName = "network.columba.propagationSyncNow"
 
+    /// Darwin notification posted by the app when the `block_unknown_senders`
+    /// privacy toggle changes (mirrored into the AppGroup suite at the same time).
+    /// The running NE observes it and calls `rns_bridge.set_block_unknown_senders`
+    /// so the inbound filter refreshes immediately (Issue 3) instead of holding
+    /// the value captured at node start until a restart.
+    public static let blockUnknownSendersChangedNotificationName = "network.columba.blockUnknownSendersChanged"
+
     /// Shared UserDefaults key holding the JSON-encoded `PropagationSyncStateSnapshot`
     /// the NE writes as a sync progresses (phase / progress / counts / error). The app
     /// reads it to drive the in-app sync UI; Darwin carries no payload, hence this key.

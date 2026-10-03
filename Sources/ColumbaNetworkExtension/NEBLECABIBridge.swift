@@ -45,8 +45,21 @@ import SwiftBLEBridge
 final class NEPythonBridgeHook: @unchecked Sendable {
     static let shared = NEPythonBridgeHook()
     private var fn: (@Sendable (String, [String: Any]) -> Void)?
+    /// Dedicated serial queue for the Swift->Python hop. The BLE callback
+    /// invoker (`NEBLECallbackInvoker.invoke`) runs on SwiftBLEBridge's serial
+    /// queue; the Python call it forwards to (`NEPythonRNS.invoke`) grabs the
+    /// GIL inside `NEPythonRuntime.callBridge`. Hopping that GIL-blocking call
+    /// onto THIS queue means the BLE queue is released immediately instead of
+    /// being held while it waits for the GIL - which breaks the AB-BA deadlock
+    /// (Issue 6) where a Python worker that holds the GIL waits on the BLE
+    /// queue (e.g. `columba_ble_send`) while an incoming BLE event makes the
+    /// BLE queue wait for the GIL. One serial queue preserves event ordering
+    /// (the BLE queue enqueues in order, this queue drains in order).
+    private let pythonQueue = DispatchQueue(label: "network.columba.ne.ble.python")
     func setFn(_ f: @escaping @Sendable (String, [String: Any]) -> Void) { fn = f }
-    func invoke(fn: String, object: [String: Any]) { self.fn?(fn, object) }
+    func invoke(fn: String, object: [String: Any]) {
+        pythonQueue.async { [self] in self.fn?(fn, object) }
+    }
 
     /// Wire event delivery to the embedded Python interpreter: forward each
     /// event to `rns_bridge.invoke_ble_callback` through the NE's public

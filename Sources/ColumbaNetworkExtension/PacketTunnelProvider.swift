@@ -92,6 +92,62 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    // MARK: - block_unknown_senders live refresh (Issue 3)
+
+    /// Darwin observer token for the app-posted `block_unknown_senders` change
+    /// ping. When the user flips the privacy toggle in Settings, the app mirrors
+    /// it into the AppGroup suite + posts this name; the observer calls
+    /// `rns_bridge.set_block_unknown_senders` on the running node so the inbound
+    /// filter refreshes immediately instead of holding the value captured at
+    /// `start()` until a restart. Registered on `startTunnel`, removed on
+    /// `stopTunnel` (mirrors the inbound-banner observer).
+    private var blockSendersObserverToken: UnsafeMutableRawPointer?
+
+    private func startBlockSendersObserver() {
+        if blockSendersObserverToken != nil { return }
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let token = Unmanaged.passUnretained(self).toOpaque()
+        let name = SharedDefaultsConstants.blockUnknownSendersChangedNotificationName as CFString
+        CFNotificationCenterAddObserver(
+            center,
+            token,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let self_ = Unmanaged<PacketTunnelProvider>.fromOpaque(observer).takeUnretainedValue()
+                self_.refreshBlockUnknownSendersFilter()
+            },
+            name,
+            nil,
+            .deliverImmediately
+        )
+        blockSendersObserverToken = token
+    }
+
+    private func stopBlockSendersObserver() {
+        if let token = blockSendersObserverToken {
+            CFNotificationCenterRemoveObserver(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                token,
+                CFNotificationName(SharedDefaultsConstants.blockUnknownSendersChangedNotificationName as CFString),
+                nil
+            )
+            blockSendersObserverToken = nil
+        }
+    }
+
+    /// Read the freshly-mirrored value from the shared suite and push it to the
+    /// running node. No-op when Python isn't running (the value is still picked
+    /// up at the next node `start`, which reads it from the same suite).
+    private func refreshBlockUnknownSendersFilter() {
+        let value = UserDefaults(suiteName: "group.network.columba.Columba")?
+            .bool(forKey: "block_unknown_senders") ?? false
+        NEPythonRNS.shared.invoke(
+            "set_block_unknown_senders",
+            kwargs: ["block_unknown_senders": value]
+        )
+        ExtensionDiagLog.log("[NE-PY-RNS] block_unknown_senders refreshed to \(value)")
+    }
+
     /// Read the banner payload the NE's Python wrote, and post a local
     /// `UNUserNotification`. Mirrors the app's `NotificationService` posture: honor
     /// the host's authorization (the app owns the prompt; the NE never requests
@@ -202,6 +258,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // banner even while the app is suspended / terminated (the tunnel keeps
         // this process alive). Independent of tunnel-settings bring-up.
         startInboundBannerObserver()
+        // Live-refresh of the block_unknown_senders privacy filter (Issue 3).
+        startBlockSendersObserver()
 
         setTunnelNetworkSettings(settings) { error in
             if let error {
@@ -231,6 +289,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // Drop the inbound-banner observer (no more banners once the node is down).
         stopInboundBannerObserver()
+        // Drop the block_unknown_senders live-refresh observer.
+        stopBlockSendersObserver()
 
         completionHandler()
     }
@@ -370,6 +430,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         case .stop:
             engine.stop()
+            // An explicit .stop means the node should stay down. Clear the
+            // auto-start lever so a tunnel relaunch (startTunnel) does NOT
+            // bring the node back up without a fresh .start (Issue 7). The next
+            // explicit .start re-persists the display name.
+            UserDefaults(suiteName: "group.network.columba.Columba")?
+                .removeObject(forKey: "rnsLastDisplayName")
             return .ok(nil)
 
         case .announce(let displayName):

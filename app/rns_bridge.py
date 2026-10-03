@@ -641,6 +641,21 @@ def _set_grdb_store(path: str, block_unknown_senders: bool = False) -> None:
         _open_grdb()
 
 
+def set_block_unknown_senders(block_unknown_senders: bool = False) -> bool:
+    """Live-refresh the `block_unknown_senders` privacy filter on a RUNNING node
+    (Issue 3). The app mirrors the toggle into the AppGroup suite and posts a
+    Darwin ping when the user flips it in Settings; the NE observes the ping and
+    calls this through the Python bridge. Without it the running node keeps
+    filtering with the value it captured at `start()` until a restart. Takes the
+    same lock `_set_grdb_store` uses so the flip is atomic w.r.t. the delivery
+    callback reading the flag. Returns True on success (the bridge wraps this in
+    the ok/result envelope)."""
+    global _block_unknown_senders
+    with _grdb_lock:
+        _block_unknown_senders = bool(block_unknown_senders)
+    return True
+
+
 def _open_grdb() -> None:
     """Open the shared GRDB store (WAL, busy_timeout) if it exists yet. The app
     creates + migrates it on launch; the NE only writes when it's already there,
@@ -673,21 +688,25 @@ def _open_grdb() -> None:
 
 
 def _grdb_is_known_sender(source_hash: bytes) -> bool:
-    """True when the sender has an existing conversation (the app's notion of a
-    "known contact" is an existing conversation with isFavorite != 0; we approximate
-    with "conversation exists" so we never persist a row that the app's replay
-    would then drop, and fail OPEN on any read error — better to surface a
-    message than silently drop mail)."""
+    """True when the sender is a known (FAVORITED) contact, matching the app's
+    `IncomingMessageHandler` filter exactly: a known contact is an existing
+    conversation with `is_favorite != 0` (Favorites.swift). "Conversation
+    exists" alone is NOT enough - a prior conversation with an *unfavorited*
+    sender would otherwise let their new message past the NE's `block_unknown_
+    senders` filter even though the app would drop it (Issue 4). Fail OPEN on
+    any read error — better to surface a message than silently drop mail."""
     try:
         with _grdb_lock:
             _open_grdb()
             if _grdb_conn is None:
                 return True
             row = _grdb_conn.execute(
-                "SELECT 1 FROM conversations WHERE destination_hash = ?",
+                "SELECT is_favorite FROM conversations WHERE destination_hash = ?",
                 (source_hash,),
             ).fetchone()
-        return row is not None
+        # No conversation row => unknown. Present => known only if favorited
+        # (is_favorite != 0), mirroring `conversation != nil && isFavorite != 0`.
+        return row is not None and int(row[0] or 0) != 0
     except Exception:  # noqa: BLE001
         return True
 
@@ -1149,7 +1168,20 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
         if _block_unknown_senders and not _grdb_is_known_sender(bytes.fromhex(src) if src else b""):
             RNS.log(f"rns_bridge: inbound BLOCKED source={src[:8]} (block_unknown_senders)", RNS.LOG_DEBUG)
             return
-        _write_inbound_to_grdb(message)
+        # GATE THE SUCCESS PATH ON THE WRITE (Issue 5): if the shared GRDB write
+        # fails (store missing/locked), the message is NOT persisted, so we must
+        # not post the banner or the `newMessage` ping that would tell the user
+        # it arrived. There is no durable inbound retry in Model B (the app reads
+        # the GRDB store directly), so a failed write means the row is lost - log
+        # it loudly rather than silently claiming delivery.
+        persisted = _write_inbound_to_grdb(message)
+        if not persisted:
+            RNS.log(
+                f"rns_bridge: inbound NOT persisted (grdb write failed) source={src[:8]} "
+                f"hash={message_hash[:8]} - no banner posted (message lost until the peer re-sends)",
+                RNS.LOG_ERROR,
+            )
+            return
         # Telemetry-only location shares (empty body + only FIELD_TELEMETRY 0x02)
         # must NOT post a notification banner - the empty preview would render as
         # the generic "New message" and spam the user while location is shared.

@@ -3302,14 +3302,20 @@ public final class AppServices {
         let fresh = InterfaceRepository().getEnabledInterfaces()
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
-        // 1. Durability — always persist, even if there's no live backend.
-        // (In the Python path this is a durability backstop: the live change is
-        // the hot add/remove below. A failed write only affects the cold-launch
-        // config, not whether the change is live now.)
-        _ = await writePythonConfig(interfaces: fresh)
+        // 1. Durability — persist first: the hot add/remove below reads each new
+        // section from THIS file (`hotAddInterface` assumes the section is present;
+        // `backend.addInterface(name:)` makes Python read it back). So a failed
+        // write is NOT a mere cold-launch problem - it leaves the new/edited
+        // interface missing from the file the live hot-add reads, so the change
+        // would not go live even though we'd report success (Issue 2). Gate on it.
+        let configWritten = await writePythonConfig(interfaces: fresh)
+        guard configWritten else {
+            DiagLog.log("[RNS-HOT] applyInterfaceChanges: config write FAILED; not hot-adding (the live add would read a stale file)")
+            return .configWriteFailed
+        }
 
         guard let backend = backend else {
-            DiagLog.log("[RNS-HOT] no running backend — config written, applies on next launch")
+            DiagLog.log("[RNS-HOT] no running backend - config written, applies on next launch")
             pythonInterfaceEntities = freshById
             return .persistedRequiresRelaunch
         }
