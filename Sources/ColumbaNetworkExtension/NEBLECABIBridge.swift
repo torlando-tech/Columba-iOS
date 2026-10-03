@@ -56,9 +56,48 @@ final class NEPythonBridgeHook: @unchecked Sendable {
     /// BLE queue wait for the GIL. One serial queue preserves event ordering
     /// (the BLE queue enqueues in order, this queue drains in order).
     private let pythonQueue = DispatchQueue(label: "network.columba.ne.ble.python")
+    /// Node-incarnation counter, guarding stale-event discard (iter-3 finding).
+    /// Bumped in `discardPendingEvents()` when a node (re)starts. A BLE event
+    /// queued against the OLD node must NOT be delivered to the NEW node's
+    /// callbacks - e.g. a stale "peer disconnected" arriving after a restart
+    /// would drop a peer that is connected on the new node. Guarded by
+    /// `genLock` (the counter is read from the BLE queue at enqueue time and
+    /// from pythonQueue at run time, so it needs a lock, not just the queue).
+    private let genLock = NSLock()
+    private var gen = 0
+
     func setFn(_ f: @escaping @Sendable (String, [String: Any]) -> Void) { fn = f }
+
     func invoke(fn: String, object: [String: Any]) {
-        pythonQueue.async { [self] in self.fn?(fn, object) }
+        // Capture the node incarnation at ENQUEUE time. When the hop runs on
+        // pythonQueue, deliver only if the incarnation is unchanged - i.e. no
+        // stop/restart happened after this event was queued. A mismatch means
+        // the event belongs to a previous node and is dropped.
+        genLock.lock()
+        let submittedGen = gen
+        genLock.unlock()
+        pythonQueue.async { [self] in
+            genLock.lock()
+            let currentGen = self.gen
+            genLock.unlock()
+            if submittedGen != currentGen {
+                // Stale: the node restarted after this BLE event was queued.
+                // Drop it so it can't reach the new node's callbacks.
+                return
+            }
+            self.fn?(fn, object)
+        }
+    }
+
+    /// Invalidate all BLE events still queued against the previous node
+    /// incarnation. Call at the start of a node (re)start so a stale event is
+    /// never delivered to the new node's callbacks. Bumping `gen` makes every
+    /// already-queued `invoke` closure see a generation mismatch when it runs
+    /// and drop itself (no explicit drain needed).
+    func discardPendingEvents() {
+        genLock.lock()
+        gen &+= 1
+        genLock.unlock()
     }
 
     /// Wire event delivery to the embedded Python interpreter: forward each
