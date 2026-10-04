@@ -509,14 +509,28 @@ def _verify_modelb(
         raise VerificationError("Model B host does not link NetworkExtension.framework")
     if NETWORK_EXTENSION_LOAD not in extension_libraries:
         raise VerificationError("Model B extension does not link NetworkExtension.framework")
-    if PYTHON_LOAD in libraries or PYTHON_LOAD in extension_libraries:
-        raise VerificationError("Model B executable links forbidden Python.framework")
+    # Model B architecture: the app process is UI-only and the NE hosts the
+    # Python RNS runtime. So the host app must NOT link Python.framework (it
+    # would mean the Python stack leaked into the UI process), while the
+    # extension MUST link it (that is how the in-NE runtime is wired up).
+    if PYTHON_LOAD in libraries:
+        raise VerificationError("Model B host app links forbidden Python.framework")
+    if PYTHON_LOAD not in extension_libraries:
+        raise VerificationError("Model B extension does not link the embedded Python.framework")
+    # Python packaging (Python.framework, app_packages, .whl, ...) is expected
+    # INSIDE the extension (it embeds the runtime). A "leak" is Python
+    # packaging anywhere in the app OUTSIDE the extension bundle - i.e. in the
+    # UI-only host app, which must stay Python-free.
     leaked = next(
-        (path for path in app.rglob("*") if _is_python_packaging_path(path, app)),
+        (
+            path
+            for path in app.rglob("*")
+            if _is_python_packaging_path(path, app) and not _is_within(path, extension)
+        ),
         None,
     )
     if leaked is not None:
-        raise VerificationError("Model B artifact contains Python packaging output: {}".format(leaked))
+        raise VerificationError("Model B host app contains Python packaging output: {}".format(leaked))
     host_platform = app_metadata.get("DTPlatformName")
     extension_platform = extension_metadata.get("DTPlatformName")
     if host_platform != extension_platform:

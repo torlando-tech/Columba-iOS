@@ -120,6 +120,7 @@ class ArtifactFixture:
             self.outputs[("otool", str(self.extension / extension_executable))] = (
                 b"extension:\n"
                 b"\t/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension\n"
+                b"\t@rpath/Python.framework/Python\n"
             )
 
     @staticmethod
@@ -275,6 +276,7 @@ class ArtifactCheckerTests(unittest.TestCase):
             fixture.outputs[("otool", str(extension_debug))] = (
                 b"debug:\n"
                 b"\t/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension\n"
+                b"\t@rpath/Python.framework/Python\n"
             )
             self.verify(fixture, "modelb")
 
@@ -450,6 +452,24 @@ class ArtifactCheckerTests(unittest.TestCase):
                 path.write_text("leak", encoding="utf-8")
                 self.assert_rejected(fixture, "modelb", "Python packaging")
 
+    def test_modelb_allows_python_packaging_inside_the_extension(self):
+        # Post-NE-migration: the extension hosts the embedded Python runtime, so
+        # Python.framework / app_packages inside the .appex are expected and
+        # must NOT be treated as a leak (only host-side Python packaging is a
+        # leak).
+        embedded = (
+            "PlugIns/ColumbaNetworkExtension.appex/Frameworks/Python.framework/Python",
+            "PlugIns/ColumbaNetworkExtension.appex/app_packages/rns.py",
+            "PlugIns/ColumbaNetworkExtension.appex/app_packages/ble_reticulum/BLEInterface.py",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "modelb")
+            for relative in embedded:
+                path = fixture.app / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("payload", encoding="utf-8")
+            self.verify(fixture, "modelb")
+
     def test_modelb_requires_networkextension_linkage_in_host_and_extension(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "modelb")
@@ -463,12 +483,16 @@ class ArtifactCheckerTests(unittest.TestCase):
             fixture.outputs[("otool", str(extension_executable))] = b"Foundation\n"
             self.assert_rejected(fixture, "modelb", "extension.*NetworkExtension")
 
-    def test_modelb_rejects_python_framework_linkage_without_an_embedded_copy(self):
+    def test_modelb_rejects_python_linkage_in_the_host_app(self):
+        # The extension is EXPECTED to link Python.framework (it hosts the
+        # runtime); the host app must stay Python-free. The fixture's extension
+        # already links Python; add the link to the host app and expect a
+        # host-specific rejection.
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "modelb")
             key = ("otool", str(fixture.app / fixture.executable))
             fixture.outputs[key] += b"\t@rpath/Python.framework/Python\n"
-            self.assert_rejected(fixture, "modelb", "links forbidden Python")
+            self.assert_rejected(fixture, "modelb", "host app links forbidden Python")
 
     def test_fails_closed_for_missing_malformed_plist_or_executable(self):
         mutations = ("missing-plist", "malformed-plist", "missing-executable")
