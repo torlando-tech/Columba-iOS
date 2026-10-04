@@ -716,8 +716,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("\n    needs:", workflow)
 
         modelb = workflow.split("\n  modelb:\n", 1)[1].split("\n  ui:\n", 1)[0]
-        self.assertNotIn("Fetch Python framework + wheels", modelb)
-        self.assertNotIn("support/fetch-python.sh", modelb)
+        # The NE hosts the embedded CPython runtime (Model B), so the modelb
+        # lane must fetch the framework + wheels to build it. (This replaced the
+        # earlier lane-isolation rule that excluded the fetch; that predated the
+        # in-NE Python migration.)
+        self.assertIn("Fetch Python framework + wheels", modelb)
+        self.assertIn("support/fetch-python.sh", modelb)
+        self.assertIn("support/fetch-wheels.sh", modelb)
         self.assertIn("Build and run Model B tests", modelb)
         self.assertIn("Build Model B artifact", modelb)
         self.assertLess(

@@ -82,7 +82,7 @@ public final class PythonBridge: @unchecked Sendable {
         // call lifecycle; Python is just the underlying Link pipe.
         case linkState(linkId: Int, state: String, reason: String, inbound: Bool, t: Date)
         case linkPacket(linkId: Int, data: Data, t: Date)
-        case linkIdentified(linkId: Int, identityHashHex: String, t: Date)
+        case linkIdentified(linkId: Int, identityHashHex: String, t: Date, publicKeyHex: String?)
     }
 
     private let queue = DispatchQueue(label: "network.columba.python", qos: .userInitiated)

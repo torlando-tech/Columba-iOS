@@ -2188,9 +2188,11 @@ public final class AppServices {
         // (called from this observer AND at the end of startPythonBackend)
         // consumes it exactly once, covering both warm and cold launches.
         addPythonObserver("ColumbaTestNodeSend") { [weak self] _ in
+            #if DEBUG && COLUMBA_RUNTIME_MODEL_B
             Task { @MainActor in
                 await self?.drainNodeSendProbe()
             }
+            #endif
         }
 
         // Listen for test-telemetry deep links — the Tests/interop/ harness
@@ -2248,7 +2250,10 @@ public final class AppServices {
 
         // Headless tunnel bring-up for the in-NE Python RNS work. Bypasses the
         // BackgroundDeliveryGate (which needs a manual tap) so the NE process can
-        // be booted + exercised via `devicectl ... --payload-url`. DEBUG only.
+        // be booted + exercised via `devicectl ... --payload-url`. DEBUG only, and
+        // Model B only (the tunnel + startTunnelForTest/tunnelManager symbols are
+        // MODEL_B-compile-guarded, so the shipping build cannot reference them).
+        #if DEBUG && COLUMBA_RUNTIME_MODEL_B
         addPythonObserver("ColumbaTestStartTunnel") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
@@ -2263,6 +2268,7 @@ public final class AppServices {
                 DiagLog.log("[TEST-STOP-TUNNEL] stopped")
             }
         }
+        #endif
 
         // Phase 4 smoke test: direct CB manager state probe. Bypasses the
         // Python driver so we can isolate Swift-side CB readiness from
@@ -2667,15 +2673,17 @@ public final class AppServices {
         // Consume a cold-launch test-node-send deep link that arrived before the
         // observer above was registered (startPythonBackend runs at init-complete,
         // after the OS delivers a launch-time --payload-url). Consume-once.
-        #if DEBUG
+        // Model B + DEBUG only: drainNodeSendProbe drives the MODEL_B tunnel seam.
+        #if DEBUG && COLUMBA_RUNTIME_MODEL_B
         await drainNodeSendProbe()
         #endif
     }
 
-    #if DEBUG
+    #if DEBUG && COLUMBA_RUNTIME_MODEL_B
     /// Drive the node-contract control channel once (stage in the shared store,
     /// hello + admit over the app->NE transport) and log the committed
-    /// disposition. DEBUG-only test seam.
+    /// disposition. DEBUG-only test seam, Model B only (uses the MODEL_B
+    /// `tunnelManager` to reach the NE's node over the app->NE proxy).
     private func runNodeSendProbe(to: String, content: String) async {
         guard let tunnel = tunnelManager else {
             DiagLog.log("[TEST-NODE-SEND] no tunnelManager (NE session not up)")
@@ -3266,6 +3274,13 @@ public final class AppServices {
         // over IPC (`.stop` + `.start`), which re-reads the fresh config. This replaces
         // the old "the NE observes configChanged and reconciles" behavior, which lived
         // in the C++ engine that no longer exists.
+        // Model B: the in-NE Python node owns interfaces; applying a change is
+        // a shared-config rewrite + an NE restart over IPC. This whole branch is
+        // compiled only into the Model B target (it calls the MODEL_B-guarded
+        // `syncModelBBLEService`/`tunnelManager` symbols), so the shipping build
+        // falls straight through to the in-process Python hot path below. The
+        // runtime `BackendPreference.modelB` check stays as the behavior gate.
+        #if COLUMBA_RUNTIME_MODEL_B
         if BackendPreference.modelB {
             let fresh = InterfaceRepository().getEnabledInterfaces()
             // The shared config write is the mechanism the NE node re-reads on
@@ -3298,6 +3313,7 @@ public final class AppServices {
                 return .restartFailed
             }
         }
+        #endif
 
         let fresh = InterfaceRepository().getEnabledInterfaces()
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
