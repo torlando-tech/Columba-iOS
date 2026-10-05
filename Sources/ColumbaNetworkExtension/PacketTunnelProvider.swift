@@ -439,13 +439,33 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return .ok(nil)
 
         case .announce(let displayName):
-            guard let res = engine.announce(displayName: displayName) else { return .ok(try? JSONEncoder().encode(false)) }
+            guard let res = engine.announce(displayName: displayName) else {
+                #if DEBUG
+                ExtensionDiagLog.log("[NE-DISP] announce: engine returned nil")
+                #endif
+                return .ok(try? JSONEncoder().encode(false))
+            }
             let ok = (res["ok"] as? Bool) ?? false
+            if !ok {
+                #if DEBUG
+                ExtensionDiagLog.log("[NE-DISP] announce ok=false reason=\(res["reason"] as? String ?? "?")")
+                #endif
+            }
             return .ok(try? JSONEncoder().encode(ok))
 
         case .announceTelephony(let displayName):
-            guard let res = engine.announceTelephony(displayName: displayName) else { return .ok(try? JSONEncoder().encode(false)) }
+            guard let res = engine.announceTelephony(displayName: displayName) else {
+                #if DEBUG
+                ExtensionDiagLog.log("[NE-DISP] announceTelephony: engine returned nil")
+                #endif
+                return .ok(try? JSONEncoder().encode(false))
+            }
             let ok = (res["ok"] as? Bool) ?? false
+            if !ok {
+                #if DEBUG
+                ExtensionDiagLog.log("[NE-DISP] announceTelephony ok=false reason=\(res["reason"] as? String ?? "?")")
+                #endif
+            }
             return .ok(try? JSONEncoder().encode(ok))
 
         case .statusSnapshot:

@@ -338,17 +338,34 @@ final class NEPythonRNS: @unchecked Sendable {
     /// Call a `rns_bridge` op that returns a JSON dict, forwarding the raw JSON.
     /// Returns the Python result JSON string, or nil on a bridge-level failure.
     private func call(_ fn: String, kwargs: [String: Any]) -> String? {
-        guard NEPythonRuntime.shared.state == .running else { return nil }
-        guard let payload = Self.payload(kwargs: kwargs),
-              let out = NEPythonRuntime.shared.callBridge(fn, payload: payload) else {
+        guard NEPythonRuntime.shared.state == .running else {
+            #if DEBUG
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): state is \(NEPythonRuntime.shared.state), not .running")
+            #endif
+            return nil
+        }
+        guard let payload = Self.payload(kwargs: kwargs) else {
+            #if DEBUG
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): payload construction returned nil")
+            #endif
+            return nil
+        }
+        guard let out = NEPythonRuntime.shared.callBridge(fn, payload: payload) else {
+            #if DEBUG
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): callBridge returned nil")
+            #endif
             return nil
         }
         guard let (ok, result, error) = Self.parse(out) else {
-            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): unparseable reply")
+            #if DEBUG
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): unparseable reply: \(out.prefix(200))")
+            #endif
             return nil
         }
         if !ok {
+            #if DEBUG
             ExtensionDiagLog.log("[NE-PY-RNS] \(fn) failed: \(error ?? "(no error)")")
+            #endif
             return nil
         }
         return result
