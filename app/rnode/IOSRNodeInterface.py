@@ -1426,12 +1426,14 @@ class IOSRNodeInterface(Interface):
                 RNS.log(f"Error processing held announce: {e}", RNS.LOG_ERROR)
         self.held_announces = []
 
-    def sent_announce(self, from_spawned=False):
+    def sent_announce(self, size=0, from_spawned=False):
         """Called when an announce is sent on this interface. Tracks announce frequency."""
+        self.atxc += 1; self.atxb += size
         self.oa_freq_deque.append(time.time())
 
-    def received_announce(self):
+    def received_announce(self, size=0, from_spawned=False):
         """Called when an announce is received on this interface. Tracks announce frequency."""
+        self.arxc += 1; self.arxb += size
         self.ia_freq_deque.append(time.time())
 
     def should_ingress_limit(self):
