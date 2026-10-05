@@ -635,7 +635,15 @@ public final class SettingsViewModel {
             let aux = transport.pythonAuxiliarySnapshotList()
             activeInterfaces.append(contentsOf: NetworkInterfacePresentation.auxiliaryDescriptions(aux))
         }
-        if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
+        if modelB {
+            // Model B: the RNode radio runs in the NE. Read its state from the NE
+            // snapshot (the same NE-authoritative source the Manage Interfaces screen
+            // uses via `neRNodeStatus`), not the app-side Compat stub which never
+            // holds the live GATT link.
+            if let rnode = await appServices.neRNodeStatus(), rnode.online {
+                activeInterfaces.append("RNode")
+            }
+        } else if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
             activeInterfaces.append("RNode")
         }
         if modelB {
