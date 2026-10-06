@@ -1253,6 +1253,7 @@ def start(
     display_name: str,
     identity_bytes: bytes | None = None,
     block_unknown_senders: bool = False,
+    host_persistence: str = "in_process",
 ) -> dict[str, str]:
     """Initialize Reticulum + LXMRouter. Idempotent — returns local_info if already up.
 
@@ -1285,24 +1286,27 @@ def start(
         os.makedirs(config_dir, exist_ok=True)
         _state["config_dir"] = config_dir
 
-        # Point the durable inbox at the shared per-identity AppGroup dir (next to
-        # lxmf-swift.db) so the app can drain it cross-process. `config_dir` IS the
-        # shared dir in Model B (NEPythonRNS.sharedConfigDir == AppGroupPaths
-        # per-identity dir). Best-effort: if the path isn't shared/writable the
-        # inbox simply stays inert (events still flow in-memory for status, etc.).
-        _set_inbox_path(os.path.join(config_dir, "ne-inbox.db"))
-
-        # Point the NE at the shared App-Group GRDB store the app's UI reads
-        # (`lxmf-swift.db`, the same file the app opens via
-        # `AppGroupPaths.lxmfDatabaseURL`). Inbound is persisted here directly by
-        # `_delivery_callback`, and the app's `ModelBInboundReplay` scans it. The
-        # `block_unknown_senders` privacy toggle (mirrored into the AppGroup suite
-        # by the app, passed in by the NE) filters inbound before persisting.
-        # Idempotent across restarts.
-        _set_grdb_store(
-            os.path.join(config_dir, "lxmf-swift.db"),
-            block_unknown_senders=block_unknown_senders,
-        )
+        # Durable NE-only persistence (Model B): the NE runs Python in a Network
+        # Extension process whose App-Group config dir is shared with the app, so
+        # the app can't observe delivery directly. The NE points the durable inbox
+        # at the shared per-identity dir (next to lxmf-swift.db) so the app can
+        # drain it cross-process, and points the GRDB store the app's UI reads
+        # (`lxmf-swift.db`, opened via `AppGroupPaths.lxmfDatabaseURL`) - inbound
+        # is persisted there by `_delivery_callback` and scanned by the app's
+        # `ModelBInboundReplay`. The `block_unknown_senders` privacy toggle
+        # (mirrored into the AppGroup suite by the app, passed in by the NE)
+        # filters inbound before persisting. Idempotent across restarts.
+        #
+        # This is an EXPLICIT opt-in: the shipping (in-process) backend runs Python
+        # in the app process with a process-local config dir and no
+        # ModelBInboundReplay, so it must keep the established in-process inbound
+        # path and leave `_durable_mode` off. Default is "in_process".
+        if host_persistence == "ne":
+            _set_inbox_path(os.path.join(config_dir, "ne-inbox.db"))
+            _set_grdb_store(
+                os.path.join(config_dir, "lxmf-swift.db"),
+                block_unknown_senders=block_unknown_senders,
+            )
 
         # Both RNS.Reticulum.__init__ and LXMF.LXMRouter.__init__ call signal.signal()
         # for SIGINT/SIGTERM. That requires Python's main thread; we're on a Swift

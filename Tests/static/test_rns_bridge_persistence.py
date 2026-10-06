@@ -238,5 +238,143 @@ class RnsBridgePersistenceTest(unittest.TestCase):
         shutil.rmtree(d, ignore_errors=True)
 
 
+class RnsBridgeStartPersistenceModeTest(unittest.TestCase):
+    """P1 #1 (ne-python-architecture-review): the shipping backend must not
+    enter NE-only durable mode.
+
+    `start()` currently calls `_set_inbox_path` unconditionally, which flips
+    `_durable_mode = True`. The shipping (in-process) backend runs Python in the
+    app process with a process-local config dir and no `ModelBInboundReplay`, so
+    forcing durable mode there can lose inbound or bypass field/UI processing.
+    Persistence must be an explicit opt-in (the NE passes it; shipping does not).
+
+    These tests drive the real `start()` through its persistence-wiring section:
+    the stubbed `RNS.Reticulum` raises a sentinel, which `start`'s `finally`
+    restores `signal.signal` on, and which stops the run before any identity or
+    router work. We then assert on `_durable_mode` + the inbox path globals.
+    """
+
+    _PERSIST_FN_NAMES = [
+        "start",
+        "_set_inbox_path", "_open_inbox",
+        "_set_grdb_store", "_open_grdb",
+    ]
+
+    class _StopAfterPersistence(Exception):
+        """Sentinel raised by the stubbed RNS.Reticulum to stop start() right
+        after the persistence globals are wired."""
+
+    def _build(self):
+        ns = {
+            "Any": object,
+            "os": __import__("os"),
+            "sqlite3": sqlite3,
+            "json": json,
+            "time": time,
+            "threading": threading,
+            "RNS": types.SimpleNamespace(
+                log=lambda *a, **k: None,
+                LOG_ERROR=0,
+                Reticulum=lambda *a, **k: (_ for _ in ()).throw(
+                    self._StopAfterPersistence()
+                ),
+            ),
+            "_lock": threading.Lock(),
+            "_state": {
+                "started": False,
+                "reticulum": None,
+                "router": None,
+                "identity": None,
+                "destination": None,
+                "handler": None,
+                "config_dir": None,
+            },
+            "_inbox_path": None,
+            "_inbox_conn": None,
+            "_inbox_bound_path": None,
+            "_inbox_lock": threading.Lock(),
+            "_durable_mode": False,
+            "_grdb_path": None,
+            "_grdb_conn": None,
+            "_grdb_bound_path": None,
+            "_grdb_lock": threading.Lock(),
+            "_coalesced_events_ping": lambda: None,
+            "_post_link_events_ping": lambda: None,
+            "_local_info": lambda: {},
+            "_uninstall_native_stamp_generator": lambda: None,
+        }
+        exec(
+            compile(
+                ast.Module(
+                    body=_extract(self._PERSIST_FN_NAMES), type_ignores=[]
+                ),
+                str(BRIDGE),
+                "exec",
+            ),
+            ns,
+        )
+        return ns
+
+    def test_start_default_keeps_inprocess_mode(self):
+        ns = self._build()
+        cfg = self._temp_config_dir()
+        with self.assertRaises(self._StopAfterPersistence):
+            ns["start"](
+                config_dir=str(cfg),
+                identity_path=str(cfg / "identity"),
+                display_name="host",
+            )
+        self.assertFalse(
+            ns["_durable_mode"],
+            "default (shipping) start must NOT enter NE-only durable mode",
+        )
+        self.assertIsNone(
+            ns["_inbox_path"],
+            "default start must not point the durable inbox at a store",
+        )
+        self.assertIsNone(
+            ns["_grdb_path"],
+            "default start must not point the GRDB store at a file",
+        )
+
+    def test_start_ne_mode_enables_durable(self):
+        ns = self._build()
+        cfg = self._temp_config_dir()
+        with self.assertRaises(self._StopAfterPersistence):
+            ns["start"](
+                config_dir=str(cfg),
+                identity_path=str(cfg / "identity"),
+                display_name="host",
+                host_persistence="ne",
+            )
+        self.assertTrue(
+            ns["_durable_mode"],
+            "NE host_persistence must enable durable mode",
+        )
+        self.assertEqual(
+            str(cfg / "ne-inbox.db"),
+            ns["_inbox_path"],
+            "NE mode must point the inbox at <config_dir>/ne-inbox.db",
+        )
+        self.assertEqual(
+            str(cfg / "lxmf-swift.db"),
+            ns["_grdb_path"],
+            "NE mode must point the GRDB store at <config_dir>/lxmf-swift.db",
+        )
+
+    def _temp_config_dir(self):
+        import tempfile
+
+        d = Path(tempfile.mkdtemp(prefix="rns_start_cfg_"))
+        self.addCleanup(self._rmtree, d)
+        return d
+
+    @staticmethod
+    def _rmtree(d):
+        import shutil
+
+        shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

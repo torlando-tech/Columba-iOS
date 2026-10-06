@@ -196,6 +196,7 @@ final class NEPythonRNS: @unchecked Sendable {
             "display_name": displayName,
             "identity_bytes": Self.b64Wrapper(identity),
             "block_unknown_senders": blockUnknownSenders,
+            "host_persistence": "ne",
         ]
         guard let payload = Self.payload(kwargs: kwargs),
               let out = NEPythonRuntime.shared.callBridge("start", payload: payload) else {
