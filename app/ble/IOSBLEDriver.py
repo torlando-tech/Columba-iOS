@@ -256,15 +256,41 @@ class IOSBLEDriver(BLEDriverInterface):
         except ValueError:
             RNS.log(f"IOSBLEDriver: bad identity_hex={identity_hex!r}", RNS.LOG_ERROR)
             return
+        # MAC rotation: the same identity can reconnect under a fresh
+        # randomized GATT address. Android randomizes its BLE address across
+        # GATT sessions, so a peer that was at `old_address` re-surfaces its
+        # identity at `address`. If we only add the new address, the upstream
+        # ``BLEInterface.address_to_identity`` map accumulates one entry per
+        # reconnect (observed live: 5 entries for a single identity) and RNS
+        # keeps routing announces to the stale dead addresses. Detect the
+        # already-known identity and emit ``on_address_changed`` so the
+        # upstream migrates address_to_identity / address_to_interface /
+        # peer_address / fragmenter+reassembler keys to the new address.
         with self._lock:
+            old_address = self._identity_to_address.get(identity_hex)
             self._address_to_identity[address] = identity_hex
             self._identity_to_address[identity_hex] = address
-        # Match Android's adapter contract: identity-before-connected only fills
-        # the cache. A late identity or explicit resync for an already-connected
-        # native peer must notify upstream so it can rebuild its mapping.
-        with self._lock:
+            # Match Android's adapter contract: identity-before-connected only fills
+            # the cache. A late identity or explicit resync for an already-connected
+            # native peer must notify upstream so it can rebuild its mapping.
             already_connected = address in self._connected_peers
-        if already_connected and self.on_device_connected is not None:
+        # Address migration: same identity now seen at a new address. Re-point
+        # and tell upstream to migrate. Only when the identity was genuinely
+        # previously seen at a *different* address (not a re-report of the same
+        # address).
+        if old_address is not None and old_address != address and self.on_address_changed is not None:
+            with self._lock:
+                self._address_to_identity.pop(old_address, None)
+                self._identity_to_address[identity_hex] = address
+                if old_address in self._connected_peers:
+                    self._connected_peers.remove(old_address)
+                if address not in self._connected_peers:
+                    self._connected_peers.append(address)
+            try:
+                self.on_address_changed(old_address, address, identity_hex)
+            except Exception as e:
+                RNS.log(f"IOSBLEDriver: on_address_changed raised: {e}", RNS.LOG_ERROR)
+        elif already_connected and self.on_device_connected is not None:
             try:
                 self.on_device_connected(address, identity_bytes)
             except Exception as e:
