@@ -363,6 +363,11 @@ def _put(kind: str, **payload: Any) -> None:
 # the next drain, so nothing is lost to a missed ping.
 _inbox_path: str | None = None
 _inbox_conn: "sqlite3.Connection | None" = None
+# The path the live inbox connection is bound to. When an in-NE identity switch
+# re-points `_inbox_path`, `_open_inbox` compares this to detect a stale (old
+# identity's) connection and re-binds, instead of keeping the old conn and
+# writing the new identity's events into the old identity's store.
+_inbox_bound_path: str | None = None
 _inbox_lock = threading.Lock()
 # The Darwin notification name the app's ProxyRnsBackend / NotificationObserver
 # observe (must match `network.columba.newMessage` in NotificationObserver.swift).
@@ -394,12 +399,27 @@ def _set_inbox_path(path: str) -> None:
 
 
 def _open_inbox() -> None:
-    """Open + migrate the inbox store (WAL for cross-process app/NE access)."""
-    global _inbox_conn
+    """Open + migrate the inbox store (WAL for cross-process app/NE access).
+
+    Re-binds (closes the old connection and opens the new file) when `_inbox_path`
+    was re-pointed since the last open, so an in-NE identity switch (A -> B, same
+    process) stops writing into the old identity's store. Called from
+    `_set_inbox_path` (which re-points the path first), and from `_publish_durable`
+    / `drain_inbox` (which re-open if the path was set in a prior incarnation)."""
+    global _inbox_conn, _inbox_bound_path
     if _inbox_path is None:
         return
     if _inbox_conn is not None:
-        return
+        if _inbox_bound_path != _inbox_path:
+            # Path changed under a live connection: rebind.
+            try:
+                _inbox_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _inbox_conn = None
+            _inbox_bound_path = None
+        else:
+            return
     try:
         conn = sqlite3.connect(_inbox_path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -415,6 +435,7 @@ def _open_inbox() -> None:
         )
         conn.commit()
         _inbox_conn = conn
+        _inbox_bound_path = _inbox_path
     except Exception as e:  # noqa: BLE001
         RNS.log(f"rns_bridge: inbox open failed: {e}", RNS.LOG_ERROR)
 
@@ -612,6 +633,11 @@ def drain_inbox() -> list:
 # GRDB pool reads it fine.
 _grdb_path: str | None = None
 _grdb_conn: "sqlite3.Connection | None" = None
+# The path the live GRDB connection is bound to. Mirrors `_inbox_bound_path`:
+# an in-NE identity switch re-points `_grdb_path`, and `_open_grdb` re-binds the
+# connection so the new identity's inbound is not written into the old
+# identity's message store.
+_grdb_bound_path: str | None = None
 _grdb_lock = threading.Lock()
 # The `block_unknown_senders` privacy toggle, mirrored into the AppGroup suite by
 # the app and passed to `start()` (the NE can't read the app's standard
@@ -661,12 +687,26 @@ def _open_grdb() -> None:
     creates + migrates it on launch; the NE only writes when it's already there,
     so a missing/empty store simply means "app hasn't launched yet" and inbound
     is held in the durable `ne-inbox` (drained by the app on start) rather than
-    losing the row."""
-    global _grdb_conn
+    losing the row.
+
+    Re-binds (closes the old connection and opens the new file) when `_grdb_path`
+    was re-pointed since the last open, so an in-NE identity switch (A -> B, same
+    process) stops writing the new identity's inbound into the old identity's
+    message store."""
+    global _grdb_conn, _grdb_bound_path
     if _grdb_path is None:
         return
     if _grdb_conn is not None:
-        return
+        if _grdb_bound_path != _grdb_path:
+            # Path changed under a live connection: rebind.
+            try:
+                _grdb_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _grdb_conn = None
+            _grdb_bound_path = None
+        else:
+            return
     if not os.path.isfile(_grdb_path):
         return
     try:
@@ -683,6 +723,7 @@ def _open_grdb() -> None:
         conn.execute("UPDATE conversations SET is_pinned = 0 WHERE is_pinned IS NULL")
         conn.commit()
         _grdb_conn = conn
+        _grdb_bound_path = _grdb_path
     except Exception as e:  # noqa: BLE001
         RNS.log(f"rns_bridge: grdb open failed: {e}", RNS.LOG_ERROR)
 
