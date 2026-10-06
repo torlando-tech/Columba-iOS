@@ -208,6 +208,7 @@
 		58560228AFEDBA4201D9F9D4 /* PlatformCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07A /* PlatformCompat.swift */; };
 		59CE6F635354725F7D445625 /* PyLocalIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E1ECAE91B0A2C56D0FC8AA /* PyLocalIdentity.swift */; };
 		5A782C77CC09D0601E7D945C /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
+		RDRB01 /* ProxyDrainRaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RDRF01 /* ProxyDrainRaceTests.swift */; };
 		5AB385A087D36D5CE40E54F1 /* MigrationImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05E /* MigrationImporter.swift */; };
 		5AFC71BEEE6F92017B41233F /* ProfileIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F037 /* ProfileIcon.swift */; };
 		5C05E5EC2A287FEAD018BB36 /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
@@ -563,6 +564,7 @@
 		E59ED1029D4A906764BC582F /* ColumbaModelBApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ColumbaModelBApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundVPNExplainer.swift; sourceTree = "<group>"; };
 		EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RNodeSeamTests.swift; sourceTree = "<group>"; };
+		RDRF01 /* ProxyDrainRaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyDrainRaceTests.swift; sourceTree = "<group>"; };
 		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PythonConfigWriter.swift; sourceTree = "<group>"; };
 		EDLF /* ExtensionDiagLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDiagLog.swift; sourceTree = "<group>"; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1191,6 +1193,7 @@
 				DRAFT001 /* DraftMessageTests.swift */,
 				DIAGROT001 /* DiagLogRotationTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
+				RDRF01 /* ProxyDrainRaceTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
 				B1C2D3E4F5061728394A5B6C /* IncomingMessageSizeLimitTests.swift */,
 				6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */,
@@ -1783,6 +1786,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				RDRB01 /* ProxyDrainRaceTests.swift in Sources */,
 				3AD864B112B2E1810E510599 /* BLESeamDriverTests.swift in Sources */,
 				5A782C77CC09D0601E7D945C /* RNodeSeamTests.swift in Sources */,
 				RMLT003 /* RuntimeActivityMonitorLeaseTests.swift in Sources */,

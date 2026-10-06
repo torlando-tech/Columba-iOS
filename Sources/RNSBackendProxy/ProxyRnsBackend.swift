@@ -358,17 +358,42 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     }
 
     /// One `.drainEvents` round-trip; map + yield every drained event.
+    ///
+    /// The `roundTrip` await below is the drain race window: a `stop()` can land
+    /// while it is suspended (bumping `startGeneration` + clearing
+    /// `lastSeenAnnounce`), then this worker resumes on a stopped node. Capture
+    /// the generation BEFORE the await and re-check it UNDER the lock after, so a
+    /// stale drain discards its payload instead of yielding events or resurrecting
+    /// `lastSeenAnnounce` for a node that is stopped.
     private func drainNow() async {
+        stateLock.lock()
+        let myGeneration = startGeneration
+        stateLock.unlock()
         guard let response = try? await roundTrip(.drainEvents, op: "drainEvents"),
               case .ok(let payload) = response, let payload,
               let events = try? JSONDecoder().decode([ProxyEvent].self, from: payload)
         else { return }
+        // Re-check under the lock: if stop() ran during the await, this drain is
+        // a stale incarnation - discard its payload entirely (no yield, no state).
+        stateLock.lock()
+        guard myGeneration == startGeneration else {
+            stateLock.unlock()
+            return
+        }
+        stateLock.unlock()
         for e in events {
             switch e.kind {
             case "announce":
                 let dh = e.destHashHex ?? ""
-                if let prev = lastSeenAnnounce[dh], prev >= e.t { continue }
-                lastSeenAnnounce[dh] = e.t
+                // Diff + update under the lock: stop() clears lastSeenAnnounce
+                // under the same lock, so an unguarded access here was a data
+                // race (and could resurrect an entry after a stop).
+                stateLock.lock()
+                let prevSeen = lastSeenAnnounce[dh]
+                let fresh = (prevSeen == nil) || (prevSeen! < e.t)
+                if fresh { lastSeenAnnounce[dh] = e.t }
+                stateLock.unlock()
+                guard fresh else { continue }
                 eventContinuation.yield(.announce(
                     destHash: dh,
                     appDataHex: e.appDataHex ?? "",
