@@ -23,6 +23,7 @@ import queue
 import sqlite3
 import threading
 import time
+import types
 from typing import Any
 
 import sys
@@ -686,8 +687,9 @@ def _open_grdb() -> None:
     """Open the shared GRDB store (WAL, busy_timeout) if it exists yet. The app
     creates + migrates it on launch; the NE only writes when it's already there,
     so a missing/empty store simply means "app hasn't launched yet" and inbound
-    is held in the durable `ne-inbox` (drained by the app on start) rather than
-    losing the row.
+    is held in the durable ingress-retry file (re-projected by
+    `_retry_pending_ingress` once the store is reachable) rather than losing the
+    row.
 
     Re-binds (closes the old connection and opens the new file) when `_grdb_path`
     was re-pointed since the last open, so an in-NE identity switch (A -> B, same
@@ -728,6 +730,158 @@ def _open_grdb() -> None:
         RNS.log(f"rns_bridge: grdb open failed: {e}", RNS.LOG_ERROR)
 
 
+# ── Inbound ingress retry (P1 #4) ─────────────────────────────────────────────
+#
+# When the shared GRDB store is not yet available (the app has not launched /
+# migrated it) an inbound write fails. The legacy failure branch dropped the
+# message ("lost until the peer re-sends"). Instead we retain the raw artifact
+# durably in a NE-owned JSONL file next to the store, and re-project it into the
+# store as soon as the store is reachable again. The file is NE-owned (the app's
+# `drain_inbox` never touches it), and the projection is idempotent (the message
+# row is INSERT OR REPLACE by message_id), so a retried message is not
+# double-inserted.
+_ingress_retry_lock = threading.Lock()
+# True while `_retry_pending_ingress` is projecting retained artifacts, so the
+# per-artifact `_write_inbound_to_grdb` call does not re-enter the retry (or
+# re-store a just-failed artifact as a new one).
+_retrying_ingress = False
+
+
+def _ingress_retry_path() -> str | None:
+    """The durable NE-owned artifact file, next to the GRDB store. None when the
+    store path is unset (in-process backend, where inbound uses the legacy path)."""
+    if _grdb_path is None:
+        return None
+    try:
+        directory = os.path.dirname(_grdb_path)
+        if not directory:
+            return None
+        return os.path.join(directory, "ingress-retry.jsonl")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ingress_retry_fields(message: Any) -> dict | None:
+    """Extract the fields `_write_inbound_to_grdb` needs, in JSONL-serializable
+    form. Returns None when the message has no persistable row (no packed wire or
+    no hashes) - nothing to retain. Best-effort; never raises."""
+    try:
+        packed = bytes(getattr(message, "packed", None) or b"")
+        if not packed:
+            return None
+        message_id = bytes(getattr(message, "hash", None) or b"")
+        source_hash = bytes(getattr(message, "source_hash", None) or b"")
+        destination_hash = bytes(getattr(message, "destination_hash", None) or b"")
+        if not (message_id and source_hash and destination_hash):
+            return None
+        stamp = getattr(message, "stamp", None)
+        stamp_b = bytes(stamp) if stamp is not None else None
+        return {
+            "packed_hex": packed.hex(),
+            "message_id_hex": message_id.hex(),
+            "source_hash_hex": source_hash.hex(),
+            "destination_hash_hex": destination_hash.hex(),
+            "title_hex": bytes(getattr(message, "title", None) or b"").hex(),
+            "content_hex": bytes(getattr(message, "content", None) or b"").hex(),
+            "signature_hex": bytes(getattr(message, "signature", None) or b"").hex(),
+            "stamp_hex": stamp_b.hex() if stamp_b else None,
+            "timestamp": float(getattr(message, "timestamp", None) or time.time()),
+            "method": int(getattr(message, "method", None) or 0),
+            "rssi": getattr(message, "rssi", None),
+            "snr": getattr(message, "snr", None),
+            "q": getattr(message, "q", None),
+            "skip_conversation": _is_telemetry_only_inbound(message),
+        }
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: ingress-retry field capture failed: {e}", RNS.LOG_ERROR)
+        return None
+
+
+def _store_ingress_retry_artifact(fields: dict) -> None:
+    """Append one retained inbound artifact to the durable JSONL file. Best-effort;
+    never raises (called from the LXMF delivery callback)."""
+    path = _ingress_retry_path()
+    if path is None:
+        return
+    try:
+        with _ingress_retry_lock:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(fields) + "\n")
+        RNS.log(f"rns_bridge: inbound retained for ingress retry id={fields['message_id_hex'][:8]}", RNS.LOG_ERROR)
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: ingress-retry store failed: {e}", RNS.LOG_ERROR)
+
+
+def _reconstruct_ingress_message(fields: dict) -> Any:
+    """Rebuild a message-like object from a retained artifact so
+    `_write_inbound_to_grdb` can re-project it. A minimal holder exposing the
+    attributes `_write_inbound_to_grdb` reads via `getattr`."""
+    return types.SimpleNamespace(
+        packed=bytes.fromhex(fields["packed_hex"]),
+        hash=bytes.fromhex(fields["message_id_hex"]),
+        source_hash=bytes.fromhex(fields["source_hash_hex"]),
+        destination_hash=bytes.fromhex(fields["destination_hash_hex"]),
+        title=bytes.fromhex(fields.get("title_hex") or ""),
+        content=bytes.fromhex(fields.get("content_hex") or ""),
+        signature=bytes.fromhex(fields.get("signature_hex") or ""),
+        stamp=bytes.fromhex(fields["stamp_hex"]) if fields.get("stamp_hex") else None,
+        timestamp=float(fields.get("timestamp") or time.time()),
+        method=int(fields.get("method") or 0),
+        rssi=fields.get("rssi"),
+        snr=fields.get("snr"),
+        q=fields.get("q"),
+    )
+
+
+def _retry_pending_ingress() -> int:
+    """Project retained inbound artifacts into the GRDB store now that it is
+    reachable. Idempotent (INSERT OR REPLACE by message_id). Returns the number
+    successfully projected. Best-effort; never raises."""
+    global _retrying_ingress
+    if _retrying_ingress:
+        return 0
+    path = _ingress_retry_path()
+    if path is None or not os.path.isfile(path):
+        return 0
+    try:
+        with _ingress_retry_lock:
+            if not os.path.isfile(path):
+                return 0
+            with open(path, "r", encoding="utf-8") as fh:
+                raw_lines = fh.readlines()
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: ingress-retry read failed: {e}", RNS.LOG_ERROR)
+        return 0
+    if not raw_lines:
+        return 0
+    _retrying_ingress = True
+    try:
+        projected = 0
+        remaining: list[str] = []
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                fields = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if _write_inbound_to_grdb_impl(_reconstruct_ingress_message(fields)):
+                projected += 1
+            else:
+                remaining.append(line)
+        # Rewrite only the artifacts that still failed (store may still be down
+        # for some, or a new failure appeared). Under the lock so a concurrent
+        # store isn't interleaved.
+        with _ingress_retry_lock:
+            with open(path, "w", encoding="utf-8") as fh:
+                for line in remaining:
+                    fh.write(line + "\n")
+        return projected
+    finally:
+        _retrying_ingress = False
+
+
 def _grdb_is_known_sender(source_hash: bytes) -> bool:
     """True when the sender is a known (FAVORITED) contact, matching the app's
     `IncomingMessageHandler` filter exactly: a known contact is an existing
@@ -752,10 +906,12 @@ def _grdb_is_known_sender(source_hash: bytes) -> bool:
         return True
 
 
-def _write_inbound_to_grdb(message: Any) -> bool:
+def _write_inbound_to_grdb_impl(message: Any) -> bool:
     """Persist one inbound message to the shared GRDB store, mirroring
     `MessageRecord(from:)` + `updateConversationForMessage`. Returns True on
-    success. Best-effort; never raises (called from the LXMF delivery callback)."""
+    success. Best-effort; never raises (called from the LXMF delivery callback).
+    This is the implementation; the ingress-retry wrapper
+    (`_write_inbound_to_grdb`) adds durable retention on failure."""
     try:
         with _grdb_lock:
             _open_grdb()
@@ -873,6 +1029,19 @@ def _write_inbound_to_grdb(message: Any) -> bool:
     except Exception as e:  # noqa: BLE001
         RNS.log(f"rns_bridge: grdb write failed: {e}", RNS.LOG_ERROR)
         return False
+
+
+def _write_inbound_to_grdb(message: Any) -> bool:
+    """Public inbound-persist entry point. Attempts the GRDB write; on failure it
+    durably retains the raw artifact (`ingress-retry.jsonl`, NE-owned) so the
+    message is not lost until the peer re-sends, and `_retry_pending_ingress`
+    projects it into the store once the store is reachable again (P1 #4)."""
+    ok = _write_inbound_to_grdb_impl(message)
+    if not ok and not _retrying_ingress:
+        fields = _ingress_retry_fields(message)
+        if fields is not None:
+            _store_ingress_retry_artifact(fields)
+    return ok
 
 
 def _is_telemetry_only_inbound(message: Any) -> bool:
@@ -1212,17 +1381,22 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
         # GATE THE SUCCESS PATH ON THE WRITE (Issue 5): if the shared GRDB write
         # fails (store missing/locked), the message is NOT persisted, so we must
         # not post the banner or the `newMessage` ping that would tell the user
-        # it arrived. There is no durable inbound retry in Model B (the app reads
-        # the GRDB store directly), so a failed write means the row is lost - log
-        # it loudly rather than silently claiming delivery.
+        # it arrived. The write wrapper has already retained the raw artifact
+        # durably (ingress-retry.jsonl, P1 #4), so the content is not lost - it is
+        # re-projected into the store by `_retry_pending_ingress` as soon as the
+        # store is reachable again (a later successful inbound write, or start).
         persisted = _write_inbound_to_grdb(message)
         if not persisted:
             RNS.log(
                 f"rns_bridge: inbound NOT persisted (grdb write failed) source={src[:8]} "
-                f"hash={message_hash[:8]} - no banner posted (message lost until the peer re-sends)",
+                f"hash={message_hash[:8]} - no banner posted (artifact retained for ingress retry)",
                 RNS.LOG_ERROR,
             )
             return
+        # The store is reachable now (this write succeeded), so project any
+        # previously-retained inbound artifacts into it (P1 #4 retry projection).
+        # Idempotent + best-effort; a no-op when nothing is retained.
+        _retry_pending_ingress()
         # Telemetry-only location shares (empty body + only FIELD_TELEMETRY 0x02)
         # must NOT post a notification banner - the empty preview would render as
         # the generic "New message" and spam the user while location is shared.

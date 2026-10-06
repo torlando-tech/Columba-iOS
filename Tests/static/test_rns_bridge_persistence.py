@@ -16,6 +16,8 @@ files opened by an independent connection, not against the internals.
 
 import ast
 import json
+import os
+import shutil
 import sqlite3
 import sys
 import threading
@@ -374,6 +376,178 @@ class RnsBridgeStartPersistenceModeTest(unittest.TestCase):
         import shutil
 
         shutil.rmtree(d, ignore_errors=True)
+
+
+class RnsBridgeIngressRetryTest(unittest.TestCase):
+    """P1 #4 (ne-python-architecture-review): a failed inbound GRDB write must
+    not permanently drop the accepted message.
+
+    The legacy `_delivery_callback` failure branch logged "message lost until the
+    peer re-sends" and returned, dropping the content. The real failure mode: the
+    NE sets `_grdb_path` to the shared dir, but the app hasn't launched / migrated
+    the store file yet, so `_open_grdb`'s isfile guard leaves the connection None
+    and the write fails. The fix retains the raw artifact durably in a NE-owned
+    JSONL file (`ingress-retry.jsonl`, next to the store) and re-projects it into
+    the store as soon as the store file is reachable again. The file is NE-owned
+    (the app's `drain_inbox` never touches it) and the projection is idempotent
+    (INSERT OR REPLACE by message_id), so a retried message is not double-inserted.
+    """
+
+    _FN_NAMES = [
+        "_write_inbound_to_grdb",
+        "_write_inbound_to_grdb_impl",
+        "_open_grdb",
+        "_is_telemetry_only_inbound",
+        "_ingress_retry_path",
+        "_ingress_retry_fields",
+        "_store_ingress_retry_artifact",
+        "_reconstruct_ingress_message",
+        "_retry_pending_ingress",
+    ]
+
+    def _build(self):
+        ns = {
+            "Any": object,
+            "os": __import__("os"),
+            "sqlite3": sqlite3,
+            "json": json,
+            "time": time,
+            "threading": threading,
+            "types": types,
+            "RNS": types.SimpleNamespace(log=lambda *a, **k: None, LOG_ERROR=0, LOG_DEBUG=1),
+            "_grdb_path": None,
+            "_grdb_conn": None,
+            "_grdb_bound_path": None,
+            "_grdb_lock": threading.Lock(),
+            "_GRDB_STATE_DELIVERED": 0x08,
+            "_ingress_retry_lock": threading.Lock(),
+            "_retrying_ingress": False,
+        }
+        exec(
+            compile(ast.Module(body=_extract(self._FN_NAMES), type_ignores=[]), str(BRIDGE), "exec"),
+            ns,
+        )
+        return ns
+
+    def _msg(self, *, src: bytes = b"aa" * 32, dst: bytes = b"bb" * 32, content: bytes = b"hello"):
+        return types.SimpleNamespace(
+            hash=b"cc" * 32,
+            source_hash=src,
+            destination_hash=dst,
+            title=b"t",
+            content=content,
+            signature=b"sig",
+            stamp=None,
+            timestamp=1234.0,
+            method=4,
+            rssi=None,
+            snr=None,
+            q=None,
+            packed=b"\x01\x02\x03packed-lxmf-wire",
+        )
+
+    def _artifact_lines(self, ns):
+        path = ns["_ingress_retry_path"]()
+        if path is None or not os.path.isfile(path):
+            return []
+        with open(path, "r", encoding="utf-8") as fh:
+            return [line for line in fh.read().splitlines() if line.strip()]
+
+    def test_failed_grdb_write_retains_artifact_durable(self):
+        ns = self._build()
+        store_dir = self._dir()
+        store = store_dir / "lxmf-swift.db"
+        # NE points at the shared dir, but the app has not created the store yet.
+        ns["_grdb_path"] = str(store)
+
+        self.assertFalse(
+            ns["_write_inbound_to_grdb"](self._msg()),
+            "the GRDB write must fail while the store file is absent",
+        )
+        lines = self._artifact_lines(ns)
+        self.assertEqual(1, len(lines),
+                         "a failed GRDB write must retain a durable artifact (not drop the message)")
+        payload = json.loads(lines[0])
+        self.assertEqual(b"\x01\x02\x03packed-lxmf-wire", bytes.fromhex(payload["packed_hex"]),
+                         "the retained artifact must carry the raw packed wire for re-projection")
+
+    def test_retry_projects_into_store_and_clears_artifact(self):
+        ns = self._build()
+        store_dir = self._dir()
+        store = store_dir / "lxmf-swift.db"
+        self._make_grdb(store)  # app has now launched + created the store
+        ns["_grdb_path"] = str(store)
+
+        # 1) First write before the store existed would have failed; here we
+        #    pre-seed the artifact to simulate that earlier failed delivery.
+        self._store_artifact_directly(ns, self._msg())
+        self.assertEqual(1, len(self._artifact_lines(ns)))
+
+        # 2) Store is now reachable -> retry projects the artifact into it.
+        projected = ns["_retry_pending_ingress"]()
+        self.assertGreaterEqual(projected, 1, "retry must project the retained artifact into the store")
+        self.assertEqual(0, len(self._artifact_lines(ns)),
+                         "a successfully projected artifact must be cleared from the file")
+        self.assertEqual(1, self._grdb_message_count(store),
+                         "the message must land in the GRDB store, not be lost")
+
+    def test_retry_is_idempotent(self):
+        """Re-running the retry must not double-insert an already-projected row."""
+        ns = self._build()
+        store_dir = self._dir()
+        store = store_dir / "lxmf-swift.db"
+        self._make_grdb(store)
+        ns["_grdb_path"] = str(store)
+        self._store_artifact_directly(ns, self._msg())
+
+        ns["_retry_pending_ingress"]()
+        first = self._grdb_message_count(store)
+        self.assertEqual(1, first)
+        # No artifacts remain, so a second retry is a no-op.
+        ns["_retry_pending_ingress"]()
+        self.assertEqual(1, self._grdb_message_count(store),
+                         "a retried message must be projected exactly once (idempotent)")
+
+    def _store_artifact_directly(self, ns, message):
+        fields = ns["_ingress_retry_fields"](message)
+        self.assertIsNotNone(fields)
+        ns["_store_ingress_retry_artifact"](fields)
+
+    def _make_grdb(self, path):
+        conn = sqlite3.connect(str(path))
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS messages ("
+                " message_id BLOB, conversation_hash BLOB, destination_hash BLOB,"
+                " source_hash BLOB, signature BLOB, timestamp REAL, title BLOB, content BLOB,"
+                " fields BLOB, stamp BLOB, state INTEGER, method INTEGER, delivery_attempts INTEGER,"
+                " progress REAL, incoming INTEGER, rssi REAL, snr REAL, q REAL, ratchet_id BLOB,"
+                " packed_lxmf BLOB, receiving_interface TEXT, reply_to_id BLOB,"
+                " reactions_json TEXT, created_at REAL, updated_at REAL)"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS conversations ("
+                " destination_hash BLOB, display_name TEXT, last_message_timestamp REAL,"
+                " last_message_preview TEXT, unread_count INTEGER, is_unread INTEGER,"
+                " is_favorite INTEGER, icon_name TEXT, icon_fg_color TEXT, icon_bg_color TEXT,"
+                " created_at REAL, updated_at REAL, is_pinned INTEGER NOT NULL DEFAULT 0)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _grdb_message_count(self, path):
+        conn = sqlite3.connect(str(path))
+        try:
+            return conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        finally:
+            conn.close()
+
+    def _dir(self):
+        import tempfile
+        d = Path(tempfile.mkdtemp(prefix="rns_ingress_"))
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
 
 
 if __name__ == "__main__":
