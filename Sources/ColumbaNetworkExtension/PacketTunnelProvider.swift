@@ -563,8 +563,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             return .ok(try? JSONEncoder().encode([String]()))
 
-        case .lxmfSend(let destHashHex, let content, let method, let fieldsData):
-            guard let res = engine.lxmfSend(destHashHex: destHashHex, content: content, method: method, fieldsHex: hexOf(fieldsData)) else {
+        case .lxmfSend(let destHashHex, let content, let method, let fieldsData, let sendId):
+            // P1 #6: thread the app's stable sendId into the NE so the engine
+            // dedups (a lost live reply + outbox replay can't double-send).
+            guard let res = engine.lxmfSend(destHashHex: destHashHex, content: content, method: method, fieldsHex: hexOf(fieldsData), sendId: sendId) else {
                 return .ok(try? JSONEncoder().encode(ProxySendOutcome(kind: .other, detail: "send dispatch failed")))
             }
             let outcome = Self.mapSendOutcome(res)

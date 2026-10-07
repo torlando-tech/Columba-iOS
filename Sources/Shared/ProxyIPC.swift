@@ -190,9 +190,14 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// pre-assembled by the APP into the canonical on-wire field map and passed
     /// as MessagePack-packed `fieldsData` (empty = no fields) so the NE doesn't
     /// need RNSAPI's `LxmfFieldCodec` at this seam. `method` is the
-    /// `LXDeliveryMethod` raw value ("opportunistic" / "direct" / "propagated"
-    /// / …). Response payload: JSON-encoded `ProxySendOutcome`.
-    case lxmfSend(destHashHex: String, content: String, method: String, fieldsData: Data)
+    /// `LXDeliveryMethod` raw value ("opportunistic" / "direct" / "propagated" /
+    /// …). Response payload: JSON-encoded `ProxySendOutcome`.
+    ///
+    /// `sendId` is the app-assigned stable submission id (architecture review
+    /// P1 #6): the NE dedups on it so a lost live reply + outbox replay cannot
+    /// double-send. Optional and `encodeIfPresent` so an absent id (a non-Model-B
+    /// caller) is a no-op on the wire.
+    case lxmfSend(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String? = nil)
 
     /// Native Model B BLE peer snapshot. The NE owns reticulum-swift's
     /// `BLEInterface` in Model B (the app can't enumerate BLE peers itself), so
@@ -248,7 +253,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
-        case op, displayName, destHashHex, content, method, fieldsData
+        case op, displayName, destHashHex, content, method, fieldsData, sendId
         case path, timeoutSeconds, formFields
         case aspect, identityPublicKeyHex, linkId, dataHex
     }
@@ -286,12 +291,13 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(Op.heardAnnounces, forKey: .op)
         case .drainEvents:
             try c.encode(Op.drainEvents, forKey: .op)
-        case .lxmfSend(let destHashHex, let content, let method, let fieldsData):
+        case .lxmfSend(let destHashHex, let content, let method, let fieldsData, let sendId):
             try c.encode(Op.lxmfSend, forKey: .op)
             try c.encode(destHashHex, forKey: .destHashHex)
             try c.encode(content, forKey: .content)
             try c.encode(method, forKey: .method)
             try c.encode(fieldsData, forKey: .fieldsData)
+            try c.encodeIfPresent(sendId, forKey: .sendId)
         case .bleConnections:
             try c.encode(Op.bleConnections, forKey: .op)
         case .bleDisconnect(let identityHashHex):
@@ -348,7 +354,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
                 destHashHex: try c.decode(String.self, forKey: .destHashHex),
                 content: try c.decode(String.self, forKey: .content),
                 method: try c.decode(String.self, forKey: .method),
-                fieldsData: try c.decode(Data.self, forKey: .fieldsData)
+                fieldsData: try c.decode(Data.self, forKey: .fieldsData),
+                sendId: try c.decodeIfPresent(String.self, forKey: .sendId)
             )
         case .bleConnections:
             self = .bleConnections

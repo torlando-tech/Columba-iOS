@@ -593,14 +593,21 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         // treat it the same as the NE answering `.error` / `.unsupported`: the NE
         // did NOT accept the send, so persist it to the App-Group outbox and
         // return optimistically (`.queued`) — the NE replays it on its next start.
+        //
+        // P1 #6 (send-response ambiguity): assign ONE stable `sendId` to this
+        // logical send and use it in BOTH the live IPC request and the outbox
+        // fallback. The NE dedups on it, so if the live reply is lost (the app
+        // enqueues) and the NE had already sent it, the replay on next start sees
+        // the recorded id and does not send it a second time.
+        let sendId = UUID().uuidString
         let response: ProxyResponse
         do {
             response = try await roundTrip(
-                .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData),
+                .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId),
                 op: "lxmfSend")
         } catch {
             // Transport-level failure (no/garbled response) — NE down/unreachable.
-            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId)
         }
         switch response {
         case .ok(let payload):
@@ -613,7 +620,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         case .error, .unsupported:
             // NE answered but did NOT accept the send (node not running / send
             // rejected). Persist for replay rather than dropping it.
-            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId)
         }
     }
 
@@ -621,23 +628,26 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// optimistic `.queued` outcome so the UI shows it pending (the NE replays the
     /// queue on its next `start()`, A5c).
     ///
-    /// `messageHashHex` is stored `nil`: the real LXMF hash is computed NE-side at
-    /// pack time and this proxy (RNSAPI-only, no `Identity`/LXMF-swift) cannot
-    /// derive it — see `OutboxEntry.messageHashHex`. The returned `.queued` hash is
-    /// therefore empty, matching the existing "no real hash yet" shape (the live
-    /// path's `ProxySendOutcome.detail` is likewise empty until the NE packs).
-    private func enqueueToOutbox(destHashHex: String, content: String, method: String, fieldsData: Data) -> SendOutcome {
+    /// `sendId` (P1 #6) is the stable id this logical send was sent with over IPC;
+    /// the NE's replay dedups on it. `messageHashHex` is stored `nil`: the real
+    /// LXMF hash is computed NE-side at pack time and this proxy (RNSAPI-only, no
+    /// `Identity`/LXMF-swift) cannot derive it (see `OutboxEntry.messageHashHex`).
+    /// The returned `.queued` hash is therefore empty, matching the existing
+    /// "no real hash yet" shape (the live path's `ProxySendOutcome.detail` is
+    /// likewise empty until the NE packs).
+    private func enqueueToOutbox(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String) -> SendOutcome {
         let entry = OutboxEntry(
             destHashHex: destHashHex,
             content: content,
             method: method,
             fieldsData: fieldsData.isEmpty ? nil : fieldsData,
             messageHashHex: nil,
+            sendId: sendId,
             createdAt: Date().timeIntervalSince1970
         )
         OutboxQueue().append(entry)
         let destPrefix = String(destHashHex.prefix(8))
-        Self.log.info("Model B NE unreachable — queued LXMF send to durable outbox (dest=\(destPrefix, privacy: .public)…)")
+        Self.log.info("Model B NE unreachable - queued LXMF send to durable outbox (dest=\(destPrefix, privacy: .public)…)")
         return .queued(messageHash: "")
     }
 
@@ -657,13 +667,16 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         ]
         let fieldsData = LxmfFieldCodec.pack([LxmfFields.FIELD_REACTION: reaction])
         let method = LXDeliveryMethod.opportunistic.rawValue
+        // P1 #6: one stable id for this reaction, shared by the live IPC request
+        // and the outbox fallback (reactions replay through the same dedup path).
+        let sendId = UUID().uuidString
         let response: ProxyResponse
         do {
             response = try await roundTrip(
-                .lxmfSend(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData),
+                .lxmfSend(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData, sendId: sendId),
                 op: "lxmfSend(reaction)")
         } catch {
-            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData, sendId: sendId)
         }
         switch response {
         case .ok(let payload):
@@ -673,7 +686,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             }
             return Self.sendOutcome(from: outcome)
         case .error, .unsupported:
-            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData, sendId: sendId)
         }
     }
 

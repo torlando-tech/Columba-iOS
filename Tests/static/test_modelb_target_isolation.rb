@@ -37,6 +37,8 @@ MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/Shared/BLEDriverSeam.swift
   Sources/Shared/ProxyIPC.swift
   Sources/Shared/OutboxQueue.swift
+  Sources/Shared/SentIdStore.swift
+  Sources/Shared/OutboxReplayCoordinator.swift
   Sources/ColumbaApp/Services/ModelBRNodeService.swift
   Sources/Shared/AppGroupRNodeSeamTransport.swift
   Sources/Shared/AppGroupRNodeSeamWire.swift
@@ -102,6 +104,7 @@ SH
 MODEL_B_ONLY_TEST_SOURCE_PATHS = %w[
   Tests/ColumbaAppTests/BLESeamDriverTests.swift
   Tests/ColumbaAppTests/RNodeSeamTests.swift
+  Tests/ColumbaAppTests/OutboxReplayDedupTests.swift
 ].freeze
 SHIPPING_TEST_SOURCE_PATHS = %w[
   Tests/ColumbaAppTests/MicronParserTests.swift
@@ -364,7 +367,7 @@ class ModelBTargetIsolationTests < Minitest::Test
   end
 
   def test_application_membership_is_authoritatively_partitioned
-    assert_equal 24, MODEL_B_ONLY_SOURCE_PATHS.size
+    assert_equal 26, MODEL_B_ONLY_SOURCE_PATHS.size
     assert_equal 10, PYTHON_ONLY_SOURCE_PATHS.size
     shipping_phases = @shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     model_phases = @model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
@@ -1364,7 +1367,7 @@ class ModelBTargetIsolationTests < Minitest::Test
   end
 
   def test_model_b_seam_tests_have_only_the_model_b_test_host
-    assert_equal 2, MODEL_B_ONLY_TEST_SOURCE_PATHS.size
+    assert_equal 3, MODEL_B_ONLY_TEST_SOURCE_PATHS.size
     assert_empty MODEL_B_ONLY_TEST_SOURCE_PATHS & source_paths(@shipping_tests)
     assert_equal SHIPPING_TEST_SOURCE_PATHS, source_paths(@shipping_tests)
     assert_equal MODEL_B_ONLY_TEST_SOURCE_PATHS, source_paths(@model_b_tests)
@@ -1704,7 +1707,7 @@ class ModelBTargetIsolationTests < Minitest::Test
 
       mutated = Xcodeproj::Project.open(temporary_project)
       mutated_tests = mutated.targets.find { |target| target.name == 'ColumbaAppTests' }
-      assert_equal 2, MODEL_B_ONLY_TEST_SOURCE_PATHS.count { |path|
+      assert_equal 3, MODEL_B_ONLY_TEST_SOURCE_PATHS.count { |path|
         source_paths(mutated_tests, directory).include?(path)
       }
       assert_empty local_ids - mutated_tests.source_build_phase.files.map(&:uuid)

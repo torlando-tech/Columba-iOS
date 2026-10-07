@@ -38,6 +38,13 @@ final class NEPythonRNS: @unchecked Sendable {
     private(set) var isRunning = false
     private let stateLock = NSLock()
 
+    /// Durable outbox recovery + send-response-ambiguity dedup (P1 #3 + #6). Both
+    /// backings live in the shared App-Group container (the same place the app
+    /// appends the outbox), so a send recorded here is visible across an NE restart.
+    /// The NE is the sole runtime, so it owns both the read (`replayOutbox` at
+    /// start) and the dedup (`lxmfSend` consults `sentIds` before sending).
+    private let outboxReplay = OutboxReplayCoordinator()
+
     /// The shared keychain group the app stored the identity in (resolved once,
     /// so the keychain access-group probe isn't repeated on every start).
     private var cachedAccessGroup: String?
@@ -213,6 +220,13 @@ final class NEPythonRNS: @unchecked Sendable {
         }
         stateLock.lock(); isRunning = true; stateLock.unlock()
         ExtensionDiagLog.log("[NE-PY-RNS] start OK: \(result ?? "")")
+        // P1 #3: recover stranded sends. On a fresh (re)start, once the node is up,
+        // replay the durable outbox through the deduped send path. Gated to a real
+        // start (not an idempotent re-start of an already-running node) so a
+        // transiently-failing entry is not re-attempted on every .start.
+        if restarting {
+            replayOutbox()
+        }
         return result
     }
 
@@ -262,15 +276,55 @@ final class NEPythonRNS: @unchecked Sendable {
         Self.dict(from: call("persist", kwargs: [:]))
     }
 
-    /// `rns_bridge.send_opportunistic(...)` → `{ok, reason, message_hash?}`.
-    func lxmfSend(destHashHex: String, content: String, method: String, fieldsHex: String) -> [String: Any]? {
-        let kwargs: [String: Any] = [
+    /// Send one outbound LXMF message through the Python engine, with
+    /// send-response-ambiguity dedup (P1 #6). If `sendId` is already recorded in
+    /// `sentIds`, the send was already delivered (a lost live reply led the app to
+    /// re-queue the same id) - skip it and return a "committed" dict so the caller
+    /// treats it as sent. Otherwise send and, on a committed (`ok`) result, record
+    /// the id so a later drain/restart does not send it again.
+    func lxmfSend(destHashHex: String, content: String, method: String, fieldsHex: String, sendId: String? = nil) -> [String: Any]? {
+        if let sendId, outboxReplay.sentIds.contains(sendId) {
+            ExtensionDiagLog.log("[NE-PY-RNS] lxmfSend: sendId already sent, dedup skip")
+            return ["ok": true, "deduped": true, "message_hash": ""]
+        }
+        let res = Self.dict(from: call("send_opportunistic", kwargs: [
             "dest_hash_hex": destHashHex,
             "content": content,
             "method": method,
             "fields_hex": fieldsHex,
-        ]
-        return Self.dict(from: call("send_opportunistic", kwargs: kwargs))
+        ]))
+        if let res, res["ok"] as? Bool == true, let sendId {
+            outboxReplay.markSent(sendId)
+        }
+        return res
+    }
+
+    /// Replay any durable outbox entries through the (deduped) send path. Called
+    /// once at the end of `start()`, after the Python node is fully up (P1 #3:
+    /// stranded sends). Each entry is sent with its stable `sendId`; the dedup
+    /// check means a send already recorded (from a live attempt whose reply was
+    /// lost) is NOT re-sent, so replay is idempotent. A nil-id entry (pre-migration)
+    /// is always sent.
+    func replayOutbox() {
+        let pending = outboxReplay.pendingReplays()
+        guard !pending.isEmpty else { return }
+        ExtensionDiagLog.log("[NE-PY-RNS] replaying \(pending.count) outbox entr\(pending.count == 1 ? "y" : "ies")")
+        for entry in pending {
+            let fieldsHex = entry.fieldsData.map { data in
+                data.map { String(format: "%02x", $0) }.joined()
+            } ?? ""
+            let res = lxmfSend(destHashHex: entry.destHashHex, content: entry.content, method: entry.method, fieldsHex: fieldsHex, sendId: entry.sendId)
+            if let res, res["ok"] as? Bool == true {
+                ExtensionDiagLog.log("[NE-PY-RNS] outbox replay ok (id=\(entry.sendId ?? "nil"))")
+            } else {
+                // The send did not commit. The entry was already drained (read-all-
+                // and-clear), so re-queue it - NOT recorded in sentIds - to be
+                // retried on the next start. This keeps a transient send failure
+                // from silently losing the message.
+                outboxReplay.queue.append(entry)
+                ExtensionDiagLog.log("[NE-PY-RNS] outbox replay failed, re-queued (id=\(entry.sendId ?? "nil")): \(res?["reason"] as? String ?? "no reason")")
+            }
+        }
     }
 
     /// One-shot NomadNet page fetch over an RNS Link (Model B IPC path).
