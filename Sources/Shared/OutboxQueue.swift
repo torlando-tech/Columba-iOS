@@ -248,44 +248,95 @@ public final class OutboxQueue: @unchecked Sendable {
     ///
     /// - Returns: All decoded entries in append order, possibly empty.
     public func drainAll() -> [OutboxEntry] {
-        var entries: [OutboxEntry] = []
-
         withFileLock {
-            guard FileManager.default.fileExists(atPath: fileURL.path),
-                  let data = try? Data(contentsOf: fileURL),
-                  !data.isEmpty else {
-                return
-            }
-
-            var offset = 0
-            while offset + Self.headerSize <= data.count {
-                let length = Int(
-                    (UInt32(data[offset]) << 24) |
-                    (UInt32(data[offset + 1]) << 16) |
-                    (UInt32(data[offset + 2]) << 8) |
-                    UInt32(data[offset + 3])
-                )
-                offset += Self.headerSize
-
-                guard offset + length <= data.count else {
-                    // Truncated trailing record — stop parsing.
-                    break
-                }
-
-                let recordData = data[offset..<(offset + length)]
-                if let entry = try? JSONDecoder().decode(OutboxEntry.self, from: Data(recordData)) {
-                    entries.append(entry)
-                }
-                // A record that fails to decode is skipped, but we still advance by
-                // its framed length so the rest of the stream stays parseable.
-                offset += length
-            }
-
+            let entries = readAllLocked()
             // Truncate the file (read-all-and-clear).
             try? Data().write(to: fileURL, options: .atomic)
+            return entries
+        }
+    }
+
+    /// Non-destructive read: decode every entry in append order WITHOUT clearing
+    /// the file. Used by the outbox-replay path so that a replay can send entries
+    /// and only prune the ones it confirms as sent (P1 #3: a read-all-and-clear
+    /// here would drop entries the replay never reached if the extension stops
+    /// mid-loop). Concurrent app appends are preserved because the read is a plain
+    /// decode with no write.
+    public func pending() -> [OutboxEntry] {
+        withFileLock {
+            readAllLocked()
+        }
+    }
+
+    /// Atomically drop every entry for which `keep` returns false, rewriting the
+    /// file with the survivors in original order. The read-filter-rewrite happens
+    /// in ONE locked pass, so an entry the app appends while this runs is not
+    /// clobbered (the filter re-reads the fresh stream). Returns the number of
+    /// entries removed.
+    @discardableResult
+    public func remove(where keep: (OutboxEntry) -> Bool) -> Int {
+        withFileLock {
+            let all = readAllLocked()
+            let survivors = all.filter(keep)
+            try? writeLocked(survivors)
+            return all.count - survivors.count
+        }
+    }
+
+    /// Decode every record in `data` (or the file) into `[OutboxEntry]` in append
+    /// order. Caller must hold the file lock. Malformed / truncated tail records
+    /// stop parsing; a record whose JSON fails to decode is skipped individually
+    /// but parsing continues past it.
+    private func readAllLocked() -> [OutboxEntry] {
+        var entries: [OutboxEntry] = []
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+              let data = try? Data(contentsOf: fileURL),
+              !data.isEmpty else {
+            return entries
         }
 
+        var offset = 0
+        while offset + Self.headerSize <= data.count {
+            let length = Int(
+                (UInt32(data[offset]) << 24) |
+                (UInt32(data[offset + 1]) << 16) |
+                (UInt32(data[offset + 2]) << 8) |
+                UInt32(data[offset + 3])
+            )
+            offset += Self.headerSize
+
+            guard offset + length <= data.count else {
+                // Truncated trailing record - stop parsing.
+                break
+            }
+
+            let recordData = data[offset..<(offset + length)]
+            if let entry = try? JSONDecoder().decode(OutboxEntry.self, from: Data(recordData)) {
+                entries.append(entry)
+            }
+            // A record that fails to decode is skipped, but we still advance by
+            // its framed length so the rest of the stream stays parseable.
+            offset += length
+        }
         return entries
+    }
+
+    /// Atomically rewrite the file with exactly `entries` (length-framed, JSON),
+    /// replacing any prior contents. Caller must hold the file lock.
+    private func writeLocked(_ entries: [OutboxEntry]) throws {
+        var out = Data()
+        for entry in entries {
+            guard let payload = try? JSONEncoder().encode(entry) else { continue }
+            let length = UInt32(payload.count)
+            var header = Data(count: Self.headerSize)
+            header[0] = UInt8((length >> 24) & 0xFF)
+            header[1] = UInt8((length >> 16) & 0xFF)
+            header[2] = UInt8((length >> 8) & 0xFF)
+            header[3] = UInt8(length & 0xFF)
+            out.append(header)
+            out.append(payload)
+        }
+        try out.write(to: fileURL, options: .atomic)
     }
 
     /// True if the outbox file exists and is non-empty, without reading it.
@@ -303,7 +354,7 @@ public final class OutboxQueue: @unchecked Sendable {
     /// file. Identical strategy to `SharedFrameQueue.withFileLock` — a separate lock
     /// file keeps the advisory lock off the data file itself, and a separate `.lock`
     /// per queue name means the outbox never contends with the frame queues.
-    private func withFileLock(_ body: () -> Void) {
+    private func withFileLock<T>(_ body: () -> T) -> T {
         let lockPath = fileURL.path + ".lock"
 
         if !FileManager.default.fileExists(atPath: lockPath) {
@@ -312,10 +363,9 @@ public final class OutboxQueue: @unchecked Sendable {
 
         let lockFd = Darwin.open(lockPath, O_RDWR)
         guard lockFd >= 0 else {
-            // Can't open the lock file — run without the lock (best effort), same
+            // Can't open the lock file - run without the lock (best effort), same
             // as `SharedFrameQueue`.
-            body()
-            return
+            return body()
         }
 
         var fl = flock()
@@ -325,10 +375,11 @@ public final class OutboxQueue: @unchecked Sendable {
         fl.l_len = 0
         _ = fcntl(lockFd, F_SETLKW, &fl)
 
-        body()
+        let result = body()
 
         fl.l_type = Int16(F_UNLCK)
         _ = fcntl(lockFd, F_SETLK, &fl)
         Darwin.close(lockFd)
+        return result
     }
 }

@@ -43,17 +43,33 @@ public struct OutboxReplayCoordinator: @unchecked Sendable {
         self.sentIds = sentIds
     }
 
-    /// Drain the outbox and return the entries that still need replay, in append
-    /// order. An entry is replayed only when it carries no stable id (pre-migration
-    /// / unknown) OR its id is not yet recorded in the sent-id store. Entries whose
-    /// id is already sent are dropped (the NE delivered them; a lost reply that led
-    /// the app to re-enqueue the SAME id is the double-send this prevents).
+    /// Read the outbox and return the entries that still need replay, in append
+    /// order, WITHOUT clearing the file (P1 #3). An entry is replayed only when it
+    /// carries no stable id (pre-migration / unknown) OR its id is not yet recorded
+    /// in the sent-id store. Entries whose id is already sent are NOT replayed -
+    /// that single check is what stops a lost live reply + outbox replay from
+    /// double-sending, because the NE records the id the moment it sends.
     ///
-    /// The queue is cleared as part of the drain (read-all-and-clear); entries we
-    /// choose not to replay are intentionally discarded (they are already sent), so
-    /// the queue cannot refill with already-delivered messages.
+    /// The queue is NOT cleared here: `replayOutbox` sends each entry and then
+    /// calls `commitSent(_:)` to prune only the entries it confirmed as sent. A
+    /// read-all-and-clear here would drop the entries the replay never reaches if
+    /// the extension stops mid-loop, so every pending send stays on disk until it
+    /// is either confirmed sent or (re)attempted on the next pass.
     public func pendingReplays() -> [OutboxEntry] {
-        queue.drainAll().filter { entry in
+        queue.pending().filter { entry in
+            guard let sendId = entry.sendId else { return true }
+            return !sentIds.contains(sendId)
+        }
+    }
+
+    /// After `replayOutbox` has sent its batch, prune the queue down to the
+    /// entries that are NOT yet confirmed sent (the failed / not-yet-attempted
+    /// ones). This is the durability half of P1 #3: a send that succeeded is
+    /// removed now (and its id is in the store), but a send that failed STAYS on
+    /// disk so the next replay (or the next start) retries it instead of it
+    /// vanishing with the process.
+    public func commitSent() {
+        _ = queue.remove { entry in
             guard let sendId = entry.sendId else { return true }
             return !sentIds.contains(sendId)
         }
@@ -62,8 +78,15 @@ public struct OutboxReplayCoordinator: @unchecked Sendable {
     /// Record that a send (by stable id) was actually sent by the NE. Call this
     /// AFTER the send succeeds (or is accepted), so a later drain/restart does not
     /// re-send it. Idempotent. A nil id is a no-op (nothing to dedup against).
-    public func markSent(_ sendId: String?) {
-        guard let sendId, !sendId.isEmpty else { return }
-        sentIds.record(sendId)
+    ///
+    /// Returns whether the id is now durably recorded. `true` for a nil id (nothing
+    /// to persist) and when the append succeeds; `false` when a real id could not be
+    /// persisted (file open/write failure). The send path uses this to surface a
+    /// lost-dedup (see `NEPythonRNS.lxmfSend`) instead of silently claiming the
+    /// send is safe from a lost-reply re-enqueue.
+    @discardableResult
+    public func markSent(_ sendId: String?) -> Bool {
+        guard let sendId, !sendId.isEmpty else { return true }
+        return sentIds.record(sendId)
     }
 }

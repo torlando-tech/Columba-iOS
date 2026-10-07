@@ -237,6 +237,13 @@ class IOSRNodeInterface(Interface):
         self.bitrate = 10000  # Approximate LoRa bitrate (varies with SF/BW)
         self.rxb = 0
         self.txb = 0
+        # Announce counters, incremented by sent_announce()/received_announce().
+        # Initialized here (not lazily) so the first announce on this interface
+        # does not raise AttributeError (P1 #1).
+        self.atxc = 0
+        self.atxb = 0
+        self.arxc = 0
+        self.arxb = 0
         self.held_announces = []
         self.announce_allowed_at = 0
         self.announce_cap = RNS.Reticulum.ANNOUNCE_CAP

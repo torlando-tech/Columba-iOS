@@ -775,6 +775,40 @@ _ingress_retry_lock = threading.Lock()
 # per-artifact `_write_inbound_to_grdb` call does not re-enter the retry (or
 # re-store a just-failed artifact as a new one).
 _retrying_ingress = False
+# Bumped on start()/stop() so a running ingress-retry loop (P1 #9) detects a
+# (re)start / teardown and stops itself. Mirrors `_announce_generation`.
+_ingress_retry_generation = 0
+
+
+def _has_pending_ingress() -> bool:
+    """True when the NE-owned ingress-retry file exists and is non-empty."""
+    path = _ingress_retry_path()
+    if path is None:
+        return False
+    try:
+        with _ingress_retry_lock:
+            return os.path.isfile(path) and os.path.getsize(path) > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ingress_retry_loop(generation: int) -> None:
+    """P1 #9: periodically re-project retained inbound artifacts into the GRDB
+    store while the node is up, so a message whose store was unavailable when it
+    arrived is persisted the moment the store becomes reachable (the app creates
+    it on launch) - NOT only when the next inbound delivery happens to succeed.
+    A daemon thread that bails on each generation change (start/stop bump
+    `_ingress_retry_generation`), so it never outlives the node it is retrying
+    for and never survives a stop->start restart into the new node."""
+    while _ingress_retry_generation == generation:
+        # Only touch the store when something is actually retained; an empty
+        # (or missing) file makes this a no-op and we just sleep.
+        if _has_pending_ingress():
+            _retry_pending_ingress()
+        # 5s cadence: short enough that a freshly-launched app (store appears
+        # within seconds) picks up retained mail promptly; cheap when nothing is
+        # pending (a single os.stat under the lock).
+        time.sleep(5.0)
 
 
 def _ingress_retry_path() -> str | None:
@@ -857,6 +891,12 @@ def _reconstruct_ingress_message(fields: dict) -> Any:
         stamp=bytes.fromhex(fields["stamp_hex"]) if fields.get("stamp_hex") else None,
         timestamp=float(fields.get("timestamp") or time.time()),
         method=int(fields.get("method") or 0),
+        # Preserve the recorded skip_conversation decision (P1 #10): a retried
+        # location-only share must NOT be re-derived as a chat message (the
+        # reconstructed holder has no field-map to re-run the telemetry
+        # predicate against), which would create an empty chat + bump unread.
+        # Absent (older artifact) -> None -> the write re-derives from the holder.
+        skip_conversation=fields.get("skip_conversation"),
         rssi=fields.get("rssi"),
         snr=fields.get("snr"),
         q=fields.get("q"),
@@ -866,7 +906,16 @@ def _reconstruct_ingress_message(fields: dict) -> Any:
 def _retry_pending_ingress() -> int:
     """Project retained inbound artifacts into the GRDB store now that it is
     reachable. Idempotent (INSERT OR REPLACE by message_id). Returns the number
-    successfully projected. Best-effort; never raises."""
+    successfully projected. Best-effort; never raises.
+
+    P1 #8: the rewrite is MERGE-AWARE. We snapshot the file (under the lock),
+    project each line, then re-read the file and keep the UNION of (lines that
+    still failed this pass) and (lines currently on disk that were not in the
+    snapshot - i.e. a delivery that FAILED during our pass and appended while we
+    held the flag). A naive "write only remaining" would drop that just-appended
+    failure (it is not in `remaining`) and could also erase an artifact appended
+    between our read and rewrite. The union keeps new failures saved until they
+    reach the store, and drops only the ones that successfully projected."""
     global _retrying_ingress
     if _retrying_ingress:
         return 0
@@ -884,14 +933,20 @@ def _retry_pending_ingress() -> int:
         return 0
     if not raw_lines:
         return 0
+    # Canonical key per line (json round-trip, sorted keys) so a line appended
+    # with the same content as one we read is deduped, not doubled.
+    def _key(line: str) -> str:
+        try:
+            return json.dumps(json.loads(line), sort_keys=True, separators=(",", ":"))
+        except Exception:  # noqa: BLE001
+            return line
+    snapshot = [ln for ln in (l.strip() for l in raw_lines) if ln]
+    snapshot_keys = {_key(ln) for ln in snapshot}
     _retrying_ingress = True
     try:
         projected = 0
-        remaining: list[str] = []
-        for line in raw_lines:
-            line = line.strip()
-            if not line:
-                continue
+        failures: list[str] = []
+        for line in snapshot:
             try:
                 fields = json.loads(line)
             except Exception:  # noqa: BLE001
@@ -899,13 +954,24 @@ def _retry_pending_ingress() -> int:
             if _write_inbound_to_grdb_impl(_reconstruct_ingress_message(fields)):
                 projected += 1
             else:
-                remaining.append(line)
-        # Rewrite only the artifacts that still failed (store may still be down
-        # for some, or a new failure appeared). Under the lock so a concurrent
-        # store isn't interleaved.
+                failures.append(line)
+        failure_keys = {_key(ln) for ln in failures}
+        # Re-read under the lock: keep our failures + any NEW line appended since
+        # the snapshot (a concurrent delivery that failed while we were projecting).
         with _ingress_retry_lock:
+            disk: list[str] = []
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    disk = [ln for ln in (l.strip() for l in fh.readlines()) if ln]
+            except Exception:  # noqa: BLE001
+                disk = []
+            keep = list(failures)
+            for line in disk:
+                if _key(line) in failure_keys or _key(line) in snapshot_keys:
+                    continue  # already accounted for (failed or successfully projected)
+                keep.append(line)  # new failure appended during our pass
             with open(path, "w", encoding="utf-8") as fh:
-                for line in remaining:
+                for line in keep:
                     fh.write(line + "\n")
         return projected
     finally:
@@ -981,12 +1047,34 @@ def _write_inbound_to_grdb_impl(message: Any) -> bool:
             # conversation row, so we still persist the message below and only
             # skip the conversation upsert here. Mirrors the app-side
             # `isUserNotifiableMessage` / chat-view telemetry predicate.
-            skip_conversation = _is_telemetry_only_inbound(message)
+            # P1 #10: a RETRIED message carries its recorded decision on the
+            # holder (the reconstructed holder has no field-map to re-derive
+            # from), so honor it when present; otherwise derive from the holder.
+            recorded_skip = getattr(message, "skip_conversation", None)
+            skip_conversation = (
+                recorded_skip if recorded_skip is not None
+                else _is_telemetry_only_inbound(message)
+            )
+
+            # P1 #11: idempotency across retry re-projection. The message row is
+            # `INSERT OR REPLACE` (idempotent), but the conversation upsert below
+            # increments unread_count on EVERY call. If the extension stops after a
+            # retry commits the message row but before it clears the retained
+            # artifact, the next retry re-projects the SAME message: the row is
+            # replaced, but the conversation's unread count would be raised a second
+            # time. Guard: if this message_id is already stored, it was already
+            # counted when first persisted, so skip the conversation upsert (the
+            # message row is still refreshed below).
+            already_stored = conn.execute(
+                "SELECT 1 FROM messages WHERE message_id = ? LIMIT 1",
+                (message_id,),
+            ).fetchone() is not None
 
             # 1. Conversation upsert (foreign key requires it first). Mirrors
             #    LXMFSwift: set preview/timestamp if newer, increment unread if
-            #    inbound. Skipped for telemetry-only location shares (see above).
-            if not skip_conversation:
+            #    inbound. Skipped for telemetry-only location shares (see above)
+            #    and for an already-stored message (idempotency, see P1 #11).
+            if not skip_conversation and not already_stored:
                 cur = conn.execute(
                     "SELECT destination_hash, last_message_timestamp, unread_count "
                     "FROM conversations WHERE destination_hash = ?",
@@ -1065,9 +1153,17 @@ def _write_inbound_to_grdb(message: Any) -> bool:
     """Public inbound-persist entry point. Attempts the GRDB write; on failure it
     durably retains the raw artifact (`ingress-retry.jsonl`, NE-owned) so the
     message is not lost until the peer re-sends, and `_retry_pending_ingress`
-    projects it into the store once the store is reachable again (P1 #4)."""
+    projects it into the store once the store is reachable again (P1 #4).
+
+    P1 #8: a failing delivery is ALWAYS retained, including one that fails while
+    an ingress-retry pass is running (previously `and not _retrying_ingress`
+    suppressed the save, so a message that failed during the retry window was
+    dropped entirely). The retry pass's merge-aware rewrite (`_retry_pending_
+    ingress`) is safe against this: it re-reads the file after projecting and
+    keeps any line appended since its snapshot, so a just-appended failure is
+    picked up on the next pass rather than lost."""
     ok = _write_inbound_to_grdb_impl(message)
-    if not ok and not _retrying_ingress:
+    if not ok:
         fields = _ingress_retry_fields(message)
         if fields is not None:
             _store_ingress_retry_artifact(fields)
@@ -1623,6 +1719,19 @@ def start(
         # exception during partial startup cannot retain a global callback.
         _install_native_stamp_generator_unless_stopping()
         _state["started"] = True
+        # P1 #9: in NE mode (durable ingress-retry file), arm the periodic
+        # retry loop so retained inbound mail is projected into the GRDB store
+        # the moment the store becomes reachable (the app creates it on launch)
+        # instead of only on the next successful delivery. Generation-gated so a
+        # stop() bails it; NE-only (in-process has no ingress-retry file).
+        if host_persistence == "ne":
+            global _ingress_retry_generation
+            _ingress_retry_generation += 1
+            _ingress_retry_gen = _ingress_retry_generation
+            threading.Thread(
+                target=_ingress_retry_loop, args=(_ingress_retry_gen,),
+                daemon=True,
+            ).start()
         _put("state", value="connected")
         return _local_info()
 
@@ -2263,6 +2372,10 @@ def stop() -> None:
         _ble_bridge_handle = None
         # Supersede any in-flight delayed re-announce thread (see start()).
         _announce_generation += 1
+        # P1 #9: also bail the periodic ingress-retry loop (start() arms it in NE
+        # mode) so it stops re-projecting for a torn-down node.
+        global _ingress_retry_generation
+        _ingress_retry_generation += 1
 
         _state.update({
             "started": False,
@@ -3002,6 +3115,10 @@ def reset_identity(identity_path: str) -> None:
         _ble_bridge_handle = None
         # Supersede any in-flight delayed re-announce thread (see start()).
         _announce_generation += 1
+        # P1 #9: also bail the periodic ingress-retry loop (start() arms it in NE
+        # mode) so it stops re-projecting for a torn-down node.
+        global _ingress_retry_generation
+        _ingress_retry_generation += 1
         _state.update({
             "started": False,
             "reticulum": None,

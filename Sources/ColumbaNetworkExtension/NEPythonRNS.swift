@@ -45,6 +45,16 @@ final class NEPythonRNS: @unchecked Sendable {
     /// start) and the dedup (`lxmfSend` consults `sentIds` before sending).
     private let outboxReplay = OutboxReplayCoordinator()
 
+    /// The in-flight outbox-retry task (P1 #4). Non-nil while the node is up and
+    /// the retry loop is armed. Guarded by `stateLock`; the task is cancelled in
+    /// `stop()` so it can never outlive the node it is retrying for.
+    private var replayRetryTask: Task<Void, Never>?
+
+    /// Cadence between outbox-retry passes while the node is running (P1 #4): a
+    /// transient send failure (peer not connected yet, router not warm) is
+    /// re-attempted on this schedule instead of waiting for the next start.
+    private static let replayRetryIntervalNs: UInt64 = 5_000_000_000
+
     /// The shared keychain group the app stored the identity in (resolved once,
     /// so the keychain access-group probe isn't repeated on every start).
     private var cachedAccessGroup: String?
@@ -220,20 +230,58 @@ final class NEPythonRNS: @unchecked Sendable {
         }
         stateLock.lock(); isRunning = true; stateLock.unlock()
         ExtensionDiagLog.log("[NE-PY-RNS] start OK: \(result ?? "")")
-        // P1 #3: recover stranded sends. On a fresh (re)start, once the node is up,
-        // replay the durable outbox through the deduped send path. Gated to a real
-        // start (not an idempotent re-start of an already-running node) so a
-        // transiently-failing entry is not re-attempted on every .start.
+        // P1 #3: recover stranded sends. On a fresh (re)start, once the node is
+        // up, replay the durable outbox through the deduped send path (gated to a
+        // real start so a transiently-failing entry is not re-attempted on every
+        // idempotent re-start). P1 #4: arm the bounded outbox retry so a transient
+        // or persistent send failure is re-attempted on a cadence while the node
+        // stays up, instead of waiting for the next start. The retry self-terminates
+        // when the outbox empties or the node stops (no perpetual tick).
         if restarting {
             replayOutbox()
         }
+        armReplayRetry()
         return result
+    }
+
+    /// Arm the bounded outbox-retry loop (P1 #4). One task, started only while the
+    /// node is up; it re-runs `replayOutbox()` every `replayRetryInterval` while the
+    /// outbox still has entries, and stops itself the moment the queue drains or the
+    /// node stops. Idempotent: a re-start cancels any prior task before arming a new
+    /// one, so retry loops never stack. Safe to run alongside live sends because the
+    /// retry is a single sequential task (one pass at a time) and `lxmfSend` dedups
+    /// on `sendId` under the file lock.
+    private func armReplayRetry() {
+        stateLock.lock()
+        guard isRunning else { stateLock.unlock(); return }
+        replayRetryTask?.cancel()
+        replayRetryTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                self.stateLock.lock()
+                let running = self.isRunning
+                self.stateLock.unlock()
+                if !running { return }
+                guard !self.outboxReplay.pendingReplays().isEmpty else { return }
+                self.replayOutbox()
+                self.stateLock.lock()
+                let stillUp = self.isRunning
+                self.stateLock.unlock()
+                if !stillUp || self.outboxReplay.pendingReplays().isEmpty { return }
+                try? await Task.sleep(nanoseconds: Self.replayRetryIntervalNs)
+            }
+        }
+        stateLock.unlock()
     }
 
     func stop() {
         guard NEPythonRuntime.shared.state == .running else { return }
         _ = NEPythonRuntime.shared.callBridge("stop", payload: Self.payload(kwargs: [:]) ?? "{}")
-        stateLock.lock(); isRunning = false; stateLock.unlock()
+        stateLock.lock()
+        isRunning = false
+        replayRetryTask?.cancel()
+        replayRetryTask = nil
+        stateLock.unlock()
         ExtensionDiagLog.log("[NE-PY-RNS] stop")
     }
 
@@ -297,14 +345,25 @@ final class NEPythonRNS: @unchecked Sendable {
             ExtensionDiagLog.log("[NE-PY-RNS] lxmfSend: sendId already sent, dedup skip")
             return ["ok": true, "deduped": true, "message_hash": ""]
         }
-        let res = Self.dict(from: call("send_opportunistic", kwargs: [
+        var res = Self.dict(from: call("send_opportunistic", kwargs: [
             "dest_hash_hex": destHashHex,
             "content": content,
             "method": method,
             "fields_hex": fieldsHex,
         ]))
-        if let res, res["ok"] as? Bool == true, let sendId {
-            outboxReplay.markSent(sendId)
+        if let sendId, res?["ok"] as? Bool == true {
+            // P1 #5: a send that committed but whose id could NOT be persisted
+            // degrades the lost-reply double-send guard - the next drain/restart
+            // would find no saved id and re-send this message. We do NOT flip the
+            // send result to failure (the message actually went out; reporting
+            // failure would make the app re-enqueue it and double-send, which is
+            // strictly worse). Instead we surface it: mark the result so the send
+            // path / operators can see the guard is degraded, and log loudly.
+            let persisted = outboxReplay.markSent(sendId)
+            if !persisted {
+                ExtensionDiagLog.log("[NE-PY-RNS] lxmfSend WARNING: sendId committed but NOT persisted to the sent-id store - lost-reply double-send guard is degraded for this send (id=\(sendId))")
+                res?["id_persisted"] = false
+            }
         }
         return res
     }
@@ -327,14 +386,16 @@ final class NEPythonRNS: @unchecked Sendable {
             if let res, res["ok"] as? Bool == true {
                 ExtensionDiagLog.log("[NE-PY-RNS] outbox replay ok (id=\(entry.sendId ?? "nil"))")
             } else {
-                // The send did not commit. The entry was already drained (read-all-
-                // and-clear), so re-queue it - NOT recorded in sentIds - to be
-                // retried on the next start. This keeps a transient send failure
-                // from silently losing the message.
-                outboxReplay.queue.append(entry)
-                ExtensionDiagLog.log("[NE-PY-RNS] outbox replay failed, re-queued (id=\(entry.sendId ?? "nil")): \(res?["reason"] as? String ?? "no reason")")
+                ExtensionDiagLog.log("[NE-PY-RNS] outbox replay failed (id=\(entry.sendId ?? "nil")): \(res?["reason"] as? String ?? "no reason"))")
             }
         }
+        // Durability (P1 #3): the drain above was NON-destructive, so every entry
+        // is still on disk. Prune only the ones now confirmed sent (their ids are
+        // in the store); the failed / not-yet-reached ones STAY for the next
+        // replay or start. This is what makes a mid-loop stop safe: entries the
+        // loop never reached are never dropped, and a transient send failure is
+        // retried on the next pass instead of waiting for a restart.
+        outboxReplay.commitSent()
     }
 
     /// One-shot NomadNet page fetch over an RNS Link (Model B IPC path).
@@ -429,11 +490,27 @@ final class NEPythonRNS: @unchecked Sendable {
         }
         if !ok {
             #if DEBUG
-            ExtensionDiagLog.log("[NE-PY-RNS] \(fn) failed: \(error ?? "(no error)")")
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn) failed: \(Self.shortError(error))")
             #endif
             return nil
         }
         return result
+    }
+
+    /// Collapse a Python error (which may be a full `EXC at exec: ...` traceback
+    /// containing on-device container source paths) into a short, path-free failure
+    /// description for the debug log. The ext-diag.log contract forbids device
+    /// container paths, so a traceback is reduced to its final exception line (the
+    /// type + message - container paths live only in the `File "..."` frames above
+    /// it), and anything else is truncated. (P1 #7: the previous debug branch
+    /// logged the raw `format_exc()` including Python source paths.)
+    static func shortError(_ error: String?) -> String {
+        guard let error, !error.isEmpty else { return "(no error)" }
+        let lines = error.split(separator: "\n").map(String.init)
+        if let last = lines.last(where: { !$0.isEmpty }) {
+            return String(last.trimmingCharacters(in: .whitespaces).prefix(200))
+        }
+        return String(error.prefix(200))
     }
 
     /// Fire-and-forget call into a named rns_bridge function (BLE event
@@ -456,7 +533,7 @@ final class NEPythonRNS: @unchecked Sendable {
             return
         }
         if !ok {
-            ExtensionDiagLog.log("[NE-PY-RNS] \(fn) raised: \(error ?? "(no error)")")
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn) raised: \(Self.shortError(error))")
         }
     }
 

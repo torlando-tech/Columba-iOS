@@ -101,18 +101,19 @@ class IOSBLEDriverCallbackTests(unittest.TestCase):
 
     def test_identity_received_reconnect_under_new_address_dedups(self) -> None:
         """A peer reconnecting under a fresh randomized GATT address surfaces
-        its identity again via ``on_identity_received`` (not necessarily via
-        ``on_address_changed``). The driver must re-point the mapping and emit
-        ``on_address_changed(old, new, identity)`` so the upstream
-        ``BLEInterface._address_changed_callback`` migrates
-        ``address_to_identity`` / ``address_to_interface`` / ``peer_address``
-        / fragmenter+reassembler keys to the new address.
+        its identity again via ``on_identity_received``. The driver re-points the
+        address<->identity mapping immediately, but (P1 #2) DEFERS the
+        ``on_address_changed`` route migration until the NEW address has
+        actually connected: firing it the instant identity is seen would re-route
+        to an address whose GATT link may never come up (the handshake can fail
+        after identity is learned), leaving messages routed to a dead link.
 
-        Without this, the upstream ``address_to_identity`` map accumulates one
-        entry per reconnect (observed live: 5 entries for a single identity)
-        and RNS keeps routing announces to stale dead addresses
-        (``SEND-NO-TARGET``), which is the observed cause of flaky BLE
-        announce delivery.
+        So: identity at a new (not-yet-connected) address -> no migration yet;
+        once ``on_device_connected`` confirms the new link -> the migration
+        fires and the old address is evicted (the upstream ``BLEInterface`` then
+        migrates address_to_identity / peer_address / fragmenter keys). Without
+        the dedup, the upstream map accumulates one entry per reconnect and RNS
+        keeps routing announces to stale dead addresses (SEND-NO-TARGET).
         """
         driver = self.Driver()
         migrations = []
@@ -130,15 +131,53 @@ class IOSBLEDriverCallbackTests(unittest.TestCase):
         driver._raw_on_device_connected(old_address, identity)
 
         # Reconnect under a new randomized GATT address; the Swift bridge
-        # re-surfaces the identity as a fresh on_identity_received.
+        # re-surfaces the identity as a fresh on_identity_received. The new
+        # address is NOT yet connected, so the route migration is deferred.
         driver._raw_on_identity_received(new_address, identity_hex)
 
-        # Driver must re-point to the new address and tell upstream to migrate
-        # (so the wheel evicts the stale old address), not accumulate.
+        # Mapping is re-pointed to the new address, but the upstream migration
+        # callback has NOT fired yet (deferred until the new link connects).
+        self.assertEqual([], migrations)
+        self.assertEqual(new_address, driver._identity_to_address[identity_hex])
+        self.assertEqual(identity_hex, driver._address_to_identity.get(new_address))
+
+        # The new link comes up -> the deferred migration fires and evicts the
+        # old address so the wheel routes to the live address.
+        driver._raw_on_device_connected(new_address, identity)
+
         self.assertEqual([(old_address, new_address, identity_hex)], migrations)
         self.assertEqual(new_address, driver._identity_to_address[identity_hex])
         self.assertEqual(identity_hex, driver._address_to_identity.get(new_address))
         self.assertNotIn(old_address, driver._address_to_identity)
+
+    def test_identity_received_new_address_connect_fails_no_migration(self) -> None:
+        """P1 #2: if the new address reports identity but its GATT connect then
+        FAILS (never fires on_device_connected, the link drops), the route must
+        NOT have moved to the new address - the old address still owns it. The
+        deferred migration is simply dropped on disconnect, no on_address_changed
+        fires, and no stale pending entry leaks."""
+        driver = self.Driver()
+        migrations = []
+        driver.on_device_connected = lambda address, identity: None
+        driver.on_address_changed = lambda old, new, identity: migrations.append(
+            (old, new, identity)
+        )
+
+        identity = b"c" * 16
+        identity_hex = identity.hex()
+        old_address = "11111111-1111-1111-1111-111111111111"
+        new_address = "22222222-2222-2222-2222-222222222222"
+
+        driver._raw_on_device_connected(old_address, identity)
+        # Identity surfaces for a new address that then fails to connect.
+        driver._raw_on_identity_received(new_address, identity_hex)
+        driver._raw_on_device_disconnected(new_address)
+
+        # No migration ever fired; the old address is untouched.
+        self.assertEqual([], migrations)
+        self.assertIn(old_address, driver.connected_peers)
+        self.assertNotIn(new_address, driver.connected_peers)
+        self.assertEqual(0, len(driver._pending_address_migrations))
 
     def test_identity_received_distinct_identities_both_kept(self) -> None:
         """Guard against over-eager dedup: two *different* identities at two

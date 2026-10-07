@@ -266,12 +266,18 @@ public actor ModelBNetworkTransport: ColumbaLXSTTransport {
 
         switch state {
         case "established":
+            // Idempotency (P1 #6): a re-delivered `link_state=established` for the
+            // link we are ALREADY active on must be ignored. The ackInbox flow is
+            // at-least-once: if a drain reply is lost the same established row is
+            // re-delivered on the next drain, and treating that as a competing
+            // inbound call would BUSY + teardown OUR OWN live link. (This is the
+            // "link === activeLink" early return Model A does.) A genuinely
+            // competing inbound call is a DIFFERENT linkId, so it falls through.
+            guard activeLinkId != linkId else { return }
             guard inbound else {
-                // Outbound establishment is already reflected in activeLinkId
-                // (set when openLink returned). A re-delivered established event
-                // for the link we're already on must not be treated as a
-                // competing inbound call - that would BUSY our own live link
-                // (mirrors Model A's `link === activeLink` early return).
+                // Outbound establishment for a link we do not yet track is already
+                // reflected in activeLinkId (set when openLink returned); a stray
+                // outbound established for an untracked id is dropped.
                 return
             }
             await handleIncomingLinkEstablished(linkId: linkId)
