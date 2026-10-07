@@ -58,6 +58,13 @@ public final class SentIdStore: @unchecked Sendable {
     private var cachedFileBytes: Int = -1
     private var cacheLoaded = false
 
+    /// In-process mutex (Issue 2). The fcntl file lock is per-process on macOS and
+    /// cannot serialize two threads in the SAME extension (the live-send path and
+    /// the outbox retry task both touch this store). `withFileLock` takes this
+    /// first, so all cache + file access is serialized within a process while the
+    /// file lock still covers cross-process (app <-> NE) access.
+    private let processLock = NSLock()
+
     /// Default capacity cap: 10_000 ids (~500 KB of 36-char uuids).
     public static let defaultMaxCapacity = 10_000
 
@@ -233,9 +240,21 @@ public final class SentIdStore: @unchecked Sendable {
         cachedFileBytes = out.count
     }
 
-    /// Run `body` while holding an exclusive advisory lock on a sibling `.lock`
-    /// file (identical strategy to `OutboxQueue` / `SharedFrameQueue`).
+    /// Run `body` while holding BOTH an in-process lock AND an exclusive advisory
+    /// lock on a sibling `.lock` file (identical strategy to `OutboxQueue` /
+    /// `SharedFrameQueue`).
+    ///
+    /// The fcntl/flock file lock is PER-PROCESS on macOS: it serializes the app
+    /// and the NE (separate processes) but does NOT keep two threads within the
+    /// SAME extension from entering at once (the live-send path and the outbox
+    /// retry task both use this store, per Issue 2). The in-process `processLock`
+    /// closes that same-process gap; the file lock still covers the cross-process
+    /// case. Every cache mutation and read in this class runs under withFileLock,
+    /// so this single lock fully serializes the in-process access to `cachedIds` /
+    /// `cachedFileBytes` / `cacheLoaded`.
     private func withFileLock<T>(_ body: () -> T) -> T {
+        processLock.lock()
+        defer { processLock.unlock() }
         let lockPath = fileURL.path + ".lock"
         if !FileManager.default.fileExists(atPath: lockPath) {
             FileManager.default.createFile(atPath: lockPath, contents: nil)

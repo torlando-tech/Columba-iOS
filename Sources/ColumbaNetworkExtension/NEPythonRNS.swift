@@ -378,12 +378,23 @@ final class NEPythonRNS: @unchecked Sendable {
         let pending = outboxReplay.pendingReplays()
         guard !pending.isEmpty else { return }
         ExtensionDiagLog.log("[NE-PY-RNS] replaying \(pending.count) outbox entr\(pending.count == 1 ? "y" : "ies")")
+        // Issue 1: legacy (nil-sendId) entries have no store id to prune against,
+        // so we cannot let commitSent() dedup them via the sent-id store. Instead
+        // we track the EXACT entry objects we confirmed sent and remove those
+        // specifically below. A legacy entry that fails is NOT added here, so it
+        // stays on disk for the next pass; but unlike a sendId'd entry it is also
+        // never removed by the id check, so without this explicit tracking the new
+        // 5s retry loop would re-send a successfully-sent legacy entry forever.
+        var sentLegacyKeys = Set<String>()
         for entry in pending {
             let fieldsHex = entry.fieldsData.map { data in
                 data.map { String(format: "%02x", $0) }.joined()
             } ?? ""
             let res = lxmfSend(destHashHex: entry.destHashHex, content: entry.content, method: entry.method, fieldsHex: fieldsHex, sendId: entry.sendId)
             if let res, res["ok"] as? Bool == true {
+                if entry.sendId == nil {
+                    sentLegacyKeys.insert(entry.legacyKey)
+                }
                 ExtensionDiagLog.log("[NE-PY-RNS] outbox replay ok (id=\(entry.sendId ?? "nil"))")
             } else {
                 ExtensionDiagLog.log("[NE-PY-RNS] outbox replay failed (id=\(entry.sendId ?? "nil")): \(res?["reason"] as? String ?? "no reason"))")
@@ -391,11 +402,12 @@ final class NEPythonRNS: @unchecked Sendable {
         }
         // Durability (P1 #3): the drain above was NON-destructive, so every entry
         // is still on disk. Prune only the ones now confirmed sent (their ids are
-        // in the store); the failed / not-yet-reached ones STAY for the next
+        // in the store for sendId'd entries; the explicit legacyKey set for the
+        // nil-id ones). The failed / not-yet-reached ones STAY for the next
         // replay or start. This is what makes a mid-loop stop safe: entries the
         // loop never reached are never dropped, and a transient send failure is
         // retried on the next pass instead of waiting for a restart.
-        outboxReplay.commitSent()
+        outboxReplay.commitSent(legacyKeys: sentLegacyKeys)
     }
 
     /// One-shot NomadNet page fetch over an RNS Link (Model B IPC path).

@@ -68,10 +68,22 @@ public struct OutboxReplayCoordinator: @unchecked Sendable {
     /// removed now (and its id is in the store), but a send that failed STAYS on
     /// disk so the next replay (or the next start) retries it instead of it
     /// vanishing with the process.
-    public func commitSent() {
+    ///
+    /// Two pruning rules (Issue 1):
+    ///   - a `sendId`'d entry is removed once its id is recorded in `sentIds`;
+    ///   - a `sendId`-less (legacy) entry has no store id to check against, so it
+    ///     is removed ONLY when its `legacyKey` is in `legacyKeys` - the exact
+    ///     set of nil-id entries the caller confirmed sent this pass. Without this
+    ///     explicit set, a successfully-sent legacy entry would be kept forever
+    ///     and the bounded retry loop would re-send it on every pass.
+    /// `legacyKeys` defaults to empty (keep all legacy entries), matching the
+    /// pre-fix conservative behavior for any caller that does not track them.
+    public func commitSent(legacyKeys: Set<String> = []) {
         _ = queue.remove { entry in
-            guard let sendId = entry.sendId else { return true }
-            return !sentIds.contains(sendId)
+            if let sendId = entry.sendId {
+                return !sentIds.contains(sendId)
+            }
+            return !legacyKeys.contains(entry.legacyKey)
         }
     }
 

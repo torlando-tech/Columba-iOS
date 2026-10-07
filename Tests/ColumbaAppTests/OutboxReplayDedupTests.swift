@@ -78,7 +78,32 @@ final class OutboxReplayDedupTests: XCTestCase {
         coord.queue.append(entry(sendId: nil))
         coord.markSent("b")
         let pending = coord.pendingReplays()
-        XCTAssertEqual(pending.count, 2, "only the unrecorded ids replay: \(pending.map { $0.sendId ?? "nil" })")
+        XCTAssertEqual(coord.pendingReplays().count, 2, "only the unrecorded ids replay: \(pending.map { $0.sendId ?? "nil" })")
         XCTAssertEqual(Set(pending.compactMap { $0.sendId }), ["a"])
+    }
+
+    /// Issue 1 regression: a nil-id (legacy) entry has no store id, so the NE must
+    /// prune it by the confirmed-sent key. Before the fix, commitSent() kept every
+    /// nil-id entry, so the bounded 5s retry loop re-sent a successfully-sent
+    /// legacy message on every pass forever.
+    func testConfirmedLegacyEntryIsPruned() {
+        let coord = isolated()
+        let legacy = entry(sendId: nil, content: "legacy")
+        coord.queue.append(legacy)
+        XCTAssertEqual(coord.pendingReplays().count, 1, "a nil-id entry is a replay target")
+        // The NE sends it and confirms it -> commitSent with its legacyKey.
+        coord.commitSent(legacyKeys: [legacy.legacyKey])
+        XCTAssertEqual(coord.pendingReplays().count, 0, "the confirmed legacy entry must be pruned (no infinite re-send): \(coord.pendingReplays())")
+    }
+
+    /// A FAILED legacy entry is NOT confirmed, so it must STAY on disk for the
+    /// next pass (the mirror image of the pruning test: pruning only the exact
+    /// confirmed-sent entry, nothing else).
+    func testFailedLegacyEntryIsKept() {
+        let coord = isolated()
+        coord.queue.append(entry(sendId: nil, content: "legacy-fail"))
+        // No legacyKey confirmed (the send failed) -> nothing pruned.
+        coord.commitSent(legacyKeys: [])
+        XCTAssertEqual(coord.pendingReplays().count, 1, "a failed legacy entry must stay for retry")
     }
 }

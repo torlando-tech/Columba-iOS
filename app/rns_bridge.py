@@ -804,7 +804,24 @@ def _ingress_retry_loop(generation: int) -> None:
         # Only touch the store when something is actually retained; an empty
         # (or missing) file makes this a no-op and we just sleep.
         if _has_pending_ingress():
-            _retry_pending_ingress()
+            # Issue 3: projecting retained mail alone is not enough - the app's
+            # Chats list and ModelBInboundReplay only re-scan the store when they
+            # see the `newMessage` ping. A normal inbound delivery posts it (line
+            # ~1535), but a recovery here (a message retained while the store was
+            # unavailable, projected now that the app launched and created the
+            # store) would otherwise stay HIDDEN until the next real message or
+            # app relaunch. Post the ping ONLY when this pass actually recovered
+            # at least one message (projected > 0), so a no-op pass does not
+            # trigger a redundant reload. No banner is posted: the user is not
+            # being paged for a live arrival, and a repeated banner per 5s pass
+            # would be worse than silent; the newMessage reload surfaces the row.
+            projected = _retry_pending_ingress()
+            if projected > 0:
+                RNS.log(
+                    f"rns_bridge: ingress retry recovered {projected} retained message(s); posting newMessage",
+                    RNS.LOG_DEBUG,
+                )
+                _post_darwin(_DARWIN_NEW_MESSAGE)
         # 5s cadence: short enough that a freshly-launched app (store appears
         # within seconds) picks up retained mail promptly; cheap when nothing is
         # pending (a single os.stat under the lock).
