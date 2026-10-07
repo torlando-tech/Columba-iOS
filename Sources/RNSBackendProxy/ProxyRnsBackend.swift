@@ -627,6 +627,13 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                   let outcome = try? JSONDecoder().decode(ProxySendOutcome.self, from: payload) else {
                 return .other("malformed send response")
             }
+            // Surface a degraded dedup guard: the message went out, so the outcome
+            // stays .queued (flipping to failure would make the app re-enqueue and
+            // double-send, strictly worse). But when the NE could not persist the
+            // sendId, log loudly so the lost-reply re-enqueue risk is visible.
+            if outcome.idPersisted == false {
+                Self.log.warning("send committed but sendId NOT persisted to the sent-id store - lost-reply double-send guard degraded for this message")
+            }
             // Live IPC success — behave exactly as before (real LXMF hash from NE).
             return Self.sendOutcome(from: outcome)
         case .error, .unsupported:

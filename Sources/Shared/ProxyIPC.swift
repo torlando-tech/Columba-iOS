@@ -514,10 +514,16 @@ public struct ProxySendOutcome: Codable, Sendable, Equatable {
     public let kind: Kind
     /// `messageHash` for `.queued`; the reason string for `.other`; nil otherwise.
     public let detail: String?
+    /// `false` when the NE could not persist the sendId to the sent-ID store
+    /// (file open/write failure). The send still went out, but the lost-reply
+    /// double-send guard is degraded for this message. `nil` (the common case)
+    /// means the ID was persisted or there was no ID to persist.
+    public let idPersisted: Bool?
 
-    public init(kind: Kind, detail: String? = nil) {
+    public init(kind: Kind, detail: String? = nil, idPersisted: Bool? = nil) {
         self.kind = kind
         self.detail = detail
+        self.idPersisted = idPersisted
     }
 }
 

@@ -136,16 +136,17 @@ public struct OutboxEntry: Codable, Sendable, Equatable {
     /// A stable identity for a `sendId`-less (pre-migration / unknown-id) entry,
     /// used by the NE to prune the EXACT legacy entry it just confirmed sent. A
     /// nil id has no store id to prune against (`SentIdStore` can't be asked), so
-    /// the entry must be removed by this content-derived key instead. Two entries
-    /// share a key only when they are byte-identical sends (same destination,
-    /// content, method, fields) - i.e. true duplicates - so pruning every match is
-    /// correct: a failed duplicate is redundant with its identical sibling that
-    /// did send.
+    /// the entry must be removed by this key instead.
+    ///
+    /// The key includes `createdAt` so two entries with identical content (same
+    /// destination, text, method, fields) but different enqueue times are
+    /// distinct: pruning a confirmed-sent entry does not remove its identical
+    /// sibling that failed, which would lose the failed message forever.
     public var legacyKey: String {
         let fieldsHex = fieldsData.map { data in
             data.map { String(format: "%02x", $0) }.joined()
         } ?? ""
-        return [destHashHex, content, method, fieldsHex].joined(separator: "\u{1F}")
+        return [destHashHex, content, method, fieldsHex, createdAt.description].joined(separator: "\u{1F}")
     }
 
     /// Tolerant decode: an on-disk entry written before `sendId` existed (no key)

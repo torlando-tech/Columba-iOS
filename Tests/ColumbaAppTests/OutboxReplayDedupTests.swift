@@ -106,4 +106,32 @@ final class OutboxReplayDedupTests: XCTestCase {
         coord.commitSent(legacyKeys: [])
         XCTAssertEqual(coord.pendingReplays().count, 1, "a failed legacy entry must stay for retry")
     }
+
+    /// Issue 1 regression: two legacy entries with identical content (same
+    /// destination, text, method, fields) but different `createdAt` are distinct
+    /// sends. Before the fix, `legacyKey` was content-derived (no createdAt), so
+    /// both entries shared the same key and `commitSent` removed BOTH when one
+    /// succeeded and the other failed, losing the failed message forever.
+    func testIdenticalContentLegacyEntriesAreDistinct() {
+        let coord = isolated()
+        // Two sends with the same content but different enqueue times.
+        let dest = "aa".padding(toLength: 64, withPad: "0", startingAt: 0)
+        let first = OutboxEntry(destHashHex: dest, content: "hi", method: "opportunistic",
+                                fieldsData: nil, messageHashHex: nil, sendId: nil,
+                                createdAt: 1_700_000_000.0)
+        let second = OutboxEntry(destHashHex: dest, content: "hi", method: "opportunistic",
+                                 fieldsData: nil, messageHashHex: nil, sendId: nil,
+                                 createdAt: 1_700_000_001.0)
+        coord.queue.append(first)
+        coord.queue.append(second)
+        XCTAssertEqual(coord.pendingReplays().count, 2)
+        // The keys must be distinct (createdAt disambiguates).
+        XCTAssertNotEqual(first.legacyKey, second.legacyKey,
+                          "identical-content legacy entries must have distinct keys")
+        // Only the first was confirmed sent -> prune only its key.
+        coord.commitSent(legacyKeys: [first.legacyKey])
+        XCTAssertEqual(coord.pendingReplays().count, 1,
+                       "only the confirmed-sent entry is pruned; the failed sibling stays")
+        XCTAssertEqual(coord.pendingReplays().first?.createdAt, 1_700_000_001.0)
+    }
 }

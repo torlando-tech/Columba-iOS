@@ -731,8 +731,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             case nil:               return ProxySendOutcome(kind: .other, detail: "send failed")
             }
         }
-        // ok == true ⇒ a committed send.
-        return ProxySendOutcome(kind: .queued, detail: res["message_hash"] as? String)
+        // ok == true ⇒ a committed send. Surface a degraded dedup guard: the NE
+        // sets id_persisted=false when it could not persist the sendId (file
+        // write failure). The message went out, so the outcome is still .queued
+        // (flipping to failure would make the app re-enqueue and double-send,
+        // which is strictly worse); the flag lets the app log the degradation.
+        let idPersisted = res["id_persisted"] as? Bool
+        return ProxySendOutcome(kind: .queued, detail: res["message_hash"] as? String, idPersisted: idPersisted)
     }
 
     private static func jsonObj(_ json: String) -> [String: Any]? {
