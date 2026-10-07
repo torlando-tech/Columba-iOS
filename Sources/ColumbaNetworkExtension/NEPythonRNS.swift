@@ -351,6 +351,18 @@ final class NEPythonRNS: @unchecked Sendable {
             "method": method,
             "fields_hex": fieldsHex,
         ]))
+        // Log every send outcome (success AND the failure reason) so the send
+        // path is observable in ext-diag.log. Previously only dedup-skip and a
+        // persist-warning were logged, so a plain send or a "requesting-path" /
+        // "not-started" failure left zero trace and was indistinguishable from
+        // "never called".
+        if let res {
+            let reason = res["reason"] as? String ?? (res["ok"] as? Bool == true ? "sent" : "unknown")
+            let ok = res["ok"] as? Bool ?? false
+            ExtensionDiagLog.log("[NE-PY-RNS] lxmfSend dest=\(String(destHashHex.prefix(8))) method=\(method) sendId=\(sendId ?? "nil") ok=\(ok) reason=\(reason)")
+        } else {
+            ExtensionDiagLog.log("[NE-PY-RNS] lxmfSend dest=\(String(destHashHex.prefix(8))) method=\(method) sendId=\(sendId ?? "nil") ok=false reason=python-returned-nil")
+        }
         if let sendId, res?["ok"] as? Bool == true {
             // P1 #5: a send that committed but whose id could NOT be persisted
             // degrades the lost-reply double-send guard - the next drain/restart

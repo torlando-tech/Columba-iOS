@@ -781,20 +781,28 @@ public final class MessagingViewModel {
         guard let backend else {
             throw NSError(domain: "MessagingViewModel", code: 1)
         }
-        return try await backend.lxmf.sendLxmfMessage(
-            destHashHex: request.destHashHex,
-            content: request.content,
-            method: request.method,
-            failureFallbackMethod: request.failureFallbackMethod,
-            imageData: request.imageData,
-            imageFormat: request.imageFormat,
-            fileAttachments: request.fileAttachments,
-            audioAttachment: request.audioAttachment,
-            iconAppearance: request.iconAppearance,
-            replyToMessageHashHex: request.replyToMessageHashHex,
-            replyQuotedContent: request.replyQuotedContent,
-            extraFields: request.extraFields
-        )
+        DiagLog.log("[SEND] sendLxmfMessage dest=\(request.destHashHex.prefix(8)) method=\(request.method.rawValue) content_bytes=\(request.content.utf8.count) fallback=\(request.failureFallbackMethod?.rawValue ?? "nil")")
+        do {
+            let outcome = try await backend.lxmf.sendLxmfMessage(
+                destHashHex: request.destHashHex,
+                content: request.content,
+                method: request.method,
+                failureFallbackMethod: request.failureFallbackMethod,
+                imageData: request.imageData,
+                imageFormat: request.imageFormat,
+                fileAttachments: request.fileAttachments,
+                audioAttachment: request.audioAttachment,
+                iconAppearance: request.iconAppearance,
+                replyToMessageHashHex: request.replyToMessageHashHex,
+                replyQuotedContent: request.replyQuotedContent,
+                extraFields: request.extraFields
+            )
+            DiagLog.log("[SEND] outcome=\(outcome)")
+            return outcome
+        } catch {
+            DiagLog.log("[SEND] threw error=\(error)")
+            throw error
+        }
     }
 
     private static func failureCategory(_ error: Error) -> String {
