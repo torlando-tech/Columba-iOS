@@ -177,6 +177,17 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// Kept only for compatibility.
     case heardAnnounces
 
+    /// Advance the NE durable-event inbox cursor (Contract §5, architecture
+    /// review Spec #5). The NE's `drain_inbox` is a bounded, NON-destructive
+    /// read: it returns every unacked row (each carrying its `seq`) but does not
+    /// delete. After the app has processed a drained batch it acks the highest
+    /// `seq` in that batch; the NE then deletes only rows at or below the
+    /// cursor. Unacked rows survive a lost drain reply or an app termination and
+    /// are re-returned on the next drain (at-least-once delivery; announce
+    /// dedup in the app makes the re-delivery idempotent). Response payload: a
+    /// Bool-as-JSON (true on success). Fire-and-forget from the app's drain path.
+    case ackInbox(maxSeq: Int)
+
     /// Drain the NE's full event queue (every `rns_bridge._put` kind: inbound,
     /// delivery, state, link_state, link_packet, link_identified, announce).
     /// This is the Model B event bridge: the NE owns RNS in-process, so the app
@@ -256,6 +267,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case op, displayName, destHashHex, content, method, fieldsData, sendId
         case path, timeoutSeconds, formFields
         case aspect, identityPublicKeyHex, linkId, dataHex
+        case maxSeq
     }
 
     /// Stable discriminator strings (decoupled from the Swift case names so a
@@ -265,6 +277,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
         case drainEvents, bleConnections, bleDisconnect, nomadnetFetch
         case openLink, linkSend, linkIdentify, linkTeardown
+        case ackInbox
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -324,6 +337,9 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case .linkTeardown(let linkId):
             try c.encode(Op.linkTeardown, forKey: .op)
             try c.encode(linkId, forKey: .linkId)
+        case .ackInbox(let maxSeq):
+            try c.encode(Op.ackInbox, forKey: .op)
+            try c.encode(maxSeq, forKey: .maxSeq)
         }
     }
 
@@ -383,6 +399,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .linkIdentify(linkId: try c.decode(Int.self, forKey: .linkId))
         case .linkTeardown:
             self = .linkTeardown(linkId: try c.decode(Int.self, forKey: .linkId))
+        case .ackInbox:
+            self = .ackInbox(maxSeq: try c.decode(Int.self, forKey: .maxSeq))
         }
     }
 }
@@ -602,6 +620,12 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
     /// `<identity>.lxmf.delivery` contact hash (the identity hash alone is not
     /// enough - the delivery hash derives from the full public-key blob).
     public let publicKeyHex: String?
+    /// Durable-inbox cursor `seq` (architecture review Spec #5). Present on every
+    /// event drained in Model B durable mode (the NE's `drain_inbox` returns each
+    /// unacked row with its `seq`); the app acks the highest `seq` in a batch via
+    /// `.ackInbox` so unacked rows survive a lost reply / app death. Absent on the
+    /// in-process (Model A) path and on non-durable events.
+    public let seq: Int?
 
     public init(
         kind: String, t: Double,
@@ -611,7 +635,7 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         title: String? = nil, fieldsHex: String? = nil, method: String? = nil,
         state: String? = nil, reason: String? = nil, rssi: Double? = nil, snr: Double? = nil,
         linkId: Int? = nil, dataHex: String? = nil, identityHashHex: String? = nil, inbound: Bool? = nil,
-        publicKeyHex: String? = nil
+        publicKeyHex: String? = nil, seq: Int? = nil
     ) {
         self.kind = kind
         self.t = t
@@ -636,6 +660,7 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         self.identityHashHex = identityHashHex
         self.inbound = inbound
         self.publicKeyHex = publicKeyHex
+        self.seq = seq
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -648,5 +673,6 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         case linkId = "link_id", dataHex = "data_hex", identityHashHex = "identity_hash"
         case inbound
         case publicKeyHex = "public_key"
+        case seq
     }
 }

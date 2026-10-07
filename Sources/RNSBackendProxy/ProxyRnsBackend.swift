@@ -381,6 +381,16 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             return
         }
         stateLock.unlock()
+        // Contract §5: `drainEvents` is now a bounded, non-destructive read. After
+        // we have re-emitted the whole batch on the event stream, ack the highest
+        // `seq` so the NE advances its cursor and deletes only the processed
+        // rows. Ack the max over EVERY event in the batch (not just the ones we
+        // yielded): the NE already emitted each row, so a deduped announce we
+        // skip here is still consumed. An ack is fire-and-forget: if it is lost,
+        // or the app dies before it lands, the unacked rows survive and are
+        // re-returned on the next drain (at-least-once; announce dedup + the
+        // UI's message-hash idempotency make the re-delivery harmless).
+        let ackSeq = events.compactMap(\.seq).max()
         for e in events {
             switch e.kind {
             case "announce":
@@ -464,6 +474,18 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             default:
                 // Unknown kind (forward-compatible): drop, don't crash.
                 continue
+            }
+        }
+        // Ack the cursor only if this batch is still the live incarnation: a
+        // stop() during the loop bumped startGeneration, and acking a stale
+        // batch would advance the cursor past rows the new incarnation has not
+        // yet seen (the new node re-emits its own events on its own drain).
+        if let ackSeq {
+            stateLock.lock()
+            let stillLive = (myGeneration == startGeneration)
+            stateLock.unlock()
+            if stillLive {
+                _ = try? await roundTrip(.ackInbox(maxSeq: ackSeq), op: "ackInbox")
             }
         }
     }
@@ -889,14 +911,14 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// remaining ops.
     public var capabilities: BackendCapabilities {
         BackendCapabilities(
-            backendId: .swiftNative,
-            versions: .init(reticulum: "0.2.3", lxmf: "0.3.4", lxst: nil, bleReticulum: nil),
+            backendId: .pythonEmbedded,
+            versions: .init(reticulum: nil, lxmf: nil, lxst: nil, bleReticulum: nil),
             interfaces: .init(hotReloadInterfaces: false),
             telemetry: .init(
                 collectorHostMode: .unsupported,
                 storeOwnTelemetry: .unsupported,
                 allowedRequestersFilter: .unsupported,
-                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony/nomadnet/interface-admin are not proxied yet."
+                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony/interface-admin are not proxied yet. NomadNet fetch IS proxied via the NE."
             ),
             performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )

@@ -271,6 +271,16 @@ final class NEPythonRNS: @unchecked Sendable {
         return arr
     }
 
+    /// `rns_bridge.ack_inbox(max_seq)` - advance the durable-inbox consumer
+    /// cursor (Contract §5). The app calls this after it has processed a drained
+    /// batch, passing the highest `seq` in that batch; the NE deletes only rows
+    /// at or below the cursor. Best-effort (the Python ack is idempotent and
+    /// safe below the floor); a failure just means the rows are re-returned on
+    /// the next drain (at-least-once).
+    func ackInbox(maxSeq: Int) {
+        invoke("ack_inbox", kwargs: ["max_seq": maxSeq])
+    }
+
     /// `rns_bridge.persist()` → `{ok, ...}`.
     func persist() -> [String: Any]? {
         Self.dict(from: call("persist", kwargs: [:]))

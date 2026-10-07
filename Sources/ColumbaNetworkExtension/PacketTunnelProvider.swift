@@ -493,6 +493,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             let mapped = events.map { Self.mapProxyEvent($0) }
             return .ok(try? JSONEncoder().encode(mapped))
 
+        case .ackInbox(let maxSeq):
+            // Advance the durable-inbox cursor (Contract §5). `drain_inbox` is a
+            // bounded, non-destructive read; the app acks the highest `seq` it has
+            // processed, and the NE deletes only rows at or below the cursor.
+            // Unacked rows survive a lost drain reply / app death and are
+            // re-returned on the next drain (at-least-once; announce dedup in the
+            // app makes re-delivery idempotent).
+            engine.ackInbox(maxSeq: maxSeq)
+            return .ok(try? JSONEncoder().encode(true))
+
         case .bleConnections:
             // Phase 2: the mesh CoreBluetooth radio now runs IN-PROCESS in the
             // NE (SwiftBLEBridge, linked into this target). The app's BLE
@@ -683,7 +693,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             dataHex: e["data_hex"] as? String,
             identityHashHex: e["identity_hash"] as? String,
             inbound: e["inbound"] as? Bool,
-            publicKeyHex: e["public_key"] as? String
+            publicKeyHex: e["public_key"] as? String,
+            seq: e["seq"] as? Int
         )
     }
 

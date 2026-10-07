@@ -550,5 +550,165 @@ class RnsBridgeIngressRetryTest(unittest.TestCase):
         return d
 
 
+class RnsBridgeInboxDrainTest(unittest.TestCase):
+    """Spec #5: durable events must not be deleted on read.
+
+    Bug: `drain_inbox` read + `DELETE FROM ne_inbox` the whole table, so a lost
+    IPC reply (or app termination before the drain reply is processed) loses
+    delivery-state updates and announces permanently. The review (Contract §5)
+    requires bounded reads + an explicit ack/cursor advance AFTER the consumer
+    processes the rows.
+
+    These tests assert against REAL temp files via an independent connection:
+    - `drain_inbox` reads but does NOT delete (the rows survive the read).
+    - `drain_inbox` returns each row's `seq` so the consumer can ack precisely.
+    - `ack_inbox(max_seq)` deletes only rows at or below the ack'd cursor,
+      leaving newer (not-yet-acked) rows intact.
+    """
+
+    def setUp(self):
+        self._fresh()
+
+    def _fresh(self):
+        ns = {
+            "Any": object,
+            "os": __import__("os"),
+            "sqlite3": sqlite3,
+            "json": json,
+            "time": time,
+            "threading": threading,
+            "RNS": types.SimpleNamespace(
+                log=lambda *a, **k: None,
+                LOG_ERROR=0,
+            ),
+            "_inbox_path": None,
+            "_inbox_conn": None,
+            "_inbox_bound_path": None,
+            "_inbox_lock": threading.Lock(),
+            "_durable_mode": False,
+            "_coalesced_events_ping": lambda: None,
+            "_post_link_events_ping": lambda: None,
+        }
+        exec(
+            compile(
+                ast.Module(body=_extract([
+                    "_set_inbox_path", "_open_inbox",
+                    "_publish_durable", "_put",
+                    "drain_inbox", "ack_inbox",
+                ]), type_ignores=[]),
+                str(BRIDGE),
+                "exec",
+            ),
+            ns,
+        )
+        self.ns = ns
+
+    def _create_store(self, path):
+        conn = sqlite3.connect(str(path))
+        try:
+            conn.execute(_INBOX_TABLE)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _inbox_count(self, path):
+        conn = sqlite3.connect(str(path))
+        try:
+            conn.execute(_INBOX_TABLE)
+            return conn.execute("SELECT COUNT(*) FROM ne_inbox").fetchone()[0]
+        finally:
+            conn.close()
+
+    def _dir(self):
+        import tempfile
+        d = Path(tempfile.mkdtemp(prefix="rns_inbox_drain_"))
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def _point_at(self, path):
+        self._create_store(path)
+        self.ns["_set_inbox_path"](str(path))
+
+    def test_drain_inbox_does_not_delete(self):
+        """Reading the inbox must NOT delete rows (bounded read)."""
+        p = self._dir() / "inbox.db"
+        self._point_at(p)
+        self.ns["_put"]("state", note="e1")
+        self.ns["_put"]("delivery", note="e2")
+        self.assertEqual(2, self._inbox_count(p))
+
+        events = self.ns["drain_inbox"]()
+        self.assertEqual(2, len(events), "drain must return both events")
+
+        # The read must NOT have cleared the table: a lost reply / app death
+        # before the consumer acks must not lose the events.
+        self.assertEqual(
+            2, self._inbox_count(p),
+            "drain_inbox must be a bounded read; rows survive until ack_inbox",
+        )
+
+    def test_drain_inbox_carries_seq(self):
+        """Each drained event carries its `seq` so the consumer can ack it."""
+        p = self._dir() / "inbox.db"
+        self._point_at(p)
+        self.ns["_put"]("state", note="first")
+        self.ns["_put"]("state", note="second")
+
+        events = self.ns["drain_inbox"]()
+        self.assertEqual(2, len(events))
+        self.assertIn("seq", events[0], "drained event must carry its seq")
+        self.assertIn("seq", events[1], "drained event must carry its seq")
+        self.assertLess(events[0]["seq"], events[1]["seq"], "oldest-first seq order")
+
+    def test_ack_inbox_deletes_only_below_cursor(self):
+        """ack_inbox(max_seq) deletes rows at/below the cursor, keeps newer."""
+        p = self._dir() / "inbox.db"
+        self._point_at(p)
+        self.ns["_put"]("state", note="a")
+        self.ns["_put"]("state", note="b")
+        self.ns["_put"]("state", note="c")
+
+        events = self.ns["drain_inbox"]()
+        self.assertEqual(3, len(events))
+        seq_b = events[1]["seq"]  # ack through the middle row
+
+        self.ns["ack_inbox"](seq_b)
+        self.assertEqual(
+            1, self._inbox_count(p),
+            "only rows at/below the ack'd cursor are deleted; the newest survives",
+        )
+
+    def test_ack_inbox_is_idempotent_and_safe_below_floor(self):
+        """A second ack at the same / a lower cursor deletes nothing new."""
+        p = self._dir() / "inbox.db"
+        self._point_at(p)
+        self.ns["_put"]("state", note="a")
+        self.ns["_put"]("state", note="b")
+
+        events = self.ns["drain_inbox"]()
+        seq_a = events[0]["seq"]
+        self.ns["ack_inbox"](seq_a)
+        self.assertEqual(1, self._inbox_count(p))
+
+        # Re-ack at the same cursor: no-op (row already gone), count unchanged.
+        self.ns["ack_inbox"](seq_a)
+        self.assertEqual(1, self._inbox_count(p))
+
+    def test_drain_after_ack_returns_only_unacked(self):
+        """After an ack, a re-drain returns only the still-unacked rows."""
+        p = self._dir() / "inbox.db"
+        self._point_at(p)
+        self.ns["_put"]("state", note="a")
+        self.ns["_put"]("state", note="b")
+
+        first = self.ns["drain_inbox"]()
+        self.assertEqual(2, len(first))
+        self.ns["ack_inbox"](first[0]["seq"])
+
+        second = self.ns["drain_inbox"]()
+        self.assertEqual(1, len(second), "only the unacked row is re-returned")
+        self.assertEqual("b", second[0].get("note"))
+
+
 if __name__ == "__main__":
     unittest.main()

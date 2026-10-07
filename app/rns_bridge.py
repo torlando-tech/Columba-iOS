@@ -587,33 +587,63 @@ def _publish_durable(kind: str, payload: dict) -> None:
 
 
 def drain_inbox() -> list:
-    """Read + clear the durable inbox, oldest-first. Returns the raw event dicts
-    (kind + t + the original payload fields). The app maps each onto a BackendEvent
-    and feeds its `backend.events` consumer. Called by the app over IPC in
-    response to the Darwin ping (or on launch / foreground)."""
+    """Read the durable inbox, oldest-first, WITHOUT deleting. Returns the raw
+    event dicts (kind + t + the original payload fields) PLUS a `_seq` field so
+    the consumer can ack precisely. The app maps each onto a BackendEvent and
+    feeds its `backend.events` consumer, then advances the cursor via
+    `ack_inbox(max_seq)` once it has processed the batch.
+
+    Contract §5: the read is bounded and NON-destructive. Deleting on read (the
+    prior behavior) meant a lost IPC reply or an app termination before the
+    consumer processed the batch lost delivery-state updates and announces
+    permanently. With the cursor, unacked rows survive and are re-returned on
+    the next drain; `ack_inbox` advances past them only after the consumer has
+    handled them (at-least-once delivery)."""
     with _inbox_lock:
         _open_inbox()
         if _inbox_conn is None:
             return []
         try:
             cur = _inbox_conn.execute(
-                "SELECT kind, payload FROM ne_inbox ORDER BY seq ASC"
+                "SELECT seq, kind, payload FROM ne_inbox ORDER BY seq ASC"
             )
             rows = cur.fetchall()
             if not rows:
                 return []
             out = []
-            for kind, payload in rows:
+            for seq, kind, payload in rows:
                 try:
-                    out.append(json.loads(payload))
+                    event = json.loads(payload)
                 except Exception:  # noqa: BLE001
                     continue
-            _inbox_conn.execute("DELETE FROM ne_inbox")
-            _inbox_conn.commit()
+                event["seq"] = seq
+                out.append(event)
             return out
         except Exception as e:  # noqa: BLE001
             RNS.log(f"rns_bridge: inbox drain failed: {e}", RNS.LOG_ERROR)
             return []
+
+
+def ack_inbox(max_seq: int) -> None:
+    """Advance the inbox consumer cursor: delete rows at or below `max_seq`.
+
+    Called by the app over IPC AFTER it has processed a drained batch (the
+    highest `_seq` in that batch is the cursor). Rows above the cursor - i.e.
+    events appended after the drain or a later batch not yet acked - are left
+    intact. Idempotent and safe below the floor (re-acking an already-deleted
+    cursor deletes nothing). Contract §5: durable changes advance by explicit
+    ack/cursor, not by a destructive read."""
+    with _inbox_lock:
+        _open_inbox()
+        if _inbox_conn is None:
+            return
+        try:
+            _inbox_conn.execute(
+                "DELETE FROM ne_inbox WHERE seq <= ?", (int(max_seq),)
+            )
+            _inbox_conn.commit()
+        except Exception as e:  # noqa: BLE001
+            RNS.log(f"rns_bridge: inbox ack failed: {e}", RNS.LOG_ERROR)
 
 
 # ── Shared GRDB message store (NE → app, Model B) ──
