@@ -538,7 +538,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                 bytesReceived: s.bytesReceived,
                 packetsSent: s.packetsSent,
                 packetsReceived: s.packetsReceived,
-                signalQuality: Self.signalQuality(forRssi: s.rssi)
+                signalQuality: SignalQuality.quality(forRssi: s.rssi)
             )
         }
     }
@@ -554,16 +554,6 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             return false
         }
         return ok
-    }
-
-    /// RSSI dBm → coarse signal bucket (60/75/90 steps), matching the Model A
-    /// mapping in `AppServices`.
-    private static func signalQuality(forRssi rssi: Int) -> SignalQuality {
-        let absRssi = abs(rssi)
-        if absRssi < 60 { return .excellent }
-        if absRssi < 75 { return .good }
-        if absRssi < 90 { return .fair }
-        return .poor
     }
 
     @discardableResult

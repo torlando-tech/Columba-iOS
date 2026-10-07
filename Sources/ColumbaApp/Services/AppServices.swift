@@ -5259,20 +5259,9 @@ public final class AppServices {
                 bytesReceived: 0,
                 packetsSent: 0,
                 packetsReceived: 0,
-                signalQuality: signalQuality(forRssi: rssi)
+                signalQuality: SignalQuality.quality(forRssi: rssi)
             )
         }
-    }
-
-    /// Map RSSI dBm to a coarse signal-quality bucket. Thresholds borrowed
-    /// from the existing BLEDevicePickerSheet indicator (60/75/90 dBm steps).
-    private func signalQuality(forRssi rssi: Int?) -> SignalQuality {
-        guard let rssi else { return .unknown }
-        let absRssi = abs(rssi)
-        if absRssi < 60 { return .excellent }
-        if absRssi < 75 { return .good }
-        if absRssi < 90 { return .fair }
-        return .poor
     }
 
     /// Disconnect a specific BLE peer.

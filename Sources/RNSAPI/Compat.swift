@@ -2259,6 +2259,21 @@ public struct BLEConnectionInfo: Identifiable, Equatable, Sendable {
 
 public enum SignalQuality: String, Equatable, Sendable {
     case excellent, good, fair, poor, unknown
+
+    /// Map an RSSI reading (dBm, `nil` = no reading) to a coarse signal-quality
+    /// bucket. Thresholds borrowed from the BLEDevicePickerSheet indicator
+    /// (60/75/90 dBm steps). This is the single source of truth for the
+    /// mapping, shared by every target that surfaces a per-peer signal
+    /// indicator (the app `AppServices` and the Model B proxy `ProxyRnsBackend`)
+    /// so the buckets can't drift between them.
+    public static func quality(forRssi rssi: Int?) -> SignalQuality {
+        guard let rssi else { return .unknown }
+        let absRssi = abs(rssi)
+        if absRssi < 60 { return .excellent }
+        if absRssi < 75 { return .good }
+        if absRssi < 90 { return .fair }
+        return .poor
+    }
 }
 
 // MARK: - Location / Telemetry stubs (non-iOS only)

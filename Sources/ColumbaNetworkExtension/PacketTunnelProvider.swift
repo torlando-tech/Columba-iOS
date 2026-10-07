@@ -42,8 +42,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// removed; it cannot coexist with Python RNS in the NE's memory budget, and
     /// is not part of the target architecture). Until the Python RNS engine
     /// conformance lands, the owner runs the engine-agnostic fail-closed
-    /// `StubEngine`; the control channel stays reachable + honest, and the swap
-    /// to the real engine is a one-line change in `nodeOwnerIfNeeded`.
+    /// `StubEngine`; the control channel stays reachable + honest. Wiring the
+    /// real engine requires `NEPythonRNS` (or a dedicated adapter) to conform
+    /// to `NodeEngine`, and integration work on admission recovery, execution
+    /// recovery, and the app facade before the control channel can route real
+    /// sends. Until that is complete the `test-node-send` deep link is the
+    /// device plumbing test for the channel framing/store/admission path only.
     private var nodeOwner: NodeOwner?
 
     // MARK: - Inbound banner (Model B)
@@ -346,7 +350,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     ///
     /// Until `NEPythonRNS` gets its own `NodeEngine` conformance (a separate
     /// increment - the engine adapter is a deliberate black box that must not
-    /// redefine app behavior, and wiring it is a one-line change here), the
+    /// redefine app behavior; wiring it requires the adapter plus the admission /
+    /// execution recovery and app-facade integration, not a one-line swap), the
     /// owner runs the engine-agnostic fail-closed `StubEngine`. That is the
     /// correct, honest state for the slice: the channel is reachable, the
     /// durable store + admission ledger work, and a command is COMMITTED as a
