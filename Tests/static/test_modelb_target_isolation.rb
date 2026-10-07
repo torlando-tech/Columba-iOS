@@ -31,7 +31,6 @@ MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryGateView.swift
   Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift
   Sources/Shared/AppGroupBridgeInterface.swift
-  Sources/Shared/AppGroupBLEDriver.swift
   Sources/Shared/AppGroupBLESeamTransport.swift
   Sources/Shared/AppGroupBLEServer.swift
   Sources/Shared/BLEDriverSeam.swift
@@ -39,10 +38,6 @@ MODEL_B_ONLY_SOURCE_PATHS = %w[
   Sources/Shared/OutboxQueue.swift
   Sources/Shared/SentIdStore.swift
   Sources/Shared/OutboxReplayCoordinator.swift
-  Sources/ColumbaApp/Services/ModelBRNodeService.swift
-  Sources/Shared/AppGroupRNodeSeamTransport.swift
-  Sources/Shared/AppGroupRNodeSeamWire.swift
-  Sources/Shared/AppGroupRNodeServer.swift
   Sources/Shared/RNodeSeam.swift
   Sources/Shared/PropagationSeam.swift
   Sources/RNSBackendSwift/SwiftRNSBackend.swift
@@ -367,7 +362,7 @@ class ModelBTargetIsolationTests < Minitest::Test
   end
 
   def test_application_membership_is_authoritatively_partitioned
-    assert_equal 26, MODEL_B_ONLY_SOURCE_PATHS.size
+    assert_equal 21, MODEL_B_ONLY_SOURCE_PATHS.size
     assert_equal 10, PYTHON_ONLY_SOURCE_PATHS.size
     shipping_phases = @shipping.build_phases.reject { |phase| extension_embed_phase?(phase) }
     model_phases = @model_b.build_phases.reject { |phase| extension_embed_phase?(phase) }
