@@ -344,18 +344,21 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertNotIn("ModelBBLEService.isUserOptedIn", view_model)
         # The standalone "Bluetooth Mesh" toggle is gone.
         self.assertNotIn('Text("Bluetooth Mesh")', settings)
-        # AppServices still starts the host under a single shouldStart guard, and
-        # shuts it down on shutdown.
-        start = "ModelBBLEService.shared.start(identityHash: identity.hash)"
-        self.assertEqual(1, app_services.count(start))
-        start_offset = app_services.index(start)
-        guard_offset = app_services.rfind("if ", 0, start_offset)
-        guard = app_services[guard_offset:start_offset]
-        self.assertIn("ModelBBLEService.shouldStart", guard)
-        shutdown = app_services.split("public func shutdown() async {", 1)[1].split(
-            "// MARK:", 1
-        )[0]
-        self.assertIn("ModelBBLEService.shared.stop()", shutdown)
+        # Phase 2: the mesh CoreBluetooth radio now runs IN THE NETWORK EXTENSION
+        # (SwiftBLEBridge is linked into the NE target and driven in-process by the
+        # NE's Python driver). The app no longer starts a CoreBluetooth host, so the
+        # used-to-start-the-app-radio hook is a no-op: a second app-side
+        # SwiftBLEBridge instance would fight the NE's over the same GATT service.
+        # The app-side seam files it once started remain (removed in a follow-up
+        # after on-device verify) but are never started from AppServices.
+        self.assertEqual(0, app_services.count("ModelBBLEService.shared.start("))
+        self.assertIn("func syncModelBBLEService()", app_services)
+        self.assertIn(
+            "[BLE] Model B: mesh radio runs in the NE; no app-side host (Phase 2)",
+            app_services,
+        )
+        # The call sites (backend start + interface Apply) still run the no-op.
+        self.assertGreaterEqual(app_services.count("syncModelBBLEService()"), 1)
 
     def test_shipping_interface_creation_is_idempotent(self) -> None:
         view_model = source(VIEW_MODEL)
