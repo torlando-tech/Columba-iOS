@@ -117,15 +117,6 @@ struct ColumbaApp: App {
         if InterfaceRepository().getEnabledInterfaces().contains(where: { $0.type == .ble }) {
             SwiftBLEBridge.shared.restoreAtLaunch()
         }
-        #elseif COLUMBA_RUNTIME_MODEL_B
-        if ModelBRNodeService.rnodeBackgroundRestoreEnabled {
-            // GATED (A9, RISK 5): re-materialize the RNode `BLETransport` central early so
-            // iOS honors CoreBluetooth state restoration / a background relaunch-for-BLE for
-            // a configured RNode. OFF by default — flip `rnodeBackgroundRestoreEnabled`
-            // after verifying on a physical device that the background wake is serviced and
-            // that the mesh + RNode centrals don't collide on the shared restore identifier.
-            ModelBRNodeService.shared.restore()
-        }
         #endif
         #endif
 
@@ -205,6 +196,34 @@ struct ColumbaApp: App {
                         name: Notification.Name("ColumbaTestCall"),
                         object: nil,
                         userInfo: ["to": to, "profile": profileRaw ?? ""]
+                    )
+                    return
+                }
+                if url.host == "test-node-send" {
+                    // lxma://test-node-send?to=HEX&content=...
+                    // Test trigger for the node-service v1 control channel (the
+                    // NEW 0xF5 0x02 path): stages a submitMessage intent in the
+                    // shared store and drives the NE node owner with hello+admit
+                    // over the app->NE transport, independent of the legacy
+                    // backend.lxmf path. DEBUG-only like the other test triggers.
+                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let to = components?.queryItems?.first(where: { $0.name == "to" })?.value ?? ""
+                    let content = components?.queryItems?.first(where: { $0.name == "content" })?.value ?? "node contract test"
+                    DiagLog.log("[TEST-NODE-SEND] to=\(to.prefix(8))… content_bytes=\(content.utf8.count)")
+                    guard !to.isEmpty else {
+                        DiagLog.log("[TEST-NODE-SEND] missing/empty 'to'")
+                        return
+                    }
+                    // Park the request so a COLD-LAUNCH deep link (delivered by the
+                    // OS before startPythonBackend registers the observer) is not
+                    // lost. drainNodeSendProbe() consumes it once the observer +
+                    // tunnel are ready.
+                    AppServices.pendingNodeSend = (to: to, content: content)
+                    // Also post now: if the app is already warm the observer is
+                    // registered and will drain the parked request immediately.
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestNodeSend"),
+                        object: nil
                     )
                     return
                 }
@@ -291,6 +310,30 @@ struct ColumbaApp: App {
                     DiagLog.log("[TEST-RESTART] requested via URL")
                     NotificationCenter.default.post(
                         name: Notification.Name("ColumbaTestRestart"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-start-tunnel" {
+                    // lxma://test-start-tunnel — headless Model B tunnel bring-up.
+                    // Bypasses the BackgroundDeliveryGate so the in-NE Python RNS
+                    // process can be booted + exercised without a manual tap.
+                    DiagLog.log("[TEST-START-TUNNEL] requested via URL")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestStartTunnel"),
+                        object: nil
+                    )
+                    return
+                }
+                if url.host == "test-stop-tunnel" {
+                    // lxma://test-stop-tunnel — tear down the running NE so a fresh
+                    // appex (with a new NE build) can be installed + brought up.
+                    // A running NE keeps its old appex until the tunnel is torn
+                    // down, so stop -> install -> start is how a NE rebuild is
+                    // exercised on-device.
+                    DiagLog.log("[TEST-STOP-TUNNEL] requested via URL")
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ColumbaTestStopTunnel"),
                         object: nil
                     )
                     return

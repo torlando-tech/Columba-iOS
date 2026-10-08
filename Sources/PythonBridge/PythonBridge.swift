@@ -82,7 +82,7 @@ public final class PythonBridge: @unchecked Sendable {
         // call lifecycle; Python is just the underlying Link pipe.
         case linkState(linkId: Int, state: String, reason: String, inbound: Bool, t: Date)
         case linkPacket(linkId: Int, data: Data, t: Date)
-        case linkIdentified(linkId: Int, identityHashHex: String, t: Date)
+        case linkIdentified(linkId: Int, identityHashHex: String, t: Date, publicKeyHex: String?)
     }
 
     private let queue = DispatchQueue(label: "network.columba.python", qos: .userInitiated)
@@ -971,7 +971,10 @@ public final class PythonBridge: @unchecked Sendable {
             case "link_identified":
                 let linkId = pyIntFromDict(item, key: "link_id") ?? 0
                 let identity = pyStringFromDict(item, key: "identity_hash") ?? ""
-                out.append(.linkIdentified(linkId: linkId, identityHashHex: identity, t: t))
+                // Model A resolves the caller's identity via the in-process
+                // Compat Link (the full Identity object); the public key isn't
+                // needed on the event here.
+                out.append(.linkIdentified(linkId: linkId, identityHashHex: identity, t: t, publicKeyHex: nil))
             default:
                 continue
             }

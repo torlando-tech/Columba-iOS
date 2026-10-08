@@ -65,19 +65,28 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Whether there are pending changes to apply
     public var hasPendingChanges: Bool = false
 
+    /// The interface entity IDs whose config has been staged (saved in the repo)
+    /// but NOT yet applied to the running NE node. Drives the per-entity "staged →
+    /// disconnected" badge: a staged-enabled interface is not in the running RNS
+    /// node, so its badge must read disconnected (ground truth), not the stale
+    /// cached NE state. Cleared by `applyChanges()` once the Apply-triggered
+    /// restart makes the node match the staged set. Non-isolated, written by the
+    /// non-isolated mutation methods (same pattern as hasPendingChanges).
+    private var stagedEntityIDs: Set<String> = []
+
     /// Whether changes are being applied
     public var isApplyingChanges: Bool = false
 
     /// Whether interface edits require an explicit "Apply" tap to take effect.
     ///
-    /// On the Swift / Model B build the NE live-reconciles every change the
-    /// instant it's saved — `InterfaceRepository.saveInterfaces()` posts
-    /// `configChanged` on each edit, which the NE observes (and
-    /// `AppServices.applyInterfaceChanges()` is a deliberate no-op on Model B).
-    /// So there is no Apply step: the toolbar omits the button and edit toasts
-    /// don't prompt for it. On the Python build, edits are staged and pushed to
-    /// the running stack only on Apply.
-    public var requiresExplicitApply: Bool { !BackendPreference.modelB }
+    /// All builds stage edits and apply them in one shot when Apply is tapped:
+    /// a user may make several interface changes, and each RNS restart (Model B)
+    /// or hot reconfig (Python) is expensive, so changes are batched into a
+    /// single Apply. Model B's Apply rewrites the shared App-Group config and
+    /// restarts the in-NE Python RNS node once (`.stop` + `.start` over IPC;
+    /// `rns_bridge` has no hot add/remove). The Python build hot-adds /
+    /// hot-removes the delta on a running Transport.
+    public var requiresExplicitApply: Bool { true }
 
     /// Trailing hint for edit toasts — prompt to Apply only when an explicit
     /// Apply is required; on the live (Model B) path the change is already in
@@ -275,6 +284,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         repository.toggleInterface(id: interface.id, enabled: enabled)
         hasPendingChanges = true
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: enabled)
+        markStaged(interface.id, enabled: enabled)
         showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled")\(applyHint)")
     }
 
@@ -285,6 +295,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         hasPendingChanges = true
         // Tear down the app-side RNode radio when its interface is removed.
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: false)
+        markStaged(interface.id, enabled: false)
         showSuccess("Interface deleted\(applyHint)")
     }
 
@@ -379,6 +390,10 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // Validate
         guard validateForm() else { return }
 
+        // Captured when a NEW interface is created below (the edit path reuses the
+        // existing id). Used to stage the badge for the just-saved entity.
+        var savedEntityID: String? = nil
+
         if configType == .rnode, configEnabled {
             if BackendPreference.modelB,
                otherEnabledRNodeExists(excluding: editingInterface?.id) {
@@ -420,6 +435,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             )
 
             repository.addInterface(newInterface)
+            savedEntityID = newInterface.id
             // RNode bring-up is async (radio in app, RNS in NE); don't claim "added"
             // as if it's connected — the badge + a failure toast report the outcome.
             if configType == .rnode, BackendPreference.modelB {
@@ -431,16 +447,22 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
         hasPendingChanges = true
         // On Model B the app hosts the CoreBluetooth RNode radio, so a saved RNode
-        // add/edit must start (or stop) the app-side radio NOW — the NE's
-        // `configChanged` reconcile only covers TCP relays and cannot start the
-        // app's radio. Read configName/configEnabled BEFORE dismissConfigSheet()
-        // resets the form. Other interface types stay live-reconciled by the NE.
+        // add/edit must start (or stop) the app-side radio NOW — the NE's Python
+        // engine cannot reach the app's BLE radio. Read configName/configEnabled
+        // BEFORE dismissConfigSheet() resets the form. Other interface types are
+        // staged and applied when the user taps "Apply".
         applyRNodeLiveChange(config: config, name: configName, enabled: configEnabled)
+        // Stage the badge: mark the saved entity (existing edit's id, or the new
+        // entity's id captured above) so the 1s loop + NE push show the ground-truth
+        // staged state, not the stale running-node state.
+        let stagedID = editingInterface?.id ?? savedEntityID
+        if let id = stagedID {
+            markStaged(id, enabled: configEnabled)
+        }
         dismissConfigSheet()
-        // On Python, don't auto-apply — the user taps "Apply" explicitly so a
-        // mid-edit change isn't pushed to the live stack until they're ready.
-        // On Model B there's no Apply step; the change is already live (the NE
-        // reconciles on save), so `requiresExplicitApply` hides the button.
+        // All builds: edits are staged; the user taps "Apply" to push them to the
+        // running stack in one shot. (Model B: one `.stop`/`.start` over IPC;
+        // Python: hot add/remove delta.)
     }
 
     /// Save a TCP client interface from the wizard flow.
@@ -457,6 +479,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     ) {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let interfaceConfig: InterfaceTypeConfig = .tcpClient(config)
+        var savedEntityID: String? = nil
 
         if let existing = editing {
             var updated = existing
@@ -465,7 +488,8 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             updated.mode = mode
             updated.config = interfaceConfig
             repository.updateInterface(updated)
-            showSuccess("Interface updated")
+            savedEntityID = existing.id
+            showSuccess("Interface updated\(applyHint)")
         } else {
             let newInterface = InterfaceEntity(
                 name: trimmedName,
@@ -475,30 +499,55 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 config: interfaceConfig
             )
             repository.addInterface(newInterface)
-            showSuccess("Interface added")
+            savedEntityID = newInterface.id
+            showSuccess("Interface added\(applyHint)")
         }
 
         hasPendingChanges = true
+        if let id = savedEntityID {
+            markStaged(id, enabled: enabled)
+        }
         dismissConfigSheet()
+        // Stage only — the user taps "Apply" to push (batching multiple changes
+        // into one RNS restart / hot reconfig).
+    }
 
-        Task { @MainActor in
-            await applyChanges()
+    /// Mark an interface entity as staged (config changed, not yet applied to the
+    /// running NE node) and update its badge IMMEDIATELY so the UI reflects the
+    /// ground truth without waiting for the 1s status loop - this is what kills
+    /// the "briefly connected" flash from the stale cached NE state.
+    ///
+    /// - enabled: the entity's enabled state AFTER the change. A staged-ENABLED
+    ///   entity is not in the running node -> disconnected. A staged-DISABLED
+    ///   entity may still be running in the node (the node won't drop it until
+    ///   Apply) -> keep the real cached NE state.
+    private func markStaged(_ entityID: String, enabled: Bool) {
+        guard BackendPreference.modelB else { return }
+        stagedEntityIDs.insert(entityID)
+        if enabled {
+            // Not yet in the running node: it is disconnected, not connecting.
+            interfaceStatus[entityID] = .disconnected
+        } else {
+            // Disable is staged: the running node still has it until Apply. Keep
+            // the real cached state (don't force disconnected - it IS connected
+            // in RNS right now). The 1s loop will keep showing the cached state
+            // because the entity is in stagedEntityIDs but enabled=false means
+            // the loop's enabled-filter skips it anyway (it only badges enabled
+            // entities). No action needed.
         }
     }
 
     /// Bring an RNode interface change live immediately on Model B.
     ///
-    /// Unlike TCP relays — which the NE live-reconciles off the `configChanged`
-    /// notification the repository posts on every save — the RNode radio lives in
-    /// the **app** (the NE runs only the RNS/KISS stack over the App-Group seam).
-    /// So an RNode add / edit / enable / disable / remove must (re)start or stop
-    /// the app-side radio here: `startRNodeInterface` starts the app-side seam
-    /// server AND writes the `RNodeSeamConfig` the NE rebuilds its
-    /// `RNodeInterface` from (which then drives the BLE connect back over the
-    /// seam). Without this hook a freshly-added RNode never connects until the
-    /// next cold launch (`ColumbaApp` startup brings up persisted enabled RNodes),
-    /// which presents as a dead "connect" — the app and the RNode both show BLE
-    /// disconnected. No-op on Python (explicit Apply) and for non-RNode types.
+    /// The RNode radio lives in the **app** (the NE runs only the RNS/KISS stack
+    /// over the App-Group seam and cannot reach the app's BLE radio). So an RNode
+    /// add / edit / enable / disable / remove must (re)start or stop the app-side
+    /// radio here: `startRNodeInterface` starts the app-side seam server AND
+    /// writes the `RNodeSeamConfig` the NE rebuilds its `RNodeInterface` from
+    /// (which then drives the BLE connect back over the seam). This is live
+    /// regardless of Apply, because it's the app's own radio, not an NE
+    /// interface. Other interface types (TCP relays) are staged and applied when
+    /// the user taps "Apply". No-op on Python and for non-RNode types.
     private func applyRNodeLiveChange(config: InterfaceTypeConfig, name: String, enabled: Bool) {
         guard BackendPreference.modelB, case .rnode(let rnodeConfig) = config else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
@@ -566,14 +615,39 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // so it works for the Swift backend too). Multi-TCP reconciliation with
         // main's per-entity tcpInterfaces/tcpEndpoints tracking is deferred to
         // the dual-backend landing.
+        // Only the spinner must always reset. Whether the staged change is
+        // still "pending" depends on the HONEST Apply outcome (Issue 1): a
+        // failed Apply (config write / node restart failed) must keep the
+        // change pending so the Apply button stays and the user can retry,
+        // instead of the button vanishing while the edit is still not live.
         defer {
-            hasPendingChanges = false
             isApplyingChanges = false
         }
 
         logger.info("Applying interface changes live (hot add/remove)")
-        await appServices.applyInterfaceChanges()
-        showSuccess("Interface changes applied")
+        let outcome = await appServices.applyInterfaceChanges()
+        // Report the HONEST outcome rather than assuming success: a change that
+        // is only persisted (AutoInterface blocks a same-process restart), or a
+        // failed config write / restart, must not be announced as "applied".
+        switch outcome {
+        case .applied:
+            hasPendingChanges = false
+            stagedEntityIDs.removeAll()
+            showSuccess("Interface changes applied")
+        case .persistedRequiresRelaunch:
+            // Saved to disk (takes effect on the next relaunch). Not live, but
+            // not a failure either: clear pending so the user isn't nudged to
+            // retry an edit that already persisted.
+            hasPendingChanges = false
+            stagedEntityIDs.removeAll()
+            showSuccess("Saved - applies on the next app relaunch")
+        case .configWriteFailed:
+            // Keep the change pending (Apply button stays) so the user can retry.
+            showError("Changes could not be saved (config write failed); the running node is unchanged")
+        case .restartFailed:
+            // Keep the change pending (Apply button stays) so the user can retry.
+            showError("Interface change was saved but the node restart failed; check the connection")
+        }
     }
 
     // MARK: - Status Observation
@@ -602,15 +676,23 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 // Read TCP interface states off main thread
                 var tcpUpdates: [(String, InterfaceStatus, String?)] = []
                 if BackendPreference.modelB {
-                    // Model B: the app owns no local TCP interface — the NE owns each
-                    // relay socket. Read back the PER-RELAY status cached by the
-                    // event-driven `refreshNEBackedStatus()` (NE-push, not a per-second
-                    // round-trip) so each relay's badge reflects its own reachability and
-                    // the card isn't stuck "disconnected" while a relay is actually up. A
-                    // relay the NE hasn't registered yet (just added) defaults to connecting.
-                    let cached = await MainActor.run { self.modelBRelayStatuses }
+                    // Model B: the app owns no local TCP interface - the NE owns each
+                    // relay socket. An interface whose config is STAGED (in
+                    // stagedEntityIDs) is not yet in the running NE node (the node
+                    // only re-reads config on the Apply-triggered restart), so its
+                    // badge reads disconnected (ground truth - it is NOT connected,
+                    // and NOT actively connecting either). Every OTHER enabled relay
+                    // is in the running node, so it shows its real cached NE state.
+                    // After Apply the set clears and the restart makes the node match
+                    // the staged set, so the badges transition to the true state.
+                    let (cached, staged) = await MainActor.run { (self.modelBRelayStatuses, self.stagedEntityIDs) }
                     for entity in tcpEntities {
-                        tcpUpdates.append((entity.id, cached[entity.id] ?? .connecting, nil))
+                        if staged.contains(entity.id) {
+                            // Staged (config changed, not yet applied to the node).
+                            tcpUpdates.append((entity.id, .disconnected, nil))
+                        } else {
+                            tcpUpdates.append((entity.id, cached[entity.id] ?? .disconnected, nil))
+                        }
                     }
                 } else {
                     for entity in tcpEntities {
@@ -911,8 +993,14 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         }
         modelBRelayStatuses = fresh
         // Publish immediately so the badges update on the push, not the next tick.
+        // Skip STAGED entities (their config changed and is not yet in the running
+        // node - the 1s status loop owns their badge and forces it to disconnected;
+        // publishing the stale cached NE state here is what caused the "briefly
+        // connected" flash). Default absent relays to .disconnected (ground truth),
+        // not .connecting (a relay the node hasn't registered is not dialing).
         for entity in repository.getEnabledInterfaces() where entity.type == .tcpClient {
-            interfaceStatus[entity.id] = fresh[entity.id] ?? .connecting
+            guard !stagedEntityIDs.contains(entity.id) else { continue }
+            interfaceStatus[entity.id] = fresh[entity.id] ?? .disconnected
         }
 
         // --- RNode badge (NE-authoritative). GATED: skip the statusSnapshot() IPC entirely

@@ -141,6 +141,13 @@ class IOSBLEDriver(BLEDriverInterface):
         # address) and to surface `on_address_changed` to BLEInterface.
         self._address_to_identity: dict[str, str] = {}
         self._identity_to_address: dict[str, str] = {}
+        # New address → old address, for a MAC-rotation migration that identity
+        # has reported but whose new link has not connected yet. The route is
+        # moved to the new address only once `on_device_connected` confirms the
+        # handshake (P1 #2): firing `on_address_changed` the instant identity is
+        # seen would re-route to an address whose link never became usable if the
+        # connect then failed.
+        self._pending_address_migrations: dict[str, tuple[str, str]] = {}
         # Address of the most recent peer that sent us data. Used by
         # `get_last_receive_rssi()` so a delivery-time RSSI query (from the
         # Python bridge's `_signal_metrics`) can be attributed to the peer
@@ -206,9 +213,63 @@ class IOSBLEDriver(BLEDriverInterface):
             self.on_device_connected(address, identity)
         except Exception as e:
             RNS.log(f"IOSBLEDriver: on_device_connected raised: {e}", RNS.LOG_ERROR)
+        # P1 #2: the new link is up now - if identity reported this address as a
+        # MAC-rotation migration earlier (before it connected), re-route to it.
+        self._confirm_pending_migration(address)
+
+    def _confirm_pending_migration_pre_connected(
+        self, address: str, old_address: str, identity_hex: str
+    ) -> None:
+        """Immediate migration for when identity reports a new address that is
+        ALREADY connected (no pending handshake to wait on). Same re-point +
+        connected-set move + `on_address_changed` as the deferred confirm, but run
+        right away."""
+        with self._lock:
+            self._pending_address_migrations.pop(address, None)
+            self._address_to_identity.pop(old_address, None)
+            self._identity_to_address[identity_hex] = address
+            self._address_to_identity[address] = identity_hex
+            if old_address in self._connected_peers:
+                self._connected_peers.remove(old_address)
+            if address not in self._connected_peers:
+                self._connected_peers.append(address)
+        if self.on_address_changed is not None:
+            try:
+                self.on_address_changed(old_address, address, identity_hex)
+            except Exception as e:
+                RNS.log(f"IOSBLEDriver: on_address_changed (immediate) raised: {e}", RNS.LOG_ERROR)
+
+    def _confirm_pending_migration(self, address: str) -> None:
+        """Move the route to `address` if identity flagged it as a MAC-rotation
+        migration earlier (P1 #2). No-op when there is no pending migration for
+        this address. Runs the re-point + connected-set move, then fires
+        `on_address_changed` so the upstream BLEInterface migrates its routing
+        keys to the new address. Only called once the new link has connected, so
+        the route is never pointed at an address whose handshake failed."""
+        with self._lock:
+            pending = self._pending_address_migrations.pop(address, None)
+            if pending is None:
+                return
+            old_address, identity_hex = pending
+            self._address_to_identity.pop(old_address, None)
+            self._identity_to_address[identity_hex] = address
+            self._address_to_identity[address] = identity_hex
+            if old_address in self._connected_peers:
+                self._connected_peers.remove(old_address)
+            if address not in self._connected_peers:
+                self._connected_peers.append(address)
+        if self.on_address_changed is not None:
+            try:
+                self.on_address_changed(old_address, address, identity_hex)
+            except Exception as e:
+                RNS.log(f"IOSBLEDriver: on_address_changed (deferred) raised: {e}", RNS.LOG_ERROR)
 
     def _raw_on_device_disconnected(self, address: str) -> None:
         with self._lock:
+            # Drop any deferred migration whose new link is going away before it
+            # ever connected (P1 #2): the route was never moved, so there is just
+            # a stale pending entry to clear - the old address still owns the route.
+            self._pending_address_migrations.pop(address, None)
             ident = self._address_to_identity.pop(address, None)
             if ident:
                 # Only drop the reverse mapping if it still points at this
@@ -225,6 +286,8 @@ class IOSBLEDriver(BLEDriverInterface):
                 RNS.log(f"IOSBLEDriver: on_device_disconnected raised: {e}", RNS.LOG_ERROR)
 
     def _raw_on_data_received(self, address: str, data: bytes) -> None:
+        # [BLE-DIAG] Confirm the NE is receiving BLE data after handshake.
+        _bridge_module.ble_diag(f"data_received addr={address[-8:]} len={len(data)} slot={'set' if self.on_data_received else 'NONE'}")
         # Track the last sender so a delivery-time RSSI query can be
         # attributed to the peer that just delivered data (mirrors
         # Android's `on_data_received`). Done before the callback check so a
@@ -254,15 +317,48 @@ class IOSBLEDriver(BLEDriverInterface):
         except ValueError:
             RNS.log(f"IOSBLEDriver: bad identity_hex={identity_hex!r}", RNS.LOG_ERROR)
             return
+        # MAC rotation: the same identity can reconnect under a fresh
+        # randomized GATT address. Android randomizes its BLE address across
+        # GATT sessions, so a peer that was at `old_address` re-surfaces its
+        # identity at `address`. If we only add the new address, the upstream
+        # ``BLEInterface.address_to_identity`` map accumulates one entry per
+        # reconnect (observed live: 5 entries for a single identity) and RNS
+        # keeps routing announces to the stale dead addresses. Detect the
+        # already-known identity and emit ``on_address_changed`` so the
+        # upstream migrates address_to_identity / address_to_interface /
+        # peer_address / fragmenter+reassembler keys to the new address.
         with self._lock:
+            old_address = self._identity_to_address.get(identity_hex)
             self._address_to_identity[address] = identity_hex
             self._identity_to_address[identity_hex] = address
-        # Match Android's adapter contract: identity-before-connected only fills
-        # the cache. A late identity or explicit resync for an already-connected
-        # native peer must notify upstream so it can rebuild its mapping.
-        with self._lock:
+            # Match Android's adapter contract: identity-before-connected only fills
+            # the cache. A late identity or explicit resync for an already-connected
+            # native peer must notify upstream so it can rebuild its mapping.
             already_connected = address in self._connected_peers
-        if already_connected and self.on_device_connected is not None:
+        # Address migration: same identity now seen at a new address. Only when
+        # the identity was genuinely previously seen at a *different* address (not
+        # a re-report of the same address).
+        if old_address is not None and old_address != address:
+            if already_connected:
+                # The new address is already connected (late identity for an
+                # already-up peer): migrate the route now - there is no pending
+                # handshake to wait on.
+                self._confirm_pending_migration_pre_connected(address, old_address, identity_hex)
+            else:
+                # Defer the route migration (P1 #2). Identity arrives BEFORE the
+                # new link finishes its GATT connect; if we re-routed to the new
+                # address now and the handshake then failed, messages would go to a
+                # link that never became usable. Instead record the pending
+                # migration and move the route + connected set only once
+                # `on_device_connected` confirms the new link is up.
+                with self._lock:
+                    self._pending_address_migrations[address] = (old_address, identity_hex)
+                RNS.log(
+                    f"IOSBLEDriver: identity at new address {address} (was {old_address}); "
+                    f"deferring route migration until the new link connects",
+                    RNS.LOG_DEBUG,
+                )
+        elif already_connected and self.on_device_connected is not None:
             try:
                 self.on_device_connected(address, identity_bytes)
             except Exception as e:
@@ -344,6 +440,7 @@ class IOSBLEDriver(BLEDriverInterface):
             self._address_to_identity.clear()
             self._identity_to_address.clear()
             self._connected_peers.clear()
+            self._pending_address_migrations.clear()
             self._last_receive_address = None
 
     def set_identity(self, identity_bytes: bytes) -> None:
@@ -424,6 +521,8 @@ class IOSBLEDriver(BLEDriverInterface):
         _columba_ble_disconnect(address.encode("utf-8"))
 
     def send(self, address: str, data: bytes) -> None:
+        # [BLE-DIAG] Confirm the NE RNS is attempting BLE TX.
+        _bridge_module.ble_diag(f"send addr={address[-8:]} len={len(data)}")
         if _columba_ble_send is None:
             raise RuntimeError("columba_ble_send symbol not found")
         payload = bytes(data)

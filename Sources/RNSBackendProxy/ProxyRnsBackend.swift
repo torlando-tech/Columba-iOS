@@ -80,23 +80,44 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// `localInfo` is synchronous (`get`-only), so cache the async-fetched value
     /// here. Guarded by `stateLock`.
     private var cachedLocalInfo: LocalInfo?
-    /// Polls the NE's heard-announce snapshot over IPC and re-emits `.announce`
-    /// events on `eventStream` — the Model B incoming-announce bridge, since the
-    /// app owns no transport to hear announces itself. Guarded by `stateLock`;
-    /// cancelled in `stop()`.
-    private var announcePoller: Task<Void, Never>?
+    /// The Darwin-notification observer token registered by `startEventDrain` (the
+    /// event-driven drain of the NE's durable inbox). Guarded by `stateLock`;
+    /// removed in `stop()`. The Darwin `network.columba.newMessage` ping is the
+    /// wake signal; one initial drain at start covers the catch-up. See
+    /// `startEventDrain` for the exact contract.
+    private var eventDrainObserverToken: UnsafeMutableRawPointer?
+    /// Last-heard announce time per destination hash, used to de-dupe re-announces
+    /// across drains (the inbox is emptied each drain, but the NE may re-emit the
+    /// same announce). Guarded by `stateLock`.
+    private var lastSeenAnnounce: [String: Double] = [:]
+    /// Burst-coalescing for ping-driven drains: at most one in-flight drain; a ping
+    /// during one sets `rescanRequested` for a single trailing pass. Guarded by
+    /// `stateLock`.
+    private var draining = false
+    private var rescanRequested = false
+    /// The system-wide Darwin notification the NE posts when a new NON-INBOUND
+    /// event lands in the shared inbox (announce → path table, delivery proof,
+    /// state, link). This is `network.columba.events` - deliberately DISTINCT from
+    /// `network.columba.newMessage`, which ChatsViewModel observes to reload the
+    /// Chats list. Announces must NOT reload the Chats list (they feed the
+    /// Contacts → Network screen via the path table, not the conversation list).
+    /// Must stay in sync with `rns_bridge.py` `_DARWIN_EVENTS`.
+    private static let eventsDarwinName = "network.columba.events" as CFString
     /// Bumped by `stop()` so an in-flight `start()` handshake loop (up to ~12s of
     /// retries) that completes AFTER a `stop()` does not resurrect `cachedLocalInfo`
-    /// or restart the announce poller. `start()` captures the generation up front and
-    /// re-checks it before committing. Guarded by `stateLock`.
+    /// or re-register the event-drain observer. `start()` captures the generation up
+    /// front and re-checks it before committing. Guarded by `stateLock`.
     private var startGeneration = 0
     private let stateLock = NSLock()
 
-    /// The neutral event stream. Under Model B the NE owns inbound delivery and
-    /// notifies the app via the App-Group store + Darwin notification (A5a), NOT
-    /// via this stream — so the stream is intentionally inert here (no events are
-    /// yielded). It exists only to satisfy `RnsCore.events`; A5c/the live wiring
-    /// can later bridge NE-pushed events onto `eventContinuation`.
+    /// The neutral event stream. Under Model B the NE owns RNS in-process and
+    /// durably appends every event to a shared App-Group inbox, posting a Darwin
+    /// `newMessage` ping on each. `startEventDrain` subscribes to that ping (and
+    /// does one initial catch-up drain) and re-emits every drained event on this
+    /// stream, so the app's `for await event in backend.events` consumer works
+    /// identically to the in-process backend. No poll: the durable inbox is the
+    /// event log, so a missed ping is harmless (caught up on the next ping or the
+    /// next start).
     private let eventStream: AsyncStream<BackendEvent>
     private let eventContinuation: AsyncStream<BackendEvent>.Continuation
 
@@ -215,13 +236,13 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                     stateLock.lock()
                     guard myGeneration == startGeneration else {
                         // stop() ran while this handshake was in flight — do NOT cache
-                        // or restart the poller; honor the stop.
+                        // or register the event-drain observer; honor the stop.
                         stateLock.unlock()
                         throw RNSError.backendNotReady
                     }
                     cachedLocalInfo = local
                     stateLock.unlock()
-                    startAnnouncePolling(expectedGeneration: myGeneration)
+                    startEventDrain(expectedGeneration: myGeneration)
                     return local
                 case .error(let message):
                     // A real backend error (not a not-ready condition) — don't retry.
@@ -247,62 +268,226 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         stateLock.lock()
         startGeneration &+= 1   // invalidate any in-flight start() handshake loop
         cachedLocalInfo = nil
-        announcePoller?.cancel()
-        announcePoller = nil
+        lastSeenAnnounce.removeAll()
+        draining = false
+        rescanRequested = false
+        if let token = eventDrainObserverToken {
+            CFNotificationCenterRemoveObserver(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                token,
+                CFNotificationName(Self.eventsDarwinName),
+                nil
+            )
+            eventDrainObserverToken = nil
+        }
         stateLock.unlock()
     }
 
-    /// Model B incoming-announce bridge: poll the NE's heard-announce snapshot
-    /// and re-emit each newly-seen / re-announced destination as a `.announce`
-    /// event, so the app's existing announce handling (`for await event in
-    /// backend.events`) populates the network-announce list even though the app
-    /// owns no transport. Mirrors `SwiftRNSBackend.startAnnouncePolling` (diff by
-    /// last-heard time) but sources the PathTable from the NE over IPC. Idempotent.
+    /// Event-driven drain of the NE's durable event inbox (Model B) — NO poll.
     ///
-    /// `expectedGeneration` is the `startGeneration` snapshot taken by the `start()`
-    /// that is spawning this poller. Re-check it UNDER the lock: `start()` releases
-    /// `stateLock` before calling this, so a `stop()` can land in that window —
-    /// bumping the generation and cancelling a still-`nil` poller. Without the
-    /// re-check we'd then create a brand-new Task that `stop()` can never cancel (a
-    /// zombie poller that keeps issuing `.heardAnnounces` forever and, via its stale
-    /// `lastSeen`, silently drops announces after the next start).
-    private func startAnnouncePolling(expectedGeneration: Int) {
+    /// The NE (which owns RNS in-process) durably appends every event to a shared
+    /// App-Group inbox and posts the system-wide Darwin `network.columba.newMessage`
+    /// notification when something lands. This method subscribes to that ping and,
+    /// on each one, performs a single `.drainEvents` IPC round-trip and re-emits
+    /// every drained event on `eventStream`. It also does ONE initial drain at
+    /// start (catch-up for anything the NE delivered while the app was suspended
+    /// or before this start). This is what feeds the app's
+    /// `for await event in backend.events` consumer (inbound → `persistInboundFromPython`,
+    /// delivery proofs, state, link, announce). The durable inbox is the event log,
+    /// so a missed/dropped ping is harmless: the events stay queued and are caught
+    /// up on the next ping or the next start.
+    ///
+    /// Burst-coalescing: at most one in-flight drain plus one trailing re-drain, so
+    /// a flurry of pings doesn't spawn overlapping round-trips (mirrors
+    /// `ModelBInboundReplay.requestDrain`). Announces are diffed by last-heard time
+    /// so a re-announce isn't re-yielded; all other kinds are yielded once per drain
+    /// (the inbox is emptied each drain, so no double-delivery).
+    ///
+    /// `expectedGeneration` is the `startGeneration` snapshot taken by the
+    /// `start()` that spawns this. Re-check it UNDER the lock before registering:
+    /// `start()` releases `stateLock` first, so a `stop()` can land in that window
+    /// (bumping the generation); without the re-check we'd register an observer
+    /// that `stop()` can never remove.
+    private func startEventDrain(expectedGeneration: Int) {
         stateLock.lock()
-        guard announcePoller == nil, expectedGeneration == startGeneration else {
+        guard eventDrainObserverToken == nil, expectedGeneration == startGeneration else {
             stateLock.unlock(); return
         }
-        let cont = eventContinuation
-        announcePoller = Task { [weak self] in
-            var lastSeen: [String: Double] = [:]
-            while !Task.isCancelled {
-                // 2.5s: an IPC round-trip each tick, and announces are infrequent;
-                // a few seconds of latency surfacing a heard announce is fine. Use a
-                // throwing sleep and EXIT on cancellation — a `try?` here would swallow
-                // the CancellationError that stop() triggers and fire one extra
-                // `.heardAnnounces` round-trip before the while-check re-evaluates.
-                do { try await Task.sleep(nanoseconds: 2_500_000_000) }
-                catch { return }
-                guard let self else { return }
-                guard let response = try? await self.roundTrip(.heardAnnounces, op: "heardAnnounces"),
-                      case .ok(let payload) = response, let payload,
-                      let announces = try? JSONDecoder().decode([ProxyHeardAnnounce].self, from: payload)
-                else { continue }
-                for a in announces {
-                    if let prev = lastSeen[a.destHashHex], prev >= a.timestamp { continue }
-                    lastSeen[a.destHashHex] = a.timestamp
-                    cont.yield(.announce(
-                        destHash: a.destHashHex,
-                        appDataHex: a.appDataHex,
-                        aspect: a.aspect,
-                        publicKeysHex: a.publicKeysHex,
-                        interfaceName: a.interfaceName,
-                        hops: a.hops,
-                        t: Date(timeIntervalSince1970: a.timestamp)
-                    ))
-                }
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let token = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center,
+            token,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let self_ = Unmanaged<ProxyRnsBackend>.fromOpaque(observer).takeUnretainedValue()
+                self_.requestDrain()
+            },
+            Self.eventsDarwinName,
+            nil,
+            .deliverImmediately
+        )
+        eventDrainObserverToken = token
+        stateLock.unlock()
+        // Initial catch-up drain (anything delivered while the app was suspended or
+        // before this start). The ping-driven drains keep it current from here.
+        requestDrain()
+    }
+
+    /// Coalesce ping-driven drains into at most one in-flight + one trailing pass.
+    private func requestDrain() {
+        stateLock.lock()
+        if draining {
+            rescanRequested = true
+            stateLock.unlock()
+            return
+        }
+        draining = true
+        stateLock.unlock()
+        Task { [weak self] in
+            defer {
+                self?.stateLock.lock()
+                self?.draining = false
+                let again = self?.rescanRequested ?? false
+                self?.rescanRequested = false
+                self?.stateLock.unlock()
+                if again { self?.requestDrain() }
             }
+            await self?.drainNow()
+        }
+    }
+
+    /// One `.drainEvents` round-trip; map + yield every drained event.
+    ///
+    /// The `roundTrip` await below is the drain race window: a `stop()` can land
+    /// while it is suspended (bumping `startGeneration` + clearing
+    /// `lastSeenAnnounce`), then this worker resumes on a stopped node. Capture
+    /// the generation BEFORE the await and re-check it UNDER the lock after, so a
+    /// stale drain discards its payload instead of yielding events or resurrecting
+    /// `lastSeenAnnounce` for a node that is stopped.
+    private func drainNow() async {
+        stateLock.lock()
+        let myGeneration = startGeneration
+        stateLock.unlock()
+        guard let response = try? await roundTrip(.drainEvents, op: "drainEvents"),
+              case .ok(let payload) = response, let payload,
+              let events = try? JSONDecoder().decode([ProxyEvent].self, from: payload)
+        else { return }
+        // Re-check under the lock: if stop() ran during the await, this drain is
+        // a stale incarnation - discard its payload entirely (no yield, no state).
+        stateLock.lock()
+        guard myGeneration == startGeneration else {
+            stateLock.unlock()
+            return
         }
         stateLock.unlock()
+        // Contract §5: `drainEvents` is now a bounded, non-destructive read. After
+        // we have re-emitted the whole batch on the event stream, ack the highest
+        // `seq` so the NE advances its cursor and deletes only the processed
+        // rows. Ack the max over EVERY event in the batch (not just the ones we
+        // yielded): the NE already emitted each row, so a deduped announce we
+        // skip here is still consumed. An ack is fire-and-forget: if it is lost,
+        // or the app dies before it lands, the unacked rows survive and are
+        // re-returned on the next drain (at-least-once; announce dedup + the
+        // UI's message-hash idempotency make the re-delivery harmless).
+        let ackSeq = events.compactMap(\.seq).max()
+        for e in events {
+            switch e.kind {
+            case "announce":
+                let dh = e.destHashHex ?? ""
+                // Diff + update under the lock: stop() clears lastSeenAnnounce
+                // under the same lock, so an unguarded access here was a data
+                // race (and could resurrect an entry after a stop).
+                stateLock.lock()
+                let prevSeen = lastSeenAnnounce[dh]
+                let fresh = (prevSeen == nil) || (prevSeen! < e.t)
+                if fresh { lastSeenAnnounce[dh] = e.t }
+                stateLock.unlock()
+                guard fresh else { continue }
+                eventContinuation.yield(.announce(
+                    destHash: dh,
+                    appDataHex: e.appDataHex ?? "",
+                    aspect: e.aspect ?? "",
+                    publicKeysHex: e.publicKeysHex ?? "",
+                    interfaceName: e.interfaceName ?? "",
+                    hops: e.hops ?? 0,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "inbound":
+                let deliveryMethod: LXDeliveryMethod?
+                switch e.method {
+                case "opportunistic": deliveryMethod = .opportunistic
+                case "direct": deliveryMethod = .direct
+                case "propagated": deliveryMethod = .propagated
+                case "paper": deliveryMethod = .paper
+                default: deliveryMethod = nil
+                }
+                eventContinuation.yield(.inbound(
+                    sourceHash: e.sourceHashHex ?? "",
+                    messageHash: e.messageHashHex ?? "",
+                    content: e.content ?? "",
+                    title: e.title ?? "",
+                    fieldsPacked: (try? (e.fieldsHex ?? "").hexToData()) ?? Data(),
+                    method: deliveryMethod,
+                    rssi: e.rssi,
+                    snr: e.snr,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "delivery":
+                let deliveryMethod: LXDeliveryMethod?
+                switch e.method {
+                case "opportunistic": deliveryMethod = .opportunistic
+                case "direct": deliveryMethod = .direct
+                case "propagated": deliveryMethod = .propagated
+                case "paper": deliveryMethod = .paper
+                default: deliveryMethod = nil
+                }
+                eventContinuation.yield(.delivery(
+                    messageHash: e.messageHashHex ?? "",
+                    state: e.state ?? "",
+                    method: deliveryMethod,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "state":
+                eventContinuation.yield(.state(e.state ?? "?", t: Date(timeIntervalSince1970: e.t)))
+            case "link_state":
+                eventContinuation.yield(.linkState(
+                    linkId: e.linkId ?? 0,
+                    state: e.state ?? "",
+                    reason: e.reason ?? "",
+                    inbound: e.inbound ?? false,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "link_packet":
+                eventContinuation.yield(.linkPacket(
+                    linkId: e.linkId ?? 0,
+                    data: (try? (e.dataHex ?? "").hexToData()) ?? Data(),
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
+            case "link_identified":
+                eventContinuation.yield(.linkIdentified(
+                    linkId: e.linkId ?? 0,
+                    identityHashHex: e.identityHashHex ?? "",
+                    t: Date(timeIntervalSince1970: e.t),
+                    publicKeyHex: e.publicKeyHex
+                ))
+            default:
+                // Unknown kind (forward-compatible): drop, don't crash.
+                continue
+            }
+        }
+        // Ack the cursor only if this batch is still the live incarnation: a
+        // stop() during the loop bumped startGeneration, and acking a stale
+        // batch would advance the cursor past rows the new incarnation has not
+        // yet seen (the new node re-emits its own events on its own drain).
+        if let ackSeq {
+            stateLock.lock()
+            let stillLive = (myGeneration == startGeneration)
+            stateLock.unlock()
+            if stillLive {
+                _ = try? await roundTrip(.ackInbox(maxSeq: ackSeq), op: "ackInbox")
+            }
+        }
     }
 
     @discardableResult
@@ -353,19 +538,22 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                 bytesReceived: s.bytesReceived,
                 packetsSent: s.packetsSent,
                 packetsReceived: s.packetsReceived,
-                signalQuality: Self.signalQuality(forRssi: s.rssi)
+                signalQuality: SignalQuality.quality(forRssi: s.rssi)
             )
         }
     }
 
-    /// RSSI dBm → coarse signal bucket (60/75/90 steps), matching the Model A
-    /// mapping in `AppServices`.
-    private static func signalQuality(forRssi rssi: Int) -> SignalQuality {
-        let absRssi = abs(rssi)
-        if absRssi < 60 { return .excellent }
-        if absRssi < 75 { return .good }
-        if absRssi < 90 { return .fair }
-        return .poor
+    /// Disconnect a Model B BLE peer by identity hash. The NE owns the radio,
+    /// so the link is dropped NE-side. Degrades to false when the round-trip
+    /// fails or no connected peer with that identity exists.
+    @discardableResult
+    public func disconnectBLEPeer(identityHashHex: String) async -> Bool {
+        guard let response = try? await roundTrip(.bleDisconnect(identityHashHex: identityHashHex), op: "bleDisconnect"),
+              case .ok(let payload) = response, let payload,
+              let ok = try? JSONDecoder().decode(Bool.self, from: payload) else {
+            return false
+        }
+        return ok
     }
 
     @discardableResult
@@ -417,14 +605,21 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         // treat it the same as the NE answering `.error` / `.unsupported`: the NE
         // did NOT accept the send, so persist it to the App-Group outbox and
         // return optimistically (`.queued`) — the NE replays it on its next start.
+        //
+        // P1 #6 (send-response ambiguity): assign ONE stable `sendId` to this
+        // logical send and use it in BOTH the live IPC request and the outbox
+        // fallback. The NE dedups on it, so if the live reply is lost (the app
+        // enqueues) and the NE had already sent it, the replay on next start sees
+        // the recorded id and does not send it a second time.
+        let sendId = UUID().uuidString
         let response: ProxyResponse
         do {
             response = try await roundTrip(
-                .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData),
+                .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId),
                 op: "lxmfSend")
         } catch {
             // Transport-level failure (no/garbled response) — NE down/unreachable.
-            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId)
         }
         switch response {
         case .ok(let payload):
@@ -432,12 +627,19 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                   let outcome = try? JSONDecoder().decode(ProxySendOutcome.self, from: payload) else {
                 return .other("malformed send response")
             }
+            // Surface a degraded dedup guard: the message went out, so the outcome
+            // stays .queued (flipping to failure would make the app re-enqueue and
+            // double-send, strictly worse). But when the NE could not persist the
+            // sendId, log loudly so the lost-reply re-enqueue risk is visible.
+            if outcome.idPersisted == false {
+                Self.log.warning("send committed but sendId NOT persisted to the sent-id store - lost-reply double-send guard degraded for this message")
+            }
             // Live IPC success — behave exactly as before (real LXMF hash from NE).
             return Self.sendOutcome(from: outcome)
         case .error, .unsupported:
             // NE answered but did NOT accept the send (node not running / send
             // rejected). Persist for replay rather than dropping it.
-            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId)
         }
     }
 
@@ -445,23 +647,26 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// optimistic `.queued` outcome so the UI shows it pending (the NE replays the
     /// queue on its next `start()`, A5c).
     ///
-    /// `messageHashHex` is stored `nil`: the real LXMF hash is computed NE-side at
-    /// pack time and this proxy (RNSAPI-only, no `Identity`/LXMF-swift) cannot
-    /// derive it — see `OutboxEntry.messageHashHex`. The returned `.queued` hash is
-    /// therefore empty, matching the existing "no real hash yet" shape (the live
-    /// path's `ProxySendOutcome.detail` is likewise empty until the NE packs).
-    private func enqueueToOutbox(destHashHex: String, content: String, method: String, fieldsData: Data) -> SendOutcome {
+    /// `sendId` (P1 #6) is the stable id this logical send was sent with over IPC;
+    /// the NE's replay dedups on it. `messageHashHex` is stored `nil`: the real
+    /// LXMF hash is computed NE-side at pack time and this proxy (RNSAPI-only, no
+    /// `Identity`/LXMF-swift) cannot derive it (see `OutboxEntry.messageHashHex`).
+    /// The returned `.queued` hash is therefore empty, matching the existing
+    /// "no real hash yet" shape (the live path's `ProxySendOutcome.detail` is
+    /// likewise empty until the NE packs).
+    private func enqueueToOutbox(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String) -> SendOutcome {
         let entry = OutboxEntry(
             destHashHex: destHashHex,
             content: content,
             method: method,
             fieldsData: fieldsData.isEmpty ? nil : fieldsData,
             messageHashHex: nil,
+            sendId: sendId,
             createdAt: Date().timeIntervalSince1970
         )
         OutboxQueue().append(entry)
         let destPrefix = String(destHashHex.prefix(8))
-        Self.log.info("Model B NE unreachable — queued LXMF send to durable outbox (dest=\(destPrefix, privacy: .public)…)")
+        Self.log.info("Model B NE unreachable - queued LXMF send to durable outbox (dest=\(destPrefix, privacy: .public)…)")
         return .queued(messageHash: "")
     }
 
@@ -481,13 +686,16 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         ]
         let fieldsData = LxmfFieldCodec.pack([LxmfFields.FIELD_REACTION: reaction])
         let method = LXDeliveryMethod.opportunistic.rawValue
+        // P1 #6: one stable id for this reaction, shared by the live IPC request
+        // and the outbox fallback (reactions replay through the same dedup path).
+        let sendId = UUID().uuidString
         let response: ProxyResponse
         do {
             response = try await roundTrip(
-                .lxmfSend(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData),
+                .lxmfSend(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData, sendId: sendId),
                 op: "lxmfSend(reaction)")
         } catch {
-            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData, sendId: sendId)
         }
         switch response {
         case .ok(let payload):
@@ -497,7 +705,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             }
             return Self.sendOutcome(from: outcome)
         case .error, .unsupported:
-            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData)
+            return enqueueToOutbox(destHashHex: destHashHex, content: "", method: method, fieldsData: fieldsData, sendId: sendId)
         }
     }
 
@@ -608,29 +816,71 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     // MARK: - RnsTelephony
     //
-    // Voice links are driven by the in-process LXST state machine and require a
-    // live local RNS.Link — they CANNOT be proxied frame-by-frame at acceptable
-    // latency, so under Model B telephony stays app-local (out of A5b scope).
-    // Each throws so a missed UI capability gate fails loud rather than silently
-    // dropping audio. (Model B: runs NE-side / not proxied yet.)
+    // The NE Python RNS owns the live RNS.Link (it has `open_link` / `link_send`
+    // / `link_identify` / `link_teardown` + the inbound packet / identify / close
+    // callbacks that feed the `link_*` drain events). These four ops marshal the
+    // request side across the seam; the Model B `NetworkTransport` in the app
+    // drives LXSTSwift's `Telephone` over them. Inbound audio frames ride the
+    // `drainEvents` queue (the `link_packet` events) and are surfaced to the
+    // transport via the `ColumbaPythonLink*` notifications that
+    // `AppServices.handlePythonEvent` posts.
 
-    public func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String?) async throws -> (ok: Bool, linkId: Int, reason: String) {
-        throw BackendError.unsupportedInProxy(feature: "openLink")
+    /// One IPC round-trip that returns the NE's raw `{ok, link_id, reason}` JSON.
+    /// `openLink` blocks up to ~10s inside the NE (the Python bounded path
+    /// request), so the deadline is generous.
+    private struct LinkOpenResult: Decodable {
+        let ok: Bool
+        let linkId: Int
+        let reason: String
+        enum CodingKeys: String, CodingKey {
+            case ok
+            case linkId = "link_id"
+            case reason
+        }
     }
 
+    public func openLink(destHashHex: String, aspect: String, identityPublicKeyHex: String?) async throws -> (ok: Bool, linkId: Int, reason: String) {
+        // The NE `open_link` does a bounded path request (up to ~10s) before
+        // reporting unreachable. Give the IPC round-trip headroom on top.
+        let response = try await roundTrip(
+            .openLink(destHashHex: destHashHex, aspect: aspect, identityPublicKeyHex: identityPublicKeyHex ?? ""),
+            op: "openLink",
+            deadline: 15.0
+        )
+        switch response {
+        case .ok(let payload):
+            guard let payload, let result = try? JSONDecoder().decode(LinkOpenResult.self, from: payload) else {
+                return (ok: false, linkId: 0, reason: "malformed-reply")
+            }
+            return (ok: result.ok, linkId: result.linkId, reason: result.reason)
+        case .error(let message):
+            return (ok: false, linkId: 0, reason: message)
+        case .unsupported:
+            return (ok: false, linkId: 0, reason: "unsupported")
+        }
+    }
+
+    /// Send one opaque audio/signalling frame over the link. Bounded deadline:
+    /// a wedged / jetsammed NE must degrade the frame to `ipcFailed` instead of
+    /// hanging the audio pipeline. The transport treats a thrown error as a
+    /// dropped frame (the codec has its own retransmission / comfort-noise).
     @discardableResult
     public func linkSend(linkId: Int, data: Data) async throws -> Bool {
-        throw BackendError.unsupportedInProxy(feature: "linkSend")
+        try await marshalBool(
+            .linkSend(linkId: linkId, dataHex: data.toHex()),
+            op: "linkSend",
+            deadline: 0.5
+        )
     }
 
     @discardableResult
     public func linkIdentify(linkId: Int) async throws -> Bool {
-        throw BackendError.unsupportedInProxy(feature: "linkIdentify")
+        try await marshalBool(.linkIdentify(linkId: linkId), op: "linkIdentify")
     }
 
     @discardableResult
     public func linkTeardown(linkId: Int) async throws -> Bool {
-        throw BackendError.unsupportedInProxy(feature: "linkTeardown")
+        try await marshalBool(.linkTeardown(linkId: linkId), op: "linkTeardown")
     }
 
     // MARK: - RnsTransportAdmin
@@ -658,14 +908,14 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// remaining ops.
     public var capabilities: BackendCapabilities {
         BackendCapabilities(
-            backendId: .swiftNative,
-            versions: .init(reticulum: "0.2.3", lxmf: "0.3.4", lxst: nil, bleReticulum: nil),
+            backendId: .pythonEmbedded,
+            versions: .init(reticulum: nil, lxmf: nil, lxst: nil, bleReticulum: nil),
             interfaces: .init(hotReloadInterfaces: false),
             telemetry: .init(
                 collectorHostMode: .unsupported,
                 storeOwnTelemetry: .unsupported,
                 allowedRequestersFilter: .unsupported,
-                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony/nomadnet/interface-admin are not proxied yet."
+                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony/interface-admin are not proxied yet. NomadNet fetch IS proxied via the NE."
             ),
             performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )
@@ -673,9 +923,11 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     // MARK: - Mapping helpers
 
-    /// Marshal a request whose `.ok` payload is a JSON-encoded `Bool`.
-    private func marshalBool(_ request: ProxyRequest, op: String) async throws -> Bool {
-        let response = try await roundTrip(request, op: op)
+    /// Marshal a request whose `.ok` payload is a JSON-encoded `Bool`. `deadline`
+    /// bounds the round-trip (a wedged / jetsammed NE degrades to `ipcFailed`
+    /// instead of hanging) - used by the per-frame `linkSend` voice path.
+    private func marshalBool(_ request: ProxyRequest, op: String, deadline: TimeInterval? = nil) async throws -> Bool {
+        let response = try await roundTrip(request, op: op, deadline: deadline)
         switch response {
         case .ok(let payload):
             guard let payload, let value = try? JSONDecoder().decode(Bool.self, from: payload) else {

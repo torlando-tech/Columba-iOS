@@ -117,11 +117,23 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
             qos: .userInitiated
         )
         super.init()
+        // The CBCentralManagerOptionRestoreIdentifierKey path requires the app-level
+        // bluetooth-central background entitlement. A Network Extension does not have
+        // it, and CoreBluetooth trips an internal NSAssert (SIGABRT) the moment the
+        // central is created with that option in-process. The NE never restores
+        // background state here (no centralManagerWillRestoreState exists anywhere),
+        // so under COLUMBA_RNODE_NO_BLE_RESTORE (set on the NE target) we create the
+        // central with no options - the exact form verified to reach .poweredOn in
+        // the NE by the on-device GATT probe.
+        #if COLUMBA_RNODE_NO_BLE_RESTORE
+        central = CBCentralManager(delegate: self, queue: queue)
+        #else
         central = CBCentralManager(
             delegate: self,
             queue: queue,
             options: [CBCentralManagerOptionRestoreIdentifierKey: restorationIdentifier]
         )
+        #endif
     }
 
     func connect() {
@@ -201,8 +213,7 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
-        let matches = deviceIdentifier.map { peripheral.identifier == $0 }
-            ?? (peripheral.name == deviceName)
+        let matches = isTarget(peripheral)
         guard matches else { return }
         central.stopScan()
         self.peripheral = peripheral
@@ -305,19 +316,16 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
 
     private func beginConnection() {
         guard central.state == .poweredOn else { pendingConnect = true; return }
-        if let deviceIdentifier,
-           let known = central.retrievePeripherals(withIdentifiers: [deviceIdentifier]).first {
-            peripheral = known
-            known.delegate = self
-            central.connect(known, options: nil)
-            startTimeout()
-            return
-        }
-        if let connected = central.retrieveConnectedPeripherals(withServices: [Self.nusService])
-            .first(where: isTarget) {
-            peripheral = connected
-            connected.delegate = self
-            central.connect(connected, options: nil)
+        let connected = central.retrieveConnectedPeripherals(withServices: [Self.nusService])
+        // Reuse ONLY a link that is already connected. A cached-but-not-connected
+        // peripheral (from a prior session, via target_device_identifier) is stale:
+        // central.connect() on it hangs until timeout because the peripheral is
+        // re-advertising and must be re-acquired via a fresh scan. This is the
+        // cause of the "connects once, then every retry times out at state=1" bug.
+        if let connectedTarget = connected.first(where: isTarget) {
+            peripheral = connectedTarget
+            connectedTarget.delegate = self
+            central.connect(connectedTarget, options: nil)
             startTimeout()
             return
         }
@@ -341,7 +349,18 @@ private final class PythonRNodeCoreBluetoothTransport: NSObject,
     }
 
     private func isTarget(_ peripheral: CBPeripheral) -> Bool {
-        deviceIdentifier.map { peripheral.identifier == $0 } ?? (peripheral.name == deviceName)
+        // Match on identifier (when we have one) OR on name. A stored
+        // target_device_identifier is a CoreBluetooth peripheral UUID that iOS
+        // re-randomizes on each boot for non-bonded RNodes, so it goes stale
+        // quickly; the advertising name ("RNode XXXX", derived from the LoRa node
+        // id) is stable and unique among RNodes. Accepting either means a freshly
+        // advertising device matches by name even when the cached UUID is stale,
+        // while a valid (bonded/persistent) UUID still disambiguates the rare
+        // two-RNodes-share-a-name case. The previous ID-only form
+        // (deviceIdentifier.map { $0 } ?? name) silently disabled name matching
+        // whenever a stale id was set, so the scan never matched the target.
+        if let deviceIdentifier, peripheral.identifier == deviceIdentifier { return true }
+        return peripheral.name == deviceName
     }
 
     private func clearPeripheral() {

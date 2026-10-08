@@ -69,9 +69,11 @@ PYSERIAL_SPEC="pyserial>=3.5"
 #   BLE_RETICULUM_LOCAL=~/repos/ble-reticulum support/fetch-wheels.sh
 # Pure-Python, zero runtime deps.
 # Pinned to a commit (not a bare repo URL or a moving branch) so CI and dev
-# builds are reproducible — bump deliberately. The local checkout is 49 commits
-# past the v0.2.2 tag, so a tag pin would regress; this is origin/main@07d9413.
-BLE_RETICULUM_REF="${BLE_RETICULUM_REF:-07d941304c9a1dc3a8e58087b3b974ff3d229e56}"
+# builds are reproducible — bump deliberately. This is the v0.2.3 tag
+# (origin/main@63557ac). v0.2.3 is code-identical to ed164a8 except the
+# pyproject version (0.2.2 -> 0.2.3) + CHANGELOG, so the Swift<->Python C-ABI
+# is unchanged by this bump.
+BLE_RETICULUM_REF="${BLE_RETICULUM_REF:-63557acfe5c923dcdafeb7bc37508bf835f16514}"
 if [ -n "${BLE_RETICULUM_LOCAL:-}" ]; then
     echo "==> BLE_RETICULUM_LOCAL set — using local ble-reticulum checkout: $BLE_RETICULUM_LOCAL"
     BLE_RETICULUM_SPEC="$BLE_RETICULUM_LOCAL"

@@ -16,10 +16,14 @@ sole signal for typing peers vs relays vs audio vs sites.
 from __future__ import annotations
 
 import copy
+import ctypes
+import json
 import os
 import queue
+import sqlite3
 import threading
 import time
+import types
 from typing import Any
 
 import sys
@@ -330,7 +334,942 @@ _state: dict[str, Any] = {
 def _put(kind: str, **payload: Any) -> None:
     payload["kind"] = kind
     payload["t"] = time.time()
-    _events.put(payload)
+    if _durable_mode:
+        # Model B (NE): inbound is handled DIRECTLY at the delivery callback
+        # (persisted to the shared GRDB store + banner + `newMessage` ping), so it
+        # is NOT enqueued here - the app reads it from the store via
+        # `ModelBInboundReplay`. Every other event kind (announce / delivery /
+        # state / link) is appended to the durable shared inbox + the app drains it
+        # on the ping (immediately while open) or on launch / foreground (catch-up),
+        # feeding the `backend.events` stream (path table, proof checkmarks, ...).
+        # No poll. Best-effort: a failure must never crash the RNS/LXMF callback.
+        if kind != "inbound":
+            _publish_durable(kind, payload)
+    else:
+        # In-process backend (Python runtime): in-memory queue drained directly by
+        # the same-process drainer. Unchanged legacy path (inbound included, since
+        # the app's `handlePythonEvent` persists it in-process).
+        _events.put(payload)
+
+
+# ── Shared durable inbox (NE → app event bus, cross-process) ──
+#
+# The NE owns RNS in-process (Model B); the app can't observe delivery directly.
+# Instead of the app polling the NE over IPC, the NE durably appends each event
+# to this shared App-Group SQLite store and posts a Darwin notification. The app
+# drains the store in response to the ping (or on launch / foreground) and feeds
+# the same `backend.events` stream the in-process path uses, so the app consumer
+# (persistInboundFromPython / applyDeliveryProof) is unchanged. The store is the
+# durable event log: rows persist while the app is suspended and are caught up on
+# the next drain, so nothing is lost to a missed ping.
+_inbox_path: str | None = None
+_inbox_conn: "sqlite3.Connection | None" = None
+# The path the live inbox connection is bound to. When an in-NE identity switch
+# re-points `_inbox_path`, `_open_inbox` compares this to detect a stale (old
+# identity's) connection and re-binds, instead of keeping the old conn and
+# writing the new identity's events into the old identity's store.
+_inbox_bound_path: str | None = None
+_inbox_lock = threading.Lock()
+# The Darwin notification name the app's ProxyRnsBackend / NotificationObserver
+# observe (must match `network.columba.newMessage` in NotificationObserver.swift).
+_DARWIN_NEW_MESSAGE = "network.columba.newMessage"
+# Durable mode is on only for the NE (Model B): events go to the shared inbox and
+# the Darwin ping is posted. The in-process backend (Python runtime) leaves this
+# off and keeps the in-memory `_events` queue.
+_durable_mode = False
+# Distinct ping for the non-inbound IPC drain (announce → path table → Network
+# screen, delivery proofs, state, link). Kept SEPARATE from `newMessage` because
+# `newMessage` is observed by ChatsViewModel to reload the Chats list - announces
+# must NOT reload the Chats list (they belong to the Contacts → Network screen,
+# which reads the path table via pathUpdates and never uses `newMessage`). The
+# delivery callback posts `newMessage` directly only for a real inbound message.
+_DARWIN_EVENTS = "network.columba.events"
+# Cached CoreFoundation handle (loaded once; the NE's sandbox permits it - the
+# app already uses the same mechanism).
+_cf_handle: Any = None
+
+
+def _set_inbox_path(path: str) -> None:
+    """Point the durable inbox at `path` (the shared per-identity dir) and switch
+    to durable mode. Called from start() once the config dir is known. Idempotent."""
+    global _inbox_path, _inbox_conn, _durable_mode
+    with _inbox_lock:
+        _inbox_path = path
+        _durable_mode = True
+        _open_inbox()
+
+
+def _open_inbox() -> None:
+    """Open + migrate the inbox store (WAL for cross-process app/NE access).
+
+    Re-binds (closes the old connection and opens the new file) when `_inbox_path`
+    was re-pointed since the last open, so an in-NE identity switch (A -> B, same
+    process) stops writing into the old identity's store. Called from
+    `_set_inbox_path` (which re-points the path first), and from `_publish_durable`
+    / `drain_inbox` (which re-open if the path was set in a prior incarnation)."""
+    global _inbox_conn, _inbox_bound_path
+    if _inbox_path is None:
+        return
+    if _inbox_conn is not None:
+        if _inbox_bound_path != _inbox_path:
+            # Path changed under a live connection: rebind.
+            try:
+                _inbox_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _inbox_conn = None
+            _inbox_bound_path = None
+        else:
+            return
+    try:
+        conn = sqlite3.connect(_inbox_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS ne_inbox (
+                   seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                   kind TEXT NOT NULL,
+                   payload TEXT NOT NULL,
+                   created_at REAL NOT NULL
+               )"""
+        )
+        conn.commit()
+        _inbox_conn = conn
+        _inbox_bound_path = _inbox_path
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: inbox open failed: {e}", RNS.LOG_ERROR)
+
+
+def _post_darwin(name: str) -> None:
+    """Post a system-wide Darwin notification of `name`. Used for both the
+    `newMessage` ping (app drains the store / inbox) and the `inboundBanner` ping
+    (NE Swift posts the user banner). No-op when CoreFoundation can't be loaded.
+    Never raises."""
+    global _cf_handle
+    try:
+        if _cf_handle is None:
+            _cf_handle = ctypes.CDLL(
+                "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+            )
+        cf = _cf_handle
+        kCFStringEncodingUTF8 = 0x08000100
+        cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        cf.CFNotificationCenterGetDarwinNotifyCenter.restype = ctypes.c_void_p
+        cf.CFNotificationCenterGetDarwinNotifyCenter.argtypes = []
+        cf.CFNotificationCenterPostNotification.restype = None
+        cf.CFNotificationCenterPostNotification.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool
+        ]
+        cf.CFRelease.restype = None
+        cf.CFRelease.argtypes = [ctypes.c_void_p]
+        center = cf.CFNotificationCenterGetDarwinNotifyCenter()
+        name_cf = cf.CFStringCreateWithCString(None, name.encode("utf-8"), kCFStringEncodingUTF8)
+        try:
+            cf.CFNotificationCenterPostNotification(center, name_cf, None, None, True)
+        finally:
+            cf.CFRelease(name_cf)
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: darwin post failed (best-effort): {e}", RNS.LOG_DEBUG)
+
+
+# ── Ping coalescing (anti-flood) ─────────────────────────────────────────────
+# The NE posts a `newMessage` ping on every non-inbound event (announce,
+# delivery, state, link). A hub mesh floods ~1+ announce/sec, so an unthrottled
+# ping means the app drains + refreshes its lists every second - a visible
+# flicker (worse than the 2.5s poller this replaced). Coalesce the
+# non-inbound pings to at most one per _PING_COALESCE_S using a trailing-edge
+# throttle: a quiet event posts immediately; a burst settles to exactly one
+# trailing post. Inbound messages are unaffected - the delivery callback posts
+# its own ping directly (immediately), so a real message never waits for the
+# throttle. (Announce/delivery/state events arriving ≤1.2s late is strictly
+# better than the old 2.5s poller.)
+_PING_COALESCE_S = 1.2
+_ping_lock = threading.Lock()
+_last_ping_ts = 0.0
+_ping_trailing_scheduled = False
+
+
+def _coalesced_events_ping() -> None:
+    """Trailing-edge throttle around the `events` drain ping. At most one ping per
+    _PING_COALESCE_S, and the last event in a burst is always posted (the
+    trailing post). Called from `_publish_durable` for every non-inbound event
+    (announce / delivery / state / link). Never raises. This posts
+    `_DARWIN_EVENTS`, NOT `newMessage` - so it wakes the IPC drain (path table →
+    Network screen) without reloading the Chats list."""
+    global _last_ping_ts, _ping_trailing_scheduled
+    try:
+        now = time.time()
+        with _ping_lock:
+            elapsed = now - _last_ping_ts
+            if elapsed >= _PING_COALESCE_S:
+                # Quiet enough: post immediately.
+                _last_ping_ts = now
+                _ping_trailing_scheduled = False
+                _post_darwin(_DARWIN_EVENTS)
+                return
+            if not _ping_trailing_scheduled:
+                _ping_trailing_scheduled = True
+                delay = _PING_COALESCE_S - elapsed
+                threading.Thread(target=_trailing_events_ping, args=(delay,), daemon=True).start()
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: ping coalesce failed (best-effort): {e}", RNS.LOG_DEBUG)
+
+
+def _trailing_events_ping(delay: float) -> None:
+    """Fire the coalesced `events` drain ping at the trailing edge of the throttle
+    window. If more events arrive after this fires, they start a new window."""
+    global _last_ping_ts, _ping_trailing_scheduled
+    try:
+        time.sleep(max(0.0, delay))
+        with _ping_lock:
+            _last_ping_ts = time.time()
+            _ping_trailing_scheduled = False
+        _post_darwin(_DARWIN_EVENTS)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _post_link_events_ping() -> None:
+    """Immediate drain ping for voice link events (link_state / link_packet /
+    link_identified). Bypasses the trailing-edge coalesce so inbound audio frames
+    are delivered with minimal latency - the 1.2s coalesce window would batch a
+    whole second of voice into one drain, producing an unusable echo. Posts
+    `_DARWIN_EVENTS` (NOT `newMessage`), so it wakes the IPC drain without
+    reloading the Chats list. Updates `_last_ping_ts` so a coalesced announce that
+    follows restarts its own window instead of firing an immediate extra ping.
+    Never raises. The APP side already burst-coalesces its drains, so a stream of
+    per-frame pings collapses into one in-flight drain + trailing re-drain."""
+    global _last_ping_ts, _ping_trailing_scheduled
+    try:
+        with _ping_lock:
+            _last_ping_ts = time.time()
+            _ping_trailing_scheduled = False
+        _post_darwin(_DARWIN_EVENTS)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _publish_durable(kind: str, payload: dict) -> None:
+    """Append `payload` (kind + t included) to the durable inbox + post the ping.
+    Best-effort; never raises (the caller is an RNS/LXMF callback thread)."""
+    if _inbox_path is None:
+        return
+    with _inbox_lock:
+        _open_inbox()
+        if _inbox_conn is None:
+            return
+        try:
+            _inbox_conn.execute(
+                "INSERT INTO ne_inbox (kind, payload, created_at) VALUES (?, ?, ?)",
+                (kind, json.dumps(payload), float(payload.get("t") or time.time())),
+            )
+            _inbox_conn.commit()
+        except Exception as e:  # noqa: BLE001
+            RNS.log(f"rns_bridge: inbox append failed: {e}", RNS.LOG_ERROR)
+            return
+    # Coalesce the drain ping: a hub mesh floods ~1 announce/sec. Posting one
+    # ping per event made the app drain every second. Posts `_DARWIN_EVENTS` (not
+    # `newMessage`), so it wakes the IPC drain (path table → Network screen)
+    # WITHOUT reloading the Chats list. Inbound messages post their own
+    # `newMessage` ping directly (immediate), so a real message never waits.
+    #
+    # Voice link events (link_state / link_packet / link_identified) bypass the
+    # coalesce and post an IMMEDIATE ping: the 1.2s trailing-edge window would
+    # batch a full second of inbound audio into one drain, producing an
+    # unusable echo. The app's drain is itself burst-coalesced, so the per-frame
+    # pings collapse into one in-flight drain + a trailing re-drain.
+    if kind in ("link_state", "link_packet", "link_identified"):
+        _post_link_events_ping()
+    else:
+        _coalesced_events_ping()
+
+
+def drain_inbox() -> list:
+    """Read the durable inbox, oldest-first, WITHOUT deleting. Returns the raw
+    event dicts (kind + t + the original payload fields) PLUS a `_seq` field so
+    the consumer can ack precisely. The app maps each onto a BackendEvent and
+    feeds its `backend.events` consumer, then advances the cursor via
+    `ack_inbox(max_seq)` once it has processed the batch.
+
+    Contract §5: the read is bounded and NON-destructive. Deleting on read (the
+    prior behavior) meant a lost IPC reply or an app termination before the
+    consumer processed the batch lost delivery-state updates and announces
+    permanently. With the cursor, unacked rows survive and are re-returned on
+    the next drain; `ack_inbox` advances past them only after the consumer has
+    handled them (at-least-once delivery)."""
+    with _inbox_lock:
+        _open_inbox()
+        if _inbox_conn is None:
+            return []
+        try:
+            cur = _inbox_conn.execute(
+                "SELECT seq, kind, payload FROM ne_inbox ORDER BY seq ASC"
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return []
+            out = []
+            for seq, kind, payload in rows:
+                try:
+                    event = json.loads(payload)
+                except Exception:  # noqa: BLE001
+                    continue
+                event["seq"] = seq
+                out.append(event)
+            return out
+        except Exception as e:  # noqa: BLE001
+            RNS.log(f"rns_bridge: inbox drain failed: {e}", RNS.LOG_ERROR)
+            return []
+
+
+def ack_inbox(max_seq: int) -> None:
+    """Advance the inbox consumer cursor: delete rows at or below `max_seq`.
+
+    Called by the app over IPC AFTER it has processed a drained batch (the
+    highest `_seq` in that batch is the cursor). Rows above the cursor - i.e.
+    events appended after the drain or a later batch not yet acked - are left
+    intact. Idempotent and safe below the floor (re-acking an already-deleted
+    cursor deletes nothing). Contract §5: durable changes advance by explicit
+    ack/cursor, not by a destructive read."""
+    with _inbox_lock:
+        _open_inbox()
+        if _inbox_conn is None:
+            return
+        try:
+            _inbox_conn.execute(
+                "DELETE FROM ne_inbox WHERE seq <= ?", (int(max_seq),)
+            )
+            _inbox_conn.commit()
+        except Exception as e:  # noqa: BLE001
+            RNS.log(f"rns_bridge: inbox ack failed: {e}", RNS.LOG_ERROR)
+
+
+# ── Shared GRDB message store (NE → app, Model B) ──
+#
+# The NE owns LXMF delivery in-process. On each inbound message it persists the
+# row DIRECTLY into the shared App-Group GRDB store (`lxmf-swift.db`, the same
+# file the app's UI reads via `LXMFSwift.LXMFDatabase`), mirroring the exact
+# write `LXMFSwift.MessageRecord(from:)` + `LXMFDatabase.updateConversationForMessage`
+# perform. The app's `ModelBInboundReplay` then scans this store on the Darwin
+# `newMessage` ping (immediately while the app is open) and on start (catch-up
+# for anything delivered while suspended / before launch), running the field
+# side channels. This is the durable "shared db" the NE writes and the app
+# reads - the source of truth for inbound messages.
+#
+# Cross-process safety: the store is WAL-mode with a busy_timeout (the app's
+# `LXMFDatabase` is configured the same way, "for concurrent access between app
+# and Network Extension"). The NE holds a single writer connection; the app's
+# GRDB pool reads it fine.
+_grdb_path: str | None = None
+_grdb_conn: "sqlite3.Connection | None" = None
+# The path the live GRDB connection is bound to. Mirrors `_inbox_bound_path`:
+# an in-NE identity switch re-points `_grdb_path`, and `_open_grdb` re-binds the
+# connection so the new identity's inbound is not written into the old
+# identity's message store.
+_grdb_bound_path: str | None = None
+_grdb_lock = threading.Lock()
+# The `block_unknown_senders` privacy toggle, mirrored into the AppGroup suite by
+# the app and passed to `start()` (the NE can't read the app's standard
+# UserDefaults). When on, inbound from a sender with no existing (favorited)
+# conversation is dropped BEFORE persisting, matching the app's
+# `IncomingMessageHandler` filter.
+_block_unknown_senders = False
+# Darwin ping the NE Swift observer listens for to post the user-facing banner
+# (kept distinct from `newMessage` so the app's replay observer and the NE's
+# banner observer don't fire each other).
+_DARWIN_INBOUND_BANNER = "network.columba.inboundBanner"
+# Inbound state byte: the GRDB store has no inbound-specific state; the app maps
+# `RNSAPI .received` → GRDB `.delivered` (0x08) and the `incoming` column carries
+# the inbound distinction. Must be a valid LXMFSwift.LXMessageState rawValue so
+# the app's `toLXMessage()` (which round-trips state) doesn't throw.
+_GRDB_STATE_DELIVERED = 0x08
+
+
+def _set_grdb_store(path: str, block_unknown_senders: bool = False) -> None:
+    """Point the NE at the shared GRDB store and set the privacy filter. Called
+    from `start()` once `config_dir` is known (the store is
+    `<config_dir>/lxmf-swift.db`). Idempotent; best-effort open."""
+    global _grdb_path, _grdb_conn, _block_unknown_senders
+    with _grdb_lock:
+        _grdb_path = path
+        _block_unknown_senders = bool(block_unknown_senders)
+        _open_grdb()
+
+
+def set_block_unknown_senders(block_unknown_senders: bool = False) -> bool:
+    """Live-refresh the `block_unknown_senders` privacy filter on a RUNNING node
+    (Issue 3). The app mirrors the toggle into the AppGroup suite and posts a
+    Darwin ping when the user flips it in Settings; the NE observes the ping and
+    calls this through the Python bridge. Without it the running node keeps
+    filtering with the value it captured at `start()` until a restart. Takes the
+    same lock `_set_grdb_store` uses so the flip is atomic w.r.t. the delivery
+    callback reading the flag. Returns True on success (the bridge wraps this in
+    the ok/result envelope)."""
+    global _block_unknown_senders
+    with _grdb_lock:
+        _block_unknown_senders = bool(block_unknown_senders)
+    return True
+
+
+def _open_grdb() -> None:
+    """Open the shared GRDB store (WAL, busy_timeout) if it exists yet. The app
+    creates + migrates it on launch; the NE only writes when it's already there,
+    so a missing/empty store simply means "app hasn't launched yet" and inbound
+    is held in the durable ingress-retry file (re-projected by
+    `_retry_pending_ingress` once the store is reachable) rather than losing the
+    row.
+
+    Re-binds (closes the old connection and opens the new file) when `_grdb_path`
+    was re-pointed since the last open, so an in-NE identity switch (A -> B, same
+    process) stops writing the new identity's inbound into the old identity's
+    message store."""
+    global _grdb_conn, _grdb_bound_path
+    if _grdb_path is None:
+        return
+    if _grdb_conn is not None:
+        if _grdb_bound_path != _grdb_path:
+            # Path changed under a live connection: rebind.
+            try:
+                _grdb_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _grdb_conn = None
+            _grdb_bound_path = None
+        else:
+            return
+    if not os.path.isfile(_grdb_path):
+        return
+    try:
+        conn = sqlite3.connect(_grdb_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        # One-time repair (idempotent): earlier inbound INSERTs (559eccb4)
+        # bound an explicit NULL into `is_pinned`. The app's ConversationRecord
+        # decodes it as a non-optional Int, so a NULL row throws the whole
+        # getConversations() and freezes the Chats list. Backfill to the schema
+        # default 0; no-op once fixed.
+        conn.execute("UPDATE conversations SET is_pinned = 0 WHERE is_pinned IS NULL")
+        conn.commit()
+        _grdb_conn = conn
+        _grdb_bound_path = _grdb_path
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: grdb open failed: {e}", RNS.LOG_ERROR)
+
+
+# ── Inbound ingress retry (P1 #4) ─────────────────────────────────────────────
+#
+# When the shared GRDB store is not yet available (the app has not launched /
+# migrated it) an inbound write fails. The legacy failure branch dropped the
+# message ("lost until the peer re-sends"). Instead we retain the raw artifact
+# durably in a NE-owned JSONL file next to the store, and re-project it into the
+# store as soon as the store is reachable again. The file is NE-owned (the app's
+# `drain_inbox` never touches it), and the projection is idempotent (the message
+# row is INSERT OR REPLACE by message_id), so a retried message is not
+# double-inserted.
+_ingress_retry_lock = threading.Lock()
+# True while `_retry_pending_ingress` is projecting retained artifacts, so the
+# per-artifact `_write_inbound_to_grdb` call does not re-enter the retry (or
+# re-store a just-failed artifact as a new one).
+_retrying_ingress = False
+# Bumped on start()/stop() so a running ingress-retry loop (P1 #9) detects a
+# (re)start / teardown and stops itself. Mirrors `_announce_generation`.
+_ingress_retry_generation = 0
+
+
+def _has_pending_ingress() -> bool:
+    """True when the NE-owned ingress-retry file exists and is non-empty."""
+    path = _ingress_retry_path()
+    if path is None:
+        return False
+    try:
+        with _ingress_retry_lock:
+            return os.path.isfile(path) and os.path.getsize(path) > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ingress_retry_loop(generation: int) -> None:
+    """P1 #9: periodically re-project retained inbound artifacts into the GRDB
+    store while the node is up, so a message whose store was unavailable when it
+    arrived is persisted the moment the store becomes reachable (the app creates
+    it on launch) - NOT only when the next inbound delivery happens to succeed.
+    A daemon thread that bails on each generation change (start/stop bump
+    `_ingress_retry_generation`), so it never outlives the node it is retrying
+    for and never survives a stop->start restart into the new node."""
+    while _ingress_retry_generation == generation:
+        # Only touch the store when something is actually retained; an empty
+        # (or missing) file makes this a no-op and we just sleep.
+        if _has_pending_ingress():
+            # Issue 3: projecting retained mail alone is not enough - the app's
+            # Chats list and ModelBInboundReplay only re-scan the store when they
+            # see the `newMessage` ping. A normal inbound delivery posts it (line
+            # ~1535), but a recovery here (a message retained while the store was
+            # unavailable, projected now that the app launched and created the
+            # store) would otherwise stay HIDDEN until the next real message or
+            # app relaunch. Post the ping ONLY when this pass actually recovered
+            # at least one message (projected > 0), so a no-op pass does not
+            # trigger a redundant reload. No banner is posted: the user is not
+            # being paged for a live arrival, and a repeated banner per 5s pass
+            # would be worse than silent; the newMessage reload surfaces the row.
+            projected = _retry_pending_ingress()
+            if projected > 0:
+                RNS.log(
+                    f"rns_bridge: ingress retry recovered {projected} retained message(s); posting newMessage",
+                    RNS.LOG_DEBUG,
+                )
+                _post_darwin(_DARWIN_NEW_MESSAGE)
+        # 5s cadence: short enough that a freshly-launched app (store appears
+        # within seconds) picks up retained mail promptly; cheap when nothing is
+        # pending (a single os.stat under the lock).
+        time.sleep(5.0)
+
+
+def _ingress_retry_path() -> str | None:
+    """The durable NE-owned artifact file, next to the GRDB store. None when the
+    store path is unset (in-process backend, where inbound uses the legacy path)."""
+    if _grdb_path is None:
+        return None
+    try:
+        directory = os.path.dirname(_grdb_path)
+        if not directory:
+            return None
+        return os.path.join(directory, "ingress-retry.jsonl")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ingress_retry_fields(message: Any) -> dict | None:
+    """Extract the fields `_write_inbound_to_grdb` needs, in JSONL-serializable
+    form. Returns None when the message has no persistable row (no packed wire or
+    no hashes) - nothing to retain. Best-effort; never raises."""
+    try:
+        packed = bytes(getattr(message, "packed", None) or b"")
+        if not packed:
+            return None
+        message_id = bytes(getattr(message, "hash", None) or b"")
+        source_hash = bytes(getattr(message, "source_hash", None) or b"")
+        destination_hash = bytes(getattr(message, "destination_hash", None) or b"")
+        if not (message_id and source_hash and destination_hash):
+            return None
+        stamp = getattr(message, "stamp", None)
+        stamp_b = bytes(stamp) if stamp is not None else None
+        return {
+            "packed_hex": packed.hex(),
+            "message_id_hex": message_id.hex(),
+            "source_hash_hex": source_hash.hex(),
+            "destination_hash_hex": destination_hash.hex(),
+            "title_hex": bytes(getattr(message, "title", None) or b"").hex(),
+            "content_hex": bytes(getattr(message, "content", None) or b"").hex(),
+            "signature_hex": bytes(getattr(message, "signature", None) or b"").hex(),
+            "stamp_hex": stamp_b.hex() if stamp_b else None,
+            "timestamp": float(getattr(message, "timestamp", None) or time.time()),
+            "method": int(getattr(message, "method", None) or 0),
+            "rssi": getattr(message, "rssi", None),
+            "snr": getattr(message, "snr", None),
+            "q": getattr(message, "q", None),
+            "skip_conversation": _is_telemetry_only_inbound(message),
+        }
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: ingress-retry field capture failed: {e}", RNS.LOG_ERROR)
+        return None
+
+
+def _store_ingress_retry_artifact(fields: dict) -> None:
+    """Append one retained inbound artifact to the durable JSONL file. Best-effort;
+    never raises (called from the LXMF delivery callback)."""
+    path = _ingress_retry_path()
+    if path is None:
+        return
+    try:
+        with _ingress_retry_lock:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(fields) + "\n")
+        RNS.log(f"rns_bridge: inbound retained for ingress retry id={fields['message_id_hex'][:8]}", RNS.LOG_ERROR)
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: ingress-retry store failed: {e}", RNS.LOG_ERROR)
+
+
+def _reconstruct_ingress_message(fields: dict) -> Any:
+    """Rebuild a message-like object from a retained artifact so
+    `_write_inbound_to_grdb` can re-project it. A minimal holder exposing the
+    attributes `_write_inbound_to_grdb` reads via `getattr`."""
+    return types.SimpleNamespace(
+        packed=bytes.fromhex(fields["packed_hex"]),
+        hash=bytes.fromhex(fields["message_id_hex"]),
+        source_hash=bytes.fromhex(fields["source_hash_hex"]),
+        destination_hash=bytes.fromhex(fields["destination_hash_hex"]),
+        title=bytes.fromhex(fields.get("title_hex") or ""),
+        content=bytes.fromhex(fields.get("content_hex") or ""),
+        signature=bytes.fromhex(fields.get("signature_hex") or ""),
+        stamp=bytes.fromhex(fields["stamp_hex"]) if fields.get("stamp_hex") else None,
+        timestamp=float(fields.get("timestamp") or time.time()),
+        method=int(fields.get("method") or 0),
+        # Preserve the recorded skip_conversation decision (P1 #10): a retried
+        # location-only share must NOT be re-derived as a chat message (the
+        # reconstructed holder has no field-map to re-run the telemetry
+        # predicate against), which would create an empty chat + bump unread.
+        # Absent (older artifact) -> None -> the write re-derives from the holder.
+        skip_conversation=fields.get("skip_conversation"),
+        rssi=fields.get("rssi"),
+        snr=fields.get("snr"),
+        q=fields.get("q"),
+    )
+
+
+def _retry_pending_ingress() -> int:
+    """Project retained inbound artifacts into the GRDB store now that it is
+    reachable. Idempotent (INSERT OR REPLACE by message_id). Returns the number
+    successfully projected. Best-effort; never raises.
+
+    P1 #8: the rewrite is MERGE-AWARE. We snapshot the file (under the lock),
+    project each line, then re-read the file and keep the UNION of (lines that
+    still failed this pass) and (lines currently on disk that were not in the
+    snapshot - i.e. a delivery that FAILED during our pass and appended while we
+    held the flag). A naive "write only remaining" would drop that just-appended
+    failure (it is not in `remaining`) and could also erase an artifact appended
+    between our read and rewrite. The union keeps new failures saved until they
+    reach the store, and drops only the ones that successfully projected."""
+    global _retrying_ingress
+    if _retrying_ingress:
+        return 0
+    path = _ingress_retry_path()
+    if path is None or not os.path.isfile(path):
+        return 0
+    try:
+        with _ingress_retry_lock:
+            if not os.path.isfile(path):
+                return 0
+            with open(path, "r", encoding="utf-8") as fh:
+                raw_lines = fh.readlines()
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: ingress-retry read failed: {e}", RNS.LOG_ERROR)
+        return 0
+    if not raw_lines:
+        return 0
+    # Canonical key per line (json round-trip, sorted keys) so a line appended
+    # with the same content as one we read is deduped, not doubled.
+    def _key(line: str) -> str:
+        try:
+            return json.dumps(json.loads(line), sort_keys=True, separators=(",", ":"))
+        except Exception:  # noqa: BLE001
+            return line
+    snapshot = [ln for ln in (l.strip() for l in raw_lines) if ln]
+    snapshot_keys = {_key(ln) for ln in snapshot}
+    _retrying_ingress = True
+    try:
+        projected = 0
+        failures: list[str] = []
+        for line in snapshot:
+            try:
+                fields = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if _write_inbound_to_grdb_impl(_reconstruct_ingress_message(fields)):
+                projected += 1
+            else:
+                failures.append(line)
+        failure_keys = {_key(ln) for ln in failures}
+        # Re-read under the lock: keep our failures + any NEW line appended since
+        # the snapshot (a concurrent delivery that failed while we were projecting).
+        with _ingress_retry_lock:
+            disk: list[str] = []
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    disk = [ln for ln in (l.strip() for l in fh.readlines()) if ln]
+            except Exception:  # noqa: BLE001
+                disk = []
+            keep = list(failures)
+            for line in disk:
+                if _key(line) in failure_keys or _key(line) in snapshot_keys:
+                    continue  # already accounted for (failed or successfully projected)
+                keep.append(line)  # new failure appended during our pass
+            with open(path, "w", encoding="utf-8") as fh:
+                for line in keep:
+                    fh.write(line + "\n")
+        return projected
+    finally:
+        _retrying_ingress = False
+
+
+def _grdb_is_known_sender(source_hash: bytes) -> bool:
+    """True when the sender is a known (FAVORITED) contact, matching the app's
+    `IncomingMessageHandler` filter exactly: a known contact is an existing
+    conversation with `is_favorite != 0` (Favorites.swift). "Conversation
+    exists" alone is NOT enough - a prior conversation with an *unfavorited*
+    sender would otherwise let their new message past the NE's `block_unknown_
+    senders` filter even though the app would drop it (Issue 4). Fail OPEN on
+    any read error — better to surface a message than silently drop mail."""
+    try:
+        with _grdb_lock:
+            _open_grdb()
+            if _grdb_conn is None:
+                return True
+            row = _grdb_conn.execute(
+                "SELECT is_favorite FROM conversations WHERE destination_hash = ?",
+                (source_hash,),
+            ).fetchone()
+        # No conversation row => unknown. Present => known only if favorited
+        # (is_favorite != 0), mirroring `conversation != nil && isFavorite != 0`.
+        return row is not None and int(row[0] or 0) != 0
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _write_inbound_to_grdb_impl(message: Any) -> bool:
+    """Persist one inbound message to the shared GRDB store, mirroring
+    `MessageRecord(from:)` + `updateConversationForMessage`. Returns True on
+    success. Best-effort; never raises (called from the LXMF delivery callback).
+    This is the implementation; the ingress-retry wrapper
+    (`_write_inbound_to_grdb`) adds durable retention on failure."""
+    try:
+        with _grdb_lock:
+            _open_grdb()
+            conn = _grdb_conn
+            if conn is None:
+                return False
+            packed = bytes(getattr(message, "packed", None) or b"")
+            if not packed:
+                return False  # the app requires a non-empty packed_lxmf
+            message_id = bytes(getattr(message, "hash", None) or b"")
+            source_hash = bytes(getattr(message, "source_hash", None) or b"")
+            destination_hash = bytes(getattr(message, "destination_hash", None) or b"")
+            if not (message_id and source_hash and destination_hash):
+                return False
+            title = bytes(getattr(message, "title", None) or b"")
+            content = bytes(getattr(message, "content", None) or b"")
+            signature = bytes(getattr(message, "signature", None) or b"")
+            stamp = getattr(message, "stamp", None)
+            stamp_b = bytes(stamp) if stamp is not None else None
+            timestamp = float(getattr(message, "timestamp", None) or time.time())
+            method = int(getattr(message, "method", None) or 0)
+            # Inbound conversation is keyed by the SOURCE hash (the peer we're
+            # talking to), matching `updateConversationForMessage`.
+            conversation_hash = source_hash
+            now = time.time()
+            rssi = getattr(message, "rssi", None)
+            snr = getattr(message, "snr", None)
+            q = getattr(message, "q", None)
+
+            # Telemetry-only location shares must NOT bump the conversation's
+            # unread count / preview / recency: the app's chat view already
+            # filters these rows out of display (MessagingViewModel.swift:297),
+            # so counting them inflates the chats badge (SUM(unread_count)) and
+            # can surface a ghost conversation with no visible messages. The
+            # location maps from the MESSAGE row (the app's handleInbound
+            # telemetry side-channel reads the packed wire), not the
+            # conversation row, so we still persist the message below and only
+            # skip the conversation upsert here. Mirrors the app-side
+            # `isUserNotifiableMessage` / chat-view telemetry predicate.
+            # P1 #10: a RETRIED message carries its recorded decision on the
+            # holder (the reconstructed holder has no field-map to re-derive
+            # from), so honor it when present; otherwise derive from the holder.
+            recorded_skip = getattr(message, "skip_conversation", None)
+            skip_conversation = (
+                recorded_skip if recorded_skip is not None
+                else _is_telemetry_only_inbound(message)
+            )
+
+            # P1 #11: idempotency across retry re-projection. The message row is
+            # `INSERT OR REPLACE` (idempotent), but the conversation upsert below
+            # increments unread_count on EVERY call. If the extension stops after a
+            # retry commits the message row but before it clears the retained
+            # artifact, the next retry re-projects the SAME message: the row is
+            # replaced, but the conversation's unread count would be raised a second
+            # time. Guard: if this message_id is already stored, it was already
+            # counted when first persisted, so skip the conversation upsert (the
+            # message row is still refreshed below).
+            already_stored = conn.execute(
+                "SELECT 1 FROM messages WHERE message_id = ? LIMIT 1",
+                (message_id,),
+            ).fetchone() is not None
+
+            # 1. Conversation upsert (foreign key requires it first). Mirrors
+            #    LXMFSwift: set preview/timestamp if newer, increment unread if
+            #    inbound. Skipped for telemetry-only location shares (see above)
+            #    and for an already-stored message (idempotency, see P1 #11).
+            if not skip_conversation and not already_stored:
+                cur = conn.execute(
+                    "SELECT destination_hash, last_message_timestamp, unread_count "
+                    "FROM conversations WHERE destination_hash = ?",
+                    (conversation_hash,),
+                )
+                conv = cur.fetchone()
+                preview = None
+                try:
+                    preview = content.decode("utf-8")[:100] if content else None
+                except Exception:  # noqa: BLE001
+                    preview = None
+                if conv is None:
+                    # `is_pinned` is omitted from the column list on purpose so
+                    # the schema DEFAULT 0 applies - binding an explicit NULL
+                    # would store NULL and the app's ConversationRecord (a
+                    # non-optional Int) then fails to decode the whole row,
+                    # throwing every getConversations() and freezing the Chats
+                    # list (see 559eccb4 inbound regression).
+                    conn.execute(
+                        "INSERT INTO conversations "
+                        "(destination_hash, display_name, last_message_timestamp, "
+                        " last_message_preview, unread_count, is_unread, is_favorite, "
+                        " icon_name, icon_fg_color, icon_bg_color, "
+                        " created_at, updated_at) "
+                        "VALUES (?,?,?,?,?,?,0,NULL,NULL,NULL,?,?)",
+                        (conversation_hash, None, timestamp, preview, 1, 1, now, now),
+                    )
+                else:
+                    _, last_ts, unread = conv
+                    if timestamp >= (last_ts or 0):
+                        conn.execute(
+                            "UPDATE conversations SET last_message_timestamp=?, "
+                            "last_message_preview=COALESCE(?, last_message_preview), "
+                            "unread_count=?, is_unread=1, updated_at=? "
+                            "WHERE destination_hash=?",
+                            (timestamp, preview, int(unread or 0) + 1, now, conversation_hash),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE conversations SET unread_count=?, is_unread=1, "
+                            "updated_at=? WHERE destination_hash=?",
+                            (int(unread or 0) + 1, now, conversation_hash),
+                        )
+
+            # 2. Message row (insert or replace by message_id). Mirrors
+            #    MessageRecord(from:) column-for-column. `fields` column is left
+            #    NULL (the app stores the wire in packed_lxmf and ignores the
+            #    separate fields column for wire rows).
+            conn.execute(
+                "INSERT OR REPLACE INTO messages "
+                "(message_id, conversation_hash, destination_hash, source_hash, "
+                " signature, timestamp, title, content, fields, stamp, state, "
+                " method, delivery_attempts, progress, incoming, rssi, snr, q, "
+                " ratchet_id, packed_lxmf, receiving_interface, reply_to_id, "
+                " reactions_json, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    message_id, conversation_hash, destination_hash, source_hash,
+                    signature, timestamp, title, content, None, stamp_b,
+                    _GRDB_STATE_DELIVERED, method, 0, 0.0, 1,
+                    float(rssi) if rssi is not None else None,
+                    float(snr) if snr is not None else None,
+                    float(q) if q is not None else None,
+                    None, packed, None, None, None, now, now,
+                ),
+            )
+            conn.commit()
+        RNS.log(f"rns_bridge: inbound persisted to grdb id={message_id.hex()[:8]}", RNS.LOG_DEBUG)
+        return True
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: grdb write failed: {e}", RNS.LOG_ERROR)
+        return False
+
+
+def _write_inbound_to_grdb(message: Any) -> bool:
+    """Public inbound-persist entry point. Attempts the GRDB write; on failure it
+    durably retains the raw artifact (`ingress-retry.jsonl`, NE-owned) so the
+    message is not lost until the peer re-sends, and `_retry_pending_ingress`
+    projects it into the store once the store is reachable again (P1 #4).
+
+    P1 #8: a failing delivery is ALWAYS retained, including one that fails while
+    an ingress-retry pass is running (previously `and not _retrying_ingress`
+    suppressed the save, so a message that failed during the retry window was
+    dropped entirely). The retry pass's merge-aware rewrite (`_retry_pending_
+    ingress`) is safe against this: it re-reads the file after projecting and
+    keeps any line appended since its snapshot, so a just-appended failure is
+    picked up on the next pass rather than lost."""
+    ok = _write_inbound_to_grdb_impl(message)
+    if not ok:
+        fields = _ingress_retry_fields(message)
+        if fields is not None:
+            _store_ingress_retry_artifact(fields)
+    return ok
+
+
+def _is_telemetry_only_inbound(message: Any) -> bool:
+    """True for an inbound LXMF message that is a location share: empty content
+    AND the field map contains FIELD_TELEMETRY (0x02). Mirrors the app-side
+    `isUserNotifiableMessage` check (IncomingMessageHandler.swift:194) and the
+    chat-view filter (MessagingViewModel.swift:297) - the same predicate that
+    suppresses the message bubble. These messages must NOT produce a user-facing
+    notification banner; the row is still persisted so the location maps."""
+    try:
+        content = message.content_as_string() or ""
+    except Exception:  # noqa: BLE001
+        return False
+    if content:
+        return False
+    try:
+        fields = getattr(message, "fields", None)
+    except Exception:  # noqa: BLE001
+        return False
+    if not fields:
+        return False
+    try:
+        for key in fields.keys():
+            # Field keys may be bytes (b"\x02") or int (2) depending on the
+            # LXMF Python version / msgpack unpacking path.
+            if isinstance(key, (bytes, bytearray)):
+                value = key[0]
+            elif isinstance(key, int):
+                value = key
+            else:
+                value = bytes(key)[0]
+            if value == 0x02:  # FIELD_TELEMETRY
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _publish_inbound_banner(message: Any) -> None:
+    """Write a small banner payload file (sender-hash prefix + preview + thread id)
+    into the shared dir and post the distinct Darwin `inboundBanner` ping so the
+    NE's Swift observer posts the user-facing UNUserNotification. The NE posts it
+    (not the app) so the banner shows even when the app is suspended or
+    terminated - the NE process is still running. Best-effort; never raises."""
+    try:
+        if _grdb_path is None:
+            return
+        directory = os.path.dirname(_grdb_path)
+        source_hash = bytes(getattr(message, "source_hash", None) or b"")
+        prefix = source_hash[:4].hex() if source_hash else "0000"
+        content = bytes(getattr(message, "content", None) or b"")
+        try:
+            text = content.decode("utf-8")
+        except Exception:  # noqa: BLE001
+            text = ""
+        preview = (text[:80] + "…") if len(text) > 80 else text
+        thread_id = source_hash.hex()
+        # Resolve the sender's display name from the conversation (the app populates
+        # it from announces); NULL for a new/unknown peer → the NE Swift falls back
+        # to "Peer <prefix>" (matching the app's `persistInboundFromPython` naming).
+        display_name = None
+        try:
+            with _grdb_lock:
+                if _grdb_conn is not None:
+                    row = _grdb_conn.execute(
+                        "SELECT display_name FROM conversations WHERE destination_hash = ?",
+                        (source_hash,),
+                    ).fetchone()
+                    if row and row[0]:
+                        display_name = row[0]
+        except Exception:  # noqa: BLE001
+            display_name = None
+        payload = {
+            "senderPrefix": prefix,
+            "displayName": display_name,
+            "preview": preview,
+            "threadId": thread_id,
+        }
+        payload_path = os.path.join(directory, "inbound-banner.json")
+        with open(payload_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        _post_darwin(_DARWIN_INBOUND_BANNER)
+        RNS.log(f"rns_bridge: inbound banner posted from={prefix}", RNS.LOG_DEBUG)
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: inbound banner failed: {e}", RNS.LOG_DEBUG)
 
 
 class _AspectAnnounceHandler:
@@ -565,6 +1504,53 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     # payload. `receiving_interface`/`receiving_hops` resolution lives in
     # `_receiving_interface`; the metric extraction lives in `_signal_metrics`.
     rssi, snr = _signal_metrics(_receiving_interface(message))
+    # Model B (NE, durable mode): the NE owns LXMF delivery, so persist the inbound
+    # row DIRECTLY into the shared App-Group GRDB store the app's UI reads, post the
+    # user-facing banner (the NE posts it so it shows even when the app is
+    # suspended/terminated - the NE process keeps running), and post the `newMessage`
+    # ping so the app's `ModelBInboundReplay` scans the store (immediately while
+    # open, catch-up on start). The `block_unknown_senders` privacy filter is
+    # applied BEFORE persisting (the app can't drop a row it never sees). In-process
+    # backend (non-durable) leaves the legacy `_put("inbound")` path intact.
+    if _durable_mode:
+        try:
+            message.rssi = rssi
+            message.snr = snr
+        except Exception:  # noqa: BLE001
+            pass
+        if _block_unknown_senders and not _grdb_is_known_sender(bytes.fromhex(src) if src else b""):
+            RNS.log(f"rns_bridge: inbound BLOCKED source={src[:8]} (block_unknown_senders)", RNS.LOG_DEBUG)
+            return
+        # GATE THE SUCCESS PATH ON THE WRITE (Issue 5): if the shared GRDB write
+        # fails (store missing/locked), the message is NOT persisted, so we must
+        # not post the banner or the `newMessage` ping that would tell the user
+        # it arrived. The write wrapper has already retained the raw artifact
+        # durably (ingress-retry.jsonl, P1 #4), so the content is not lost - it is
+        # re-projected into the store by `_retry_pending_ingress` as soon as the
+        # store is reachable again (a later successful inbound write, or start).
+        persisted = _write_inbound_to_grdb(message)
+        if not persisted:
+            RNS.log(
+                f"rns_bridge: inbound NOT persisted (grdb write failed) source={src[:8]} "
+                f"hash={message_hash[:8]} - no banner posted (artifact retained for ingress retry)",
+                RNS.LOG_ERROR,
+            )
+            return
+        # The store is reachable now (this write succeeded), so project any
+        # previously-retained inbound artifacts into it (P1 #4 retry projection).
+        # Idempotent + best-effort; a no-op when nothing is retained.
+        _retry_pending_ingress()
+        # Telemetry-only location shares (empty body + only FIELD_TELEMETRY 0x02)
+        # must NOT post a notification banner - the empty preview would render as
+        # the generic "New message" and spam the user while location is shared.
+        # The GRDB write above + the newMessage ping below still run, so the
+        # location persists and maps on the peer's screen; only the banner is
+        # suppressed. (The app's ModelBInboundReplay runs with
+        # suppressUserNotifications, so this NE banner is the only notification.)
+        if not _is_telemetry_only_inbound(message):
+            _publish_inbound_banner(message)
+        _post_darwin(_DARWIN_NEW_MESSAGE)
+        return
     _put(
         "inbound",
         source_hash=src,
@@ -583,6 +1569,8 @@ def start(
     identity_path: str,
     display_name: str,
     identity_bytes: bytes | None = None,
+    block_unknown_senders: bool = False,
+    host_persistence: str = "in_process",
 ) -> dict[str, str]:
     """Initialize Reticulum + LXMRouter. Idempotent — returns local_info if already up.
 
@@ -614,6 +1602,28 @@ def start(
 
         os.makedirs(config_dir, exist_ok=True)
         _state["config_dir"] = config_dir
+
+        # Durable NE-only persistence (Model B): the NE runs Python in a Network
+        # Extension process whose App-Group config dir is shared with the app, so
+        # the app can't observe delivery directly. The NE points the durable inbox
+        # at the shared per-identity dir (next to lxmf-swift.db) so the app can
+        # drain it cross-process, and points the GRDB store the app's UI reads
+        # (`lxmf-swift.db`, opened via `AppGroupPaths.lxmfDatabaseURL`) - inbound
+        # is persisted there by `_delivery_callback` and scanned by the app's
+        # `ModelBInboundReplay`. The `block_unknown_senders` privacy toggle
+        # (mirrored into the AppGroup suite by the app, passed in by the NE)
+        # filters inbound before persisting. Idempotent across restarts.
+        #
+        # This is an EXPLICIT opt-in: the shipping (in-process) backend runs Python
+        # in the app process with a process-local config dir and no
+        # ModelBInboundReplay, so it must keep the established in-process inbound
+        # path and leave `_durable_mode` off. Default is "in_process".
+        if host_persistence == "ne":
+            _set_inbox_path(os.path.join(config_dir, "ne-inbox.db"))
+            _set_grdb_store(
+                os.path.join(config_dir, "lxmf-swift.db"),
+                block_unknown_senders=block_unknown_senders,
+            )
 
         # Both RNS.Reticulum.__init__ and LXMF.LXMRouter.__init__ call signal.signal()
         # for SIGINT/SIGTERM. That requires Python's main thread; we're on a Swift
@@ -726,6 +1736,19 @@ def start(
         # exception during partial startup cannot retain a global callback.
         _install_native_stamp_generator_unless_stopping()
         _state["started"] = True
+        # P1 #9: in NE mode (durable ingress-retry file), arm the periodic
+        # retry loop so retained inbound mail is projected into the GRDB store
+        # the moment the store becomes reachable (the app creates it on launch)
+        # instead of only on the next successful delivery. Generation-gated so a
+        # stop() bails it; NE-only (in-process has no ingress-retry file).
+        if host_persistence == "ne":
+            global _ingress_retry_generation
+            _ingress_retry_generation += 1
+            _ingress_retry_gen = _ingress_retry_generation
+            threading.Thread(
+                target=_ingress_retry_loop, args=(_ingress_retry_gen,),
+                daemon=True,
+            ).start()
         _put("state", value="connected")
         return _local_info()
 
@@ -991,10 +2014,24 @@ def _wire_link_callbacks(link: Any, link_id: int) -> None:
 
     def _on_remote_identified(_l: Any, identity: Any) -> None:
         try:
+            # Carry the remote's 64-byte public key (X25519 || Ed25519) so the
+            # app can compute the caller's <identity>.lxmf.delivery contact hash
+            # (the same way Model A's in-process transport gets the full
+            # Identity object). The identity hash alone is insufficient - the
+            # delivery hash is derived from the full public-key blob.
+            pub_key = ""
+            if identity is not None:
+                try:
+                    pk = identity.get_public_key()
+                    if pk:
+                        pub_key = pk.hex()
+                except Exception:
+                    pass
             _put(
                 "link_identified",
                 link_id=link_id,
                 identity_hash=identity.hash.hex() if identity is not None else "",
+                public_key=pub_key,
             )
         except Exception:
             pass
@@ -1352,6 +2389,10 @@ def stop() -> None:
         _ble_bridge_handle = None
         # Supersede any in-flight delayed re-announce thread (see start()).
         _announce_generation += 1
+        # P1 #9: also bail the periodic ingress-retry loop (start() arms it in NE
+        # mode) so it stops re-projecting for a torn-down node.
+        global _ingress_retry_generation
+        _ingress_retry_generation += 1
 
         _state.update({
             "started": False,
@@ -2007,6 +3048,35 @@ def fetch_nomadnet_page(
     return {"ok": True, "status": "ok", "data": payload, "content_type": ""}
 
 
+def nomadnet_fetch_op(dest_hash_hex: str, path: str,
+                      timeout: float = 30.0,
+                      form_fields: dict[str, str] | None = None) -> dict[str, Any]:
+    """Model B IPC wrapper around :func:`fetch_nomadnet_page`.
+
+    The NE bridge (`NEPythonRuntime.callBridge`) serializes a Python op's return
+    with ``json.dumps``, which cannot carry a raw ``bytes`` value (it falls back
+    to a ``__repr__`` string and loses the page). So this wrapper runs the fetch
+    and base64-encodes the ``data`` bytes before returning, keeping the result
+    JSON-serializable. The NE Swift side (``NEPythonRNS.nomadnetFetch``) decodes
+    the base64 back to ``Data``. The in-process Model A path
+    (``PythonBridge.fetchNomadNetPage``) keeps calling :func:`fetch_nomadnet_page`
+    directly via the C-API, so this wrapper is additive and never changes the
+    bytes the working Model A path returns.
+    """
+    import base64
+
+    result = fetch_nomadnet_page(
+        dest_hash_hex, path, timeout=timeout, form_fields=form_fields
+    )
+    data_b64 = base64.b64encode(result.get("data") or b"").decode("ascii")
+    return {
+        "ok": bool(result.get("ok")),
+        "status": result.get("status") or "",
+        "data_b64": data_b64,
+        "content_type": result.get("content_type") or "",
+    }
+
+
 @_balanced_runtime_teardown
 def reset_identity(identity_path: str) -> None:
     """Delete identity bytes on disk and tear down state. Caller must call
@@ -2062,6 +3132,10 @@ def reset_identity(identity_path: str) -> None:
         _ble_bridge_handle = None
         # Supersede any in-flight delayed re-announce thread (see start()).
         _announce_generation += 1
+        # P1 #9: also bail the periodic ingress-retry loop (start() arms it in NE
+        # mode) so it stops re-projecting for a torn-down node.
+        global _ingress_retry_generation
+        _ingress_retry_generation += 1
         _state.update({
             "started": False,
             "reticulum": None,
@@ -2236,6 +3310,13 @@ def discovery_json() -> str:
 
 
 def drain_events() -> list[dict[str, Any]]:
+    """Return the pending events (oldest-first) and clear the store. In durable
+    mode (NE / Model B) it reads the shared inbox (set by `_set_inbox_path` in
+    `start()`), so events survive an NE jetsam/restart and are caught up on the
+    app's next drain (triggered by the Darwin ping or on foreground). Otherwise
+    (in-process Python backend) it drains the in-memory queue as before."""
+    if _durable_mode:
+        return drain_inbox()
     out: list[dict[str, Any]] = []
     while True:
         try:
@@ -2299,10 +3380,72 @@ def _ble_get_callback(slot: str) -> Any:
     return _ble_callbacks.get(slot)
 
 
+def invoke_ble_callback(slot: str, address: str, extra: Any = None, **_kw: Any) -> None:
+    """Deliver a Model B BLE event into the driver's registered callback slot.
+
+    The NE's `NEBLECABIBridge` (the `columba_ble_*` C-ABI forwarder) relays the
+    app's `SwiftBLEBridge` CoreBluetooth events over the App-Group seam and
+    calls this named function through the embedded interpreter (the NE's only
+    Swift→Python channel). We expand `address` + `extra` into the positional
+    args each driver raw-handler expects (see `IOSBLEDriver._raw_on_*`), so the
+    driver fires exactly as it does in the in-app (Model A) Python path.
+
+    `extra` is a JSON dict; byte fields ride as base64 strings (`identity_b64`,
+    `data_b64`) so they survive the JSON serialization.
+    """
+    cb = _ble_callbacks.get(slot)
+    if cb is None:
+        return
+    extra = extra or {}
+    try:
+        import base64 as _b64
+        if slot == "on_device_discovered":
+            cb(address, str(extra.get("name") or ""), int(extra.get("rssi") or 0), list(extra.get("service_uuids") or []))
+        elif slot == "on_device_connected":
+            ident = extra.get("identity_b64")
+            cb(address, _b64.b64decode(ident) if ident else None)
+        elif slot == "on_device_disconnected":
+            cb(address)
+        elif slot == "on_data_received":
+            cb(address, _b64.b64decode(extra.get("data_b64") or ""))
+        elif slot == "on_mtu_negotiated":
+            cb(address, int(extra.get("mtu") or 0))
+        elif slot == "on_identity_received":
+            cb(address, str(extra.get("identity_hex") or ""))
+        elif slot == "on_address_changed":
+            cb(str(extra.get("old_address") or ""), str(extra.get("new_address") or ""), str(extra.get("identity_hash") or ""))
+        elif slot == "on_error":
+            cb(str(extra.get("severity") or "info"), str(extra.get("message") or ""))
+        # on_duplicate_identity_detected: the synchronous bool check is not
+        # round-tripped across the process boundary (it would require blocking
+        # the app's BLE serial queue on a cross-process hop). The driver
+        # resolves identity/rotation via the async on_address_changed path, so
+        # the duplicate slot simply isn't invoked here.
+    except Exception as e:  # noqa: BLE001 — a bad event must not tear down the bridge
+        RNS.log(f"invoke_ble_callback({slot}) raised: {e}", RNS.LOG_ERROR)
+
+
 def clear_ble_callbacks() -> None:
     """Drop every registered BLE callback. Called from `stop()` / restart so
     we don't keep references to closures bound to a torn-down driver."""
     _ble_callbacks.clear()
+
+
+# [BLE-DIAG] File-backed BLE diagnostic channel. RNS.log goes to the unified
+# log (hard to capture on-device), so during diagnosis the driver appends
+# key data-path events to <config_dir>/ble-diag.log, which is pullable via
+# devicectl. No-ops before config_dir is known. Remove after diagnosis.
+def ble_diag(msg: str) -> None:
+    cfg = _state.get("config_dir")
+    if not cfg:
+        return
+    try:
+        import time as _t
+        line = f"[{_t.strftime('%H:%M:%S', _t.localtime())}] {msg}\n"
+        with open(os.path.join(cfg, "ble-diag.log"), "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
 
 
 # Smoke-test entry point: register a callable that doubles its arg. The

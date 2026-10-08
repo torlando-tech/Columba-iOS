@@ -2,162 +2,157 @@
 //  AppGroupBLEServer.swift
 //  Shared
 //
-//  App side of the Model B BLE seam — the mirror of `AppGroupBLEDriver`. The app
-//  hosts the real `BLEDriver` (reticulum-swift's `CoreBluetoothBLEDriver`, since
-//  CoreBluetooth can't run in the NE). This server consumes the NE's commands off
-//  the seam, drives the local driver, and forwards the driver's three streams +
-//  each connection's `receivedFragments` + the reqId-correlated replies back to
-//  the NE. Takes `any BLEDriver` so it's driver-agnostic (real CB driver in
-//  production; a mock in tests). See `ble_to_ne_driver_abstraction_plan` (vault).
+//  App side of the Model B BLE seam. Consumes the NE's `columba_ble_*` commands
+//  off the seam and drives a `BleRadioDriver`; forwards the driver's events back
+//  over the seam as `BLEDriverSeamMessage`s.
+//
+//  This file is DRIVER-AGNOSTIC and compiled into both the app and the NE, so it
+//  must NOT import CoreBluetooth / SwiftBLEBridge (unavailable in a Network
+//  Extension). The concrete radio is `SwiftBLEBridge.shared` (the same singleton
+//  the shipping Python path uses — exactly one CoreBluetooth radio per process),
+//  wrapped by an app-only `BleRadioDriver` in `ModelBBLEService`.
+//
+//  No reticulum-swift: the driver-level abstraction lives in Python
+//  (`IOSBLEDriver`, the Android-parity `BLEDriverInterface`); this server is only
+//  the relay between the seam and the radio. See `BLEDriverSeam.swift` for the
+//  wire and `NEBLECABIBridge.swift` (NE) for the C-ABI side.
 //
 
 import Foundation
-import ReticulumSwift
 
-public final class AppGroupBLEServer: @unchecked Sendable {
+/// The CoreBluetooth radio the server drives. App-only implementation wraps
+/// `SwiftBLEBridge.shared`; the NE never instantiates a driver (it forwards the
+/// Python driver's C-ABI calls over the seam instead).
+public protocol BleRadioDriver: AnyObject {
+    func radioStart(serviceUuid: String, rxCharUuid: String, txCharUuid: String, identityCharUuid: String)
+    func radioStop()
+    func radioSetIdentity(_ identity: Data)
+    func radioStartScanning()
+    func radioStopScanning()
+    func radioStartAdvertising(deviceName: String?, identity: Data)
+    func radioStopAdvertising()
+    func radioConnect(address: String)
+    func radioDisconnect(address: String)
+    func radioSend(address: String, data: Data)
+    func radioSyncExistingConnections()
+    func radioRequestIdentityResync(address: String)
+    /// Install the sink the driver pushes async events into (nil to detach).
+    func setEventSink(_ sink: BleEventSink?)
+}
+
+/// Sink for radio events; the server forwards each as a seam message app→NE.
+public protocol BleEventSink: AnyObject {
+    func radioDeviceDiscovered(address: String, name: String, rssi: Int16)
+    func radioDeviceConnected(address: String, peerIdentity: Data?)
+    func radioDeviceDisconnected(address: String)
+    func radioDataReceived(address: String, data: Data)
+    func radioMtuNegotiated(address: String, mtu: UInt16)
+    func radioIdentityReceived(address: String, identityHex: String)
+    func radioAddressChanged(old: String, new: String, identityHash: String)
+    func radioError(severity: String, message: String)
+}
+
+/// Relays seam commands → radio and radio events → seam.
+public final class AppGroupBLEServer: BleEventSink, @unchecked Sendable {
 
     private let transport: BLESeamTransport
-    private let driver: any BLEDriver
-    private let lock = NSLock()
-    private var connections: [String: any BLEPeerConnection] = [:]
-    /// Optional log sink (the app passes `DiagLog.log`; Shared can't reference it).
+    private let driver: BleRadioDriver
+    private var inboundTask: Task<Void, Never>?
     private let log: (@Sendable (String) -> Void)?
 
-    public init(transport: BLESeamTransport, driver: any BLEDriver,
+    public init(transport: BLESeamTransport, driver: BleRadioDriver,
                 log: (@Sendable (String) -> Void)? = nil) {
         self.transport = transport
         self.driver = driver
         self.log = log
     }
 
-    /// Begin forwarding the driver's streams to the NE and consuming NE commands.
+    /// Begin consuming NE commands + relaying radio events to the seam.
+    /// Idempotent (the inbound task is cancelled/restarted; setEventSink is
+    /// safe to re-set).
     public func start() {
-        log?("[BLE] server: started — forwarding driver streams over the seam")
-        Task { [transport, driver, log] in
-            var seenLog = Set<String>()  // log first sighting only (yields fire ~10x/s/peer)
-            for await peer in driver.discoveredPeers {
-                if seenLog.insert(peer.address).inserted {
-                    log?("[BLE] server: discovered \(peer.address.prefix(8)) rssi=\(peer.rssi) → seam")
-                }
-                transport.send(.discovered(address: peer.address,
-                                           rssi: Int16(clamping: peer.rssi),
-                                           identity: peer.identity))
-            }
-        }
-        Task { [weak self] in
+        log?("[BLE] server: starting — relaying seam commands to the radio")
+        transport.start()
+        driver.setEventSink(self)
+        inboundTask?.cancel()
+        inboundTask = Task { [weak self] in
             guard let self else { return }
-            for await conn in self.driver.incomingConnections {
-                self.log?("[BLE] server: incoming connection \(conn.address.prefix(8)) mtu=\(conn.mtu) → seam")
-                self.register(conn)
-                self.transport.send(.incomingConnection(address: conn.address,
-                                                        mtu: UInt16(clamping: conn.mtu),
-                                                        identity: conn.identity))
-            }
-        }
-        Task { [weak self] in
-            guard let self else { return }
-            for await address in self.driver.connectionLost {
-                self.log?("[BLE] server: connection lost \(address.prefix(8))")
-                self.unregister(address)
-                self.transport.send(.connectionLost(address: address))
-            }
-        }
-        Task { [weak self] in
-            guard let self else { return }
-            for await message in self.transport.inbound { await self.handle(message) }
+            for await msg in self.transport.inbound { await self.handle(msg) }
         }
     }
 
-    // MARK: Connection registry + fragment forwarding
-
-    private func register(_ conn: any BLEPeerConnection) {
-        let address = conn.address
-        lock.sync { connections[address] = conn }
-        Task { [transport] in
-            for await fragment in conn.receivedFragments {
-                transport.send(.receivedFragment(address: address, data: fragment))
-            }
-        }
+    public func stop() {
+        driver.setEventSink(nil)
+        inboundTask?.cancel()
+        inboundTask = nil
+        transport.stop()
     }
 
-    private func unregister(_ address: String) { lock.sync { _ = connections.removeValue(forKey: address) } }
-    private func connection(_ address: String) -> (any BLEPeerConnection)? { lock.sync { connections[address] } }
-
-    // MARK: Command dispatch (NE → driver)
+    // MARK: Command dispatch (NE → radio)
 
     private func handle(_ message: BLEDriverSeamMessage) async {
         switch message {
-        case .startAdvertising:
-            do { try await driver.startAdvertising(); log?("[BLE] server: startAdvertising OK") }
-            catch { log?("[BLE] server: startAdvertising FAILED: \(error)") }
-        case .stopAdvertising:  await driver.stopAdvertising()
+        case let .start(s, rx, tx, id):
+            log?("[BLE] server: start (service=\(s.prefix(8))…)")
+            driver.radioStart(serviceUuid: s, rxCharUuid: rx, txCharUuid: tx, identityCharUuid: id)
+        case .stop:
+            driver.radioStop()
+        case let .setIdentity(id):
+            driver.radioSetIdentity(id)
         case .startScanning:
-            do { try await driver.startScanning(); log?("[BLE] server: startScanning OK (localAddr=\(driver.localAddress ?? "nil"))") }
-            catch { log?("[BLE] server: startScanning FAILED: \(error)") }
-        case .stopScanning:     await driver.stopScanning()
-        case .shutdown:         driver.shutdown()
-        case let .disconnect(address): await driver.disconnect(address: address)
-
-        case let .connect(reqId, address):
-            log?("[BLE] server: connect → \(address.prefix(8)) (central)")
-            do {
-                let conn = try await driver.connect(address: address)
-                log?("[BLE] server: connect OK \(address.prefix(8)) mtu=\(conn.mtu)")
-                register(conn)
-                transport.send(.connectResult(reqId: reqId, address: conn.address,
-                                              mtu: UInt16(clamping: conn.mtu),
-                                              identity: conn.identity, error: nil))
-            } catch {
-                log?("[BLE] server: connect FAILED \(address.prefix(8)): \(error)")
-                transport.send(.connectResult(reqId: reqId, address: address, mtu: 0,
-                                              identity: nil, error: String(describing: error)))
-            }
-
-        case let .queryLocalState(reqId):
-            transport.send(.queryLocalStateResult(reqId: reqId,
-                                                  localAddress: driver.localAddress,
-                                                  isRunning: driver.isRunning))
-
-        case let .sendFragment(address, data):
-            try? await connection(address)?.sendFragment(data)
-
-        case let .writeIdentity(address, identity):
-            log?("[BLE] server: writeIdentity → \(address.prefix(8)) (\(identity.count)B)")
-            do { try await connection(address)?.writeIdentity(identity); log?("[BLE] server: writeIdentity OK \(address.prefix(8))") }
-            catch { log?("[BLE] server: writeIdentity FAILED \(address.prefix(8)): \(error)") }
-
-        case let .closeConnection(address):
-            connection(address)?.close()
-            unregister(address)
-
-        case let .readIdentity(reqId, address):
-            log?("[BLE] server: readIdentity → \(address.prefix(8))")
-            guard let conn = connection(address) else {
-                log?("[BLE] server: readIdentity NO-CONN \(address.prefix(8))")
-                transport.send(.readIdentityResult(reqId: reqId, identity: nil, error: "no connection")); return
-            }
-            do {
-                let id = try await conn.readIdentity()
-                log?("[BLE] server: readIdentity OK \(address.prefix(8)) (\(id.count)B)")
-                transport.send(.readIdentityResult(reqId: reqId, identity: id, error: nil))
-            } catch {
-                log?("[BLE] server: readIdentity FAILED \(address.prefix(8)): \(error)")
-                transport.send(.readIdentityResult(reqId: reqId, identity: nil, error: String(describing: error)))
-            }
-
-        case let .readRemoteRssi(reqId, address):
-            guard let conn = connection(address) else {
-                transport.send(.readRemoteRssiResult(reqId: reqId, rssi: 0, error: "no connection")); return
-            }
-            do { transport.send(.readRemoteRssiResult(reqId: reqId, rssi: Int16(clamping: try await conn.readRemoteRssi()), error: nil)) }
-            catch { transport.send(.readRemoteRssiResult(reqId: reqId, rssi: 0, error: String(describing: error))) }
-
-        default:
-            break  // results/events flow app→NE; the server never receives them
+            driver.radioStartScanning(); log?("[BLE] server: startScanning")
+        case .stopScanning:
+            driver.radioStopScanning()
+        case let .startAdvertising(name, identity):
+            driver.radioStartAdvertising(deviceName: name.isEmpty ? nil : name, identity: identity)
+            log?("[BLE] server: startAdvertising (name='\(name)')")
+        case .stopAdvertising:
+            driver.radioStopAdvertising()
+        case let .connect(addr):
+            driver.radioConnect(address: addr); log?("[BLE] server: connect → \(addr.prefix(8))")
+        case let .disconnect(addr):
+            driver.radioDisconnect(address: addr)
+        case let .send(addr, data):
+            log?("[BLE] server: send addr=\(addr) len=\(data.count)")
+            driver.radioSend(address: addr, data: data)
+        case .syncExistingConnections:
+            driver.radioSyncExistingConnections()
+        case let .requestIdentityResync(addr):
+            driver.radioRequestIdentityResync(address: addr)
+        case .configurePower:
+            // tx power preset is informational on iOS (OS auto-manages duty
+            // cycle); no per-peer power API in this slice.
+            break
+        case .deviceDiscovered, .deviceConnected, .deviceDisconnected,
+             .dataReceived, .mtuNegotiated, .identityReceived, .addressChanged, .error:
+            break  // events flow app→NE; the server never receives them as inbound
         }
     }
-}
 
-private extension NSLock {
-    func sync<R>(_ body: () -> R) -> R { lock(); defer { unlock() }; return body() }
+    // MARK: Radio event sink (radio → seam, app→NE)
+
+    public func radioDeviceDiscovered(address: String, name: String, rssi: Int16) {
+        transport.send(.deviceDiscovered(address: address, name: name, rssi: rssi))
+    }
+    public func radioDeviceConnected(address: String, peerIdentity: Data?) {
+        transport.send(.deviceConnected(address: address, peerIdentity: peerIdentity))
+    }
+    public func radioDeviceDisconnected(address: String) {
+        transport.send(.deviceDisconnected(address: address))
+    }
+    public func radioDataReceived(address: String, data: Data) {
+        transport.send(.dataReceived(address: address, data: data))
+    }
+    public func radioMtuNegotiated(address: String, mtu: UInt16) {
+        transport.send(.mtuNegotiated(address: address, mtu: mtu))
+    }
+    public func radioIdentityReceived(address: String, identityHex: String) {
+        transport.send(.identityReceived(address: address, identityHex: identityHex))
+    }
+    public func radioAddressChanged(old: String, new: String, identityHash: String) {
+        transport.send(.addressChanged(old: old, new: new, identityHash: identityHash))
+    }
+    public func radioError(severity: String, message: String) {
+        transport.send(.error(severity: severity, message: message))
+    }
 }

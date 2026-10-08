@@ -237,6 +237,13 @@ class IOSRNodeInterface(Interface):
         self.bitrate = 10000  # Approximate LoRa bitrate (varies with SF/BW)
         self.rxb = 0
         self.txb = 0
+        # Announce counters, incremented by sent_announce()/received_announce().
+        # Initialized here (not lazily) so the first announce on this interface
+        # does not raise AttributeError (P1 #1).
+        self.atxc = 0
+        self.atxb = 0
+        self.arxc = 0
+        self.arxb = 0
         self.held_announces = []
         self.announce_allowed_at = 0
         self.announce_cap = RNS.Reticulum.ANNOUNCE_CAP
@@ -1426,12 +1433,14 @@ class IOSRNodeInterface(Interface):
                 RNS.log(f"Error processing held announce: {e}", RNS.LOG_ERROR)
         self.held_announces = []
 
-    def sent_announce(self, from_spawned=False):
+    def sent_announce(self, size=0, from_spawned=False):
         """Called when an announce is sent on this interface. Tracks announce frequency."""
+        self.atxc += 1; self.atxb += size
         self.oa_freq_deque.append(time.time())
 
-    def received_announce(self):
+    def received_announce(self, size=0, from_spawned=False):
         """Called when an announce is received on this interface. Tracks announce frequency."""
+        self.arxc += 1; self.arxb += size
         self.ia_freq_deque.append(time.time())
 
     def should_ingress_limit(self):

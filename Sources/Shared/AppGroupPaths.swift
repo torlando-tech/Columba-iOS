@@ -50,6 +50,12 @@ public enum AppGroupPaths {
     /// co-located with the GRDB store under the per-identity directory.
     private static let ratchetStorageFileName = "ratchets"
 
+    /// Node-service v1 durable store filename (contract 5). Sits at the Columba
+    /// directory ROOT (not per-identity): the node store spans all identities for
+    /// the node group, unlike the per-identity LXMF GRDB store. Shared by the app
+    /// (typed facade) and the NE (node owner) — both open the SAME file.
+    private static let nodeServiceStoreFileName = "columba-node.db"
+
     // MARK: - Public API
 
     /// The App-Group container root, or `nil` when the container is unavailable
@@ -62,6 +68,18 @@ public enum AppGroupPaths {
         FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         )
+    }
+
+    /// URL of the App-Group-shared node-service v1 durable store (contract 5)
+    /// — the single shared `columba-node.db` both the app's typed facade and the
+    /// NE's node owner open (the shared durable seam). Rooted at the Columba
+    /// directory (not per-identity). Returns `nil` when the App-Group container
+    /// is unavailable; callers handle the `nil` (the NE logs + degrades).
+    public static func nodeServiceStoreURL() -> URL? {
+        guard let container = containerURL() else { return nil }
+        let dir = container.appendingPathComponent(columbaDirectoryName, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent(nodeServiceStoreFileName)
     }
 
     /// URL of the App-Group-shared canonical `lxmf-swift.db` for `identityHashHex`
@@ -104,5 +122,23 @@ public enum AppGroupPaths {
             .appendingPathComponent("python-\(identityHashHex)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// The App-Group-shared RNS **config** directory for `identityHashHex`.
+    ///
+    /// Model B: the Reticulum runtime lives in the Network Extension, but the RNS
+    /// `config` file (interface list, transport mode, discovery) is derived by the
+    /// app from the user's `InterfaceEntity` records. The app writes it here - a
+    /// SHARED path both processes can reach - and the NE's in-NE Python RNS engine
+    /// reads `<dir>/config` when it brings the node up. Before this helper the app
+    /// wrote the config to its process-local Application Support, which the NE
+    /// cannot see, so a Python RNS node in the NE had no config to load.
+    ///
+    /// This is the SAME per-identity directory as `lxmfDatabaseURL` /
+    /// `ratchetStorageURL` (the `Columba/python-<hash>/` subdir), so the config
+    /// file, the identity blob, and the LXMF store all co-locate per identity.
+    /// Returns `nil` when the App-Group container is unavailable.
+    public static func rnsConfigDirectoryURL(identityHashHex: String) -> URL? {
+        perIdentityDirectoryURL(identityHashHex: identityHashHex)
     }
 }

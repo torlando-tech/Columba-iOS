@@ -44,11 +44,11 @@ final class OnboardingViewModel {
     /// keeps it inside the flow.
     var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
     var bluetoothGranted: Bool {
-        #if COLUMBA_RUNTIME_MODEL_B
-        bluetoothAuthorization == .allowedAlways && ModelBBLEService.isUserOptedIn
-        #else
+        // Reflects the system Bluetooth authorization. Whether the Model B BLE host
+        // actually starts is decided by the interface list (an enabled `.ble`
+        // interface, created via Manage Interfaces) — see ModelBBLEService.shouldStart.
+        // The onboarding card is a permission pre-arm; no BLE interface exists yet.
         bluetoothAuthorization == .allowedAlways
-        #endif
     }
     @ObservationIgnored private var bluetoothProbe: BluetoothPermissionProbe?
     var isSaving: Bool = false
@@ -148,13 +148,13 @@ final class OnboardingViewModel {
 
     /// Trigger the iOS Bluetooth prompt now (creating a CBCentralManager is what fires
     /// it) so the user grants/denies it INSIDE onboarding instead of being surprised by
-    /// it after, when `ModelBBLEService` starts the app-side CoreBluetooth host.
+    /// it later, when `ModelBBLEService` starts the app-side CoreBluetooth host.
     func requestBluetoothPermission() {
-        #if COLUMBA_RUNTIME_MODEL_B
-        // The Model B host must not construct its CoreBluetooth driver unless the user
-        // explicitly opted in from this permission card.
-        ModelBBLEService.recordUserOptIn()
-        #endif
+        // Creating the CBCentralManager is what fires the iOS Bluetooth prompt.
+        // Surfacing it here (inside onboarding) keeps the consent step with the
+        // moment the user first wants nearby-device connectivity. Whether the
+        // Model B BLE host actually starts is decided by the interface list (an
+        // enabled `.ble` interface, created via Manage Interfaces), not by this call.
         bluetoothProbe = BluetoothPermissionProbe { [weak self] auth in
             Task { @MainActor in self?.bluetoothAuthorization = auth }
         }
@@ -357,6 +357,8 @@ final class OnboardingViewModel {
         #if COLUMBA_RUNTIME_MODEL_B
         // Model B's Network Extension owns its local transports and reads one TCP relay
         // from the shared store. Seed only that relay and keep the operation idempotent.
+        // (BLE is not selected in Model B onboarding — it's added via Manage Interfaces,
+        // where the app-side BLE host starts off the interface's presence.)
         let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
         ensureInterfaceEnabled(InterfaceEntity(
             name: server.name,

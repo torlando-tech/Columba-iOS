@@ -321,30 +321,44 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn("getEnabledInterfaces()", guard)
         self.assertIn(".ble", guard)
 
-    def test_model_b_ble_service_requires_explicit_opt_in(self) -> None:
+    def test_model_b_ble_service_gated_on_enabled_ble_interface(self) -> None:
         service = source(MODEL_B_BLE_SERVICE)
         view_model = source(VIEW_MODEL)
         app_services = source(APP_SERVICES)
         settings = source(SETTINGS_VIEW)
 
-        self.assertIn('userOptInKey = "model_b_ble_user_opt_in"', service)
-        self.assertIn("recordUserOptIn()", view_model)
-        self.assertIn("ModelBBLEService.isUserOptedIn", view_model)
-        self.assertIn("shouldStart(in:", service)
+        # The host is gated on the configured interface list, not on a standalone
+        # consent flag: no opt-in key, no record/clear/isOptedIn API.
+        self.assertNotIn("userOptInKey", service)
+        self.assertNotIn("recordUserOptIn", service)
+        self.assertNotIn("clearUserOptIn", service)
+        self.assertNotIn("isUserOptedIn", service)
+        # shouldStart is derived from an enabled .ble interface in the repository.
+        self.assertIn("shouldStart", service)
+        self.assertIn("hasEnabledBLEInterface", service)
+        self.assertIn("getEnabledInterfaces()", service)
+        self.assertIn(".ble", service)
         self.assertNotIn("CBCentralManager.authorization", service)
-        self.assertIn("ModelBBLEService.recordUserOptIn()", settings)
-        self.assertIn("ModelBBLEService.clearUserOptIn()", settings)
-        self.assertIn('Text("Bluetooth Mesh")', settings)
-        start = "ModelBBLEService.shared.start(identityHash: identity.hash)"
-        self.assertEqual(1, app_services.count(start))
-        start_offset = app_services.index(start)
-        guard_offset = app_services.rfind("if ", 0, start_offset)
-        guard = app_services[guard_offset:start_offset]
-        self.assertIn("ModelBBLEService.shouldStart", guard)
-        shutdown = app_services.split("public func shutdown() async {", 1)[1].split(
-            "// MARK:", 1
-        )[0]
-        self.assertIn("ModelBBLEService.shared.stop()", shutdown)
+        # Onboarding no longer records a BLE opt-in.
+        self.assertNotIn("recordUserOptIn", view_model)
+        self.assertNotIn("ModelBBLEService.isUserOptedIn", view_model)
+        # The standalone "Bluetooth Mesh" toggle is gone.
+        self.assertNotIn('Text("Bluetooth Mesh")', settings)
+        # Phase 2: the mesh CoreBluetooth radio now runs IN THE NETWORK EXTENSION
+        # (SwiftBLEBridge is linked into the NE target and driven in-process by the
+        # NE's Python driver). The app no longer starts a CoreBluetooth host, so the
+        # used-to-start-the-app-radio hook is a no-op: a second app-side
+        # SwiftBLEBridge instance would fight the NE's over the same GATT service.
+        # The app-side seam files it once started remain (removed in a follow-up
+        # after on-device verify) but are never started from AppServices.
+        self.assertEqual(0, app_services.count("ModelBBLEService.shared.start("))
+        self.assertIn("func syncModelBBLEService()", app_services)
+        self.assertIn(
+            "[BLE] Model B: mesh radio runs in the NE; no app-side host (Phase 2)",
+            app_services,
+        )
+        # The call sites (backend start + interface Apply) still run the no-op.
+        self.assertGreaterEqual(app_services.count("syncModelBBLEService()"), 1)
 
     def test_shipping_interface_creation_is_idempotent(self) -> None:
         view_model = source(VIEW_MODEL)

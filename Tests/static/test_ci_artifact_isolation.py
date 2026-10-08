@@ -120,7 +120,38 @@ class ArtifactFixture:
             self.outputs[("otool", str(self.extension / extension_executable))] = (
                 b"extension:\n"
                 b"\t/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension\n"
+                b"\t@rpath/Python.framework/Python\n"
             )
+            # The extension embeds the Python runtime payload (framework,
+            # standard library, wheel packages, bridge driver). The Model B
+            # verifier requires each of these to be present and non-empty, so
+            # the fixture builds the full payload rooted at the extension.
+            framework = self.extension / "Frameworks/Python.framework"
+            framework.mkdir(parents=True)
+            self.write_plist(
+                framework / "Info.plist",
+                {
+                    "CFBundleIdentifier": "org.python.Python",
+                    "CFBundleExecutable": "Python",
+                    "CFBundlePackageType": "FMWK",
+                },
+            )
+            (framework / "Python").write_bytes(b"python")
+            stdlib = self.extension / "python/lib/python3.13"
+            stdlib.mkdir(parents=True)
+            (stdlib / "os.py").write_text("pass\n", encoding="utf-8")
+            packages = self.extension / "app_packages"
+            packages.mkdir()
+            (packages / "rns.py").write_text("pass\n", encoding="utf-8")
+            ble_reticulum = packages / "ble_reticulum"
+            ble_reticulum.mkdir()
+            (ble_reticulum / "__init__.py").write_text("", encoding="utf-8")
+            (ble_reticulum / "BLEInterface.py").write_text("class BLEInterface: pass\n", encoding="utf-8")
+            rnode = self.extension / "app/rnode"
+            rnode.mkdir(parents=True)
+            (rnode / "IOSRNodeInterface.py").write_text("interface_class = object\n")
+            (rnode / "IOSRNodeDriver.py").write_text("class IOSRNodeDriver: pass\n")
+            (self.extension / "app/rns_bridge.py").write_text("def main(): pass\n", encoding="utf-8")
 
     @staticmethod
     def write_plist(path: Path, value) -> None:
@@ -275,6 +306,7 @@ class ArtifactCheckerTests(unittest.TestCase):
             fixture.outputs[("otool", str(extension_debug))] = (
                 b"debug:\n"
                 b"\t/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension\n"
+                b"\t@rpath/Python.framework/Python\n"
             )
             self.verify(fixture, "modelb")
 
@@ -450,6 +482,57 @@ class ArtifactCheckerTests(unittest.TestCase):
                 path.write_text("leak", encoding="utf-8")
                 self.assert_rejected(fixture, "modelb", "Python packaging")
 
+    def test_modelb_allows_python_packaging_inside_the_extension(self):
+        # Post-NE-migration: the extension hosts the embedded Python runtime, so
+        # Python.framework / app_packages inside the .appex are expected and
+        # must NOT be treated as a leak (only host-side Python packaging is a
+        # leak).
+        embedded = (
+            "PlugIns/ColumbaNetworkExtension.appex/Frameworks/Python.framework/Python",
+            "PlugIns/ColumbaNetworkExtension.appex/app_packages/rns.py",
+            "PlugIns/ColumbaNetworkExtension.appex/app_packages/ble_reticulum/BLEInterface.py",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "modelb")
+            for relative in embedded:
+                path = fixture.app / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("payload", encoding="utf-8")
+            self.verify(fixture, "modelb")
+
+    def test_modelb_rejects_missing_or_empty_embedded_python_payload(self):
+        # Review finding: the Model B check must not pass on a link alone. If
+        # the extension is missing (or has an empty) framework binary,
+        # standard library, wheel package, ble_reticulum, or bridge driver,
+        # the in-NE Python node cannot run and the artifact must be rejected.
+        ext = "PlugIns/ColumbaNetworkExtension.appex"
+        mutations = (
+            # (path to delete-or-empty, expected rejection message)
+            (ext + "/Frameworks/Python.framework", "Python.framework"),
+            (ext + "/Frameworks/Python.framework/Python", "Python.framework executable"),
+            (ext + "/python/lib", "python/lib"),
+            (ext + "/app_packages", "app_packages"),
+            (ext + "/app_packages/ble_reticulum", "ble_reticulum"),
+            (ext + "/app/rns_bridge.py", "rns_bridge"),
+            (ext + "/app/rnode/IOSRNodeInterface.py", "RNode payload"),
+            (ext + "/app/rnode/IOSRNodeDriver.py", "RNode payload"),
+        )
+        for relative, expected in mutations:
+            with self.subTest(missing=relative), tempfile.TemporaryDirectory() as directory:
+                fixture = ArtifactFixture(Path(directory), "modelb")
+                target = fixture.app / relative
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+                self.assert_rejected(fixture, "modelb", expected)
+        # An empty (zero-byte) framework binary must also fail, not just a
+        # missing one.
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ArtifactFixture(Path(directory), "modelb")
+            (fixture.app / (ext + "/Frameworks/Python.framework/Python")).write_bytes(b"")
+            self.assert_rejected(fixture, "modelb", "Python.framework executable")
+
     def test_modelb_requires_networkextension_linkage_in_host_and_extension(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "modelb")
@@ -463,12 +546,16 @@ class ArtifactCheckerTests(unittest.TestCase):
             fixture.outputs[("otool", str(extension_executable))] = b"Foundation\n"
             self.assert_rejected(fixture, "modelb", "extension.*NetworkExtension")
 
-    def test_modelb_rejects_python_framework_linkage_without_an_embedded_copy(self):
+    def test_modelb_rejects_python_linkage_in_the_host_app(self):
+        # The extension is EXPECTED to link Python.framework (it hosts the
+        # runtime); the host app must stay Python-free. The fixture's extension
+        # already links Python; add the link to the host app and expect a
+        # host-specific rejection.
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "modelb")
             key = ("otool", str(fixture.app / fixture.executable))
             fixture.outputs[key] += b"\t@rpath/Python.framework/Python\n"
-            self.assert_rejected(fixture, "modelb", "links forbidden Python")
+            self.assert_rejected(fixture, "modelb", "host app links forbidden Python")
 
     def test_fails_closed_for_missing_malformed_plist_or_executable(self):
         mutations = ("missing-plist", "malformed-plist", "missing-executable")
@@ -716,8 +803,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("\n    needs:", workflow)
 
         modelb = workflow.split("\n  modelb:\n", 1)[1].split("\n  ui:\n", 1)[0]
-        self.assertNotIn("Fetch Python framework + wheels", modelb)
-        self.assertNotIn("support/fetch-python.sh", modelb)
+        # The NE hosts the embedded CPython runtime (Model B), so the modelb
+        # lane must fetch the framework + wheels to build it. (This replaced the
+        # earlier lane-isolation rule that excluded the fetch; that predated the
+        # in-NE Python migration.)
+        self.assertIn("Fetch Python framework + wheels", modelb)
+        self.assertIn("support/fetch-python.sh", modelb)
+        self.assertIn("support/fetch-wheels.sh", modelb)
         self.assertIn("Build and run Model B tests", modelb)
         self.assertIn("Build Model B artifact", modelb)
         self.assertLess(

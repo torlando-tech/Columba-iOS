@@ -71,6 +71,7 @@ jobs:
             Tests.static.test_host_entitlements_contract \
             Tests.static.test_ci_artifact_isolation \
             Tests.static.test_ios_ble_bridge_contract \
+            Tests.static.test_ios_ble_driver_callbacks \
             Tests.static.test_fetch_python_resilience \
             Tests.static.test_migration_export_flow \
             Tests.static.test_ios_stamp_runtime_hardening \
@@ -85,7 +86,9 @@ jobs:
             Tests.static.test_voice_messages \
             Tests.static.test_discovered_interfaces_contract \
             Tests.static.test_ios_rnode_driver \
+            Tests.static.test_rns_bridge_persistence \
             Tests.static.test_ios_rnode_stale_bond_contract \
+            Tests.static.test_network_card_interface_list \
             Tests.static.test_tag_version_stamp
 
       # Verify a standalone production-layout app before xcodebuild test embeds
@@ -202,6 +205,12 @@ jobs:
           git clone https://github.com/torlando-tech/reticulum-swift.git ../reticulum-swift
           git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
+
+      - name: Fetch Python framework + wheels
+        run: |
+          set -euo pipefail
+          support/fetch-python.sh
+          support/fetch-wheels.sh
 
       - name: Select Xcode
         run: |

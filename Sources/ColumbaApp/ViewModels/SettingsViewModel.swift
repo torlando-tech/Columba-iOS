@@ -548,6 +548,17 @@ public final class SettingsViewModel {
         let defaults = UserDefaults.standard
 
         defaults.set(blockUnknownSenders, forKey: "block_unknown_senders")
+        // Mirror the privacy toggle into the AppGroup suite (the NE can't read
+        // app-local defaults) AND post a Darwin ping so a RUNNING node refreshes
+        // its `block_unknown_senders` filter immediately (Issue 3) instead of
+        // holding the value it captured at node start until a restart. The NE
+        // observes the ping and calls rns_bridge.set_block_unknown_senders.
+        SharedDefaults.suite.set(blockUnknownSenders, forKey: "block_unknown_senders")
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(SharedDefaultsConstants.blockUnknownSendersChangedNotificationName as CFString),
+            nil, nil, true
+        )
         defaults.set(isNotificationsEnabled, forKey: "notifications_enabled")
         defaults.set(showMessagePreviews, forKey: "show_message_previews")
         defaults.set(playSounds, forKey: "play_sounds")
@@ -624,7 +635,15 @@ public final class SettingsViewModel {
             let aux = transport.pythonAuxiliarySnapshotList()
             activeInterfaces.append(contentsOf: NetworkInterfacePresentation.auxiliaryDescriptions(aux))
         }
-        if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
+        if modelB {
+            // Model B: the RNode radio runs in the NE. Read its state from the NE
+            // snapshot (the same NE-authoritative source the Manage Interfaces screen
+            // uses via `neRNodeStatus`), not the app-side Compat stub which never
+            // holds the live GATT link.
+            if let rnode = await appServices.neRNodeStatus(), rnode.online {
+                activeInterfaces.append("RNode")
+            }
+        } else if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
             activeInterfaces.append("RNode")
         }
         if modelB {

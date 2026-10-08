@@ -509,14 +509,64 @@ def _verify_modelb(
         raise VerificationError("Model B host does not link NetworkExtension.framework")
     if NETWORK_EXTENSION_LOAD not in extension_libraries:
         raise VerificationError("Model B extension does not link NetworkExtension.framework")
-    if PYTHON_LOAD in libraries or PYTHON_LOAD in extension_libraries:
-        raise VerificationError("Model B executable links forbidden Python.framework")
+    # Model B architecture: the app process is UI-only and the NE hosts the
+    # Python RNS runtime. So the host app must NOT link Python.framework (it
+    # would mean the Python stack leaked into the UI process), while the
+    # extension MUST link it (that is how the in-NE runtime is wired up).
+    if PYTHON_LOAD in libraries:
+        raise VerificationError("Model B host app links forbidden Python.framework")
+    if PYTHON_LOAD not in extension_libraries:
+        raise VerificationError("Model B extension does not link the embedded Python.framework")
+    # Linking Python.framework is necessary but not sufficient: the extension
+    # must also actually CONTAIN the runtime payload, or it links a framework
+    # that is not present and the in-NE Python node cannot start. Verify the
+    # embedded framework binary, the standard library, the wheel packages, and
+    # the bridge driver are all present and non-empty (mirrors the shipping
+    # payload check, rooted at the extension).
+    ext_framework = extension / "Frameworks/Python.framework"
+    ext_framework_metadata = _load_bundle(
+        ext_framework, "FMWK", "Model B extension Python.framework", app_root
+    )
+    ext_framework_executable = _bundle_executable(
+        ext_framework, ext_framework_metadata, "Model B extension Python.framework", app_root
+    )
+    if ext_framework_executable.stat().st_size == 0:
+        raise VerificationError("Model B extension Python.framework executable is missing or empty")
+    ext_stdlib = extension / "python/lib"
+    if not _contains_regular_file(ext_stdlib, app_root, "Model B extension python/lib"):
+        raise VerificationError("Model B extension python/lib standard-library payload is missing or empty")
+    ext_packages = extension / "app_packages"
+    if not _contains_regular_file(ext_packages, app_root, "Model B extension app_packages"):
+        raise VerificationError("Model B extension app_packages wheel payload is missing or empty")
+    ext_ble = ext_packages / "ble_reticulum/BLEInterface.py"
+    _resolve_contained(ext_ble, app_root, "Model B extension ble_reticulum package")
+    if not ext_ble.is_file() or ext_ble.stat().st_size == 0:
+        raise VerificationError("Model B extension app_packages/ble_reticulum runtime is missing or empty")
+    ext_rns_bridge = extension / "app/rns_bridge.py"
+    _resolve_contained(ext_rns_bridge, app_root, "Model B extension rns_bridge")
+    if not ext_rns_bridge.is_file() or ext_rns_bridge.stat().st_size == 0:
+        raise VerificationError("Model B extension app/rns_bridge.py is missing or empty")
+    for relative in SHIPPING_RNODE_PYTHON_PAYLOADS:
+        payload = extension / relative
+        _resolve_contained(payload, app_root, "Model B extension Python RNode payload")
+        if not payload.is_file() or payload.stat().st_size == 0:
+            raise VerificationError(
+                "Model B extension Python RNode payload is missing or empty: {}".format(relative)
+            )
+    # Python packaging (Python.framework, app_packages, .whl, ...) is expected
+    # INSIDE the extension (it embeds the runtime). A "leak" is Python
+    # packaging anywhere in the app OUTSIDE the extension bundle - i.e. in the
+    # UI-only host app, which must stay Python-free.
     leaked = next(
-        (path for path in app.rglob("*") if _is_python_packaging_path(path, app)),
+        (
+            path
+            for path in app.rglob("*")
+            if _is_python_packaging_path(path, app) and not _is_within(path, extension)
+        ),
         None,
     )
     if leaked is not None:
-        raise VerificationError("Model B artifact contains Python packaging output: {}".format(leaked))
+        raise VerificationError("Model B host app contains Python packaging output: {}".format(leaked))
     host_platform = app_metadata.get("DTPlatformName")
     extension_platform = extension_metadata.get("DTPlatformName")
     if host_platform != extension_platform:
