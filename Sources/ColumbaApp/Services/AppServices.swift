@@ -3263,57 +3263,17 @@ public final class AppServices {
     }
 
     private func applyInterfaceChangesUnlocked() async -> InterfaceApplyOutcome {
-        // Model B: the NE owns the RNS node + all interfaces; the app's `backend` here is
-        // the thin `ProxyRnsBackend`, whose `addInterface` throws `unsupportedInProxy`.
+        // Both flavors now use the shared hot path: rewrite the shared config,
+        // diff the desired vs live set, and hot-attach/detach via the backend
+        // (in-process Python or NE proxy). Model B additionally syncs the BLE
+        // radio/seam before the hot ops and falls back to a full NE restart if
+        // any hot op misses. The in-process Python flavor has no restart fallback
+        // (its hot ops are the primary path).
         //
-        // The in-NE Python RNS engine (NEPythonRNS) does NOT live-reconcile the way the
-        // deleted C++ engine did: `rns_bridge` has no add_interface / remove_interface
-        // ops, and RNS 1.1.x interface changes are restart-gated anyway. So a Model B
-        // interface add/edit/toggle/delete is applied by (1) rewriting the SHARED
-        // App-Group config file the NE reads and (2) restarting the NE's Python node
-        // over IPC (`.stop` + `.start`), which re-reads the fresh config. This replaces
-        // the old "the NE observes configChanged and reconciles" behavior, which lived
-        // in the C++ engine that no longer exists.
-        // Model B: the in-NE Python node owns interfaces; applying a change is
-        // a shared-config rewrite + an NE restart over IPC. This whole branch is
-        // compiled only into the Model B target (it calls the MODEL_B-guarded
-        // `syncModelBBLEService`/`tunnelManager` symbols), so the shipping build
-        // falls straight through to the in-process Python hot path below. The
-        // runtime `BackendPreference.modelB` check stays as the behavior gate.
-        #if COLUMBA_RUNTIME_MODEL_B
-        if BackendPreference.modelB {
-            let fresh = InterfaceRepository().getEnabledInterfaces()
-            // The shared config write is the mechanism the NE node re-reads on
-            // restart, so a failed write means the node would come back with the
-            // STALE config - do not restart, and report the failure (Issue 3).
-            let configWritten = await writePythonConfig(interfaces: fresh)
-            if !configWritten {
-                DiagLog.log("[RNS-HOT] modelB: shared config write FAILED; not restarting (the NE would re-read the stale config)")
-                return .configWriteFailed
-            }
-            // Bring the app-side CoreBluetooth radio + seam up (or down) to match the
-            // new interface set BEFORE restarting the NE node: the NE's reticulum-swift
-            // BLEInterface drives the radio over that seam, so the seam must be listening
-            // first. A runtime BLE-interface enable would otherwise leave the NE with a
-            // BLEInterface but no radio behind it, so peers could never connect.
-            syncModelBBLEService()
-            DiagLog.log("[RNS-HOT] modelB: shared config rewritten (\(fresh.count) interfaces); restarting NE python node")
-            let outcome = await restartPythonBackendUnlocked()
-            DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
-            // Map the restart outcome to an honest Apply result (Issue 2): a
-            // same-process restart refused by the AutoInterface guard, or a
-            // never-started backend, persists the change for the next relaunch;
-            // a throw means the stack is down.
-            switch outcome {
-            case .applied:
-                return .applied
-            case .requiresRelaunch, .skipped:
-                return .persistedRequiresRelaunch
-            case .failed:
-                return .restartFailed
-            }
-        }
-        #endif
+        // RNS 1.5.5's public attach_interface/detach_interface API makes this
+        // work in the NE: the app rewrites the shared App-Group config, then
+        // sends attach/detach ops over IPC; the NE's rns_bridge re-reads the
+        // fresh config and hot-swaps the interface without a restart.
 
         let fresh = InterfaceRepository().getEnabledInterfaces()
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
@@ -3336,6 +3296,17 @@ public final class AppServices {
             return .persistedRequiresRelaunch
         }
 
+        #if COLUMBA_RUNTIME_MODEL_B
+        // Model B: bring the app-side CoreBluetooth radio + seam up (or down) to
+        // match the new interface set BEFORE the hot ops: the NE's reticulum-swift
+        // BLEInterface drives the radio over that seam, so the seam must be
+        // listening first. A runtime BLE-interface enable would otherwise leave the
+        // NE with a BLEInterface but no radio behind it, so peers could never connect.
+        if BackendPreference.modelB {
+            syncModelBBLEService()
+        }
+        #endif
+
         let live = pythonInterfaceEntities
         let removed = live.values.filter { freshById[$0.id] == nil }
         let added = fresh.filter { live[$0.id] == nil }
@@ -3346,75 +3317,122 @@ public final class AppServices {
 
         DiagLog.log("[RNS-HOT] applyInterfaceChanges: +\(added.count) -\(removed.count) ~\(changed.count)")
 
+        // Track whether every hot op actually went live (Model B uses this to
+        // decide whether to fall back to a full NE restart).
+        var allOk = true
+
         // 2. Remove dropped interfaces, and the OLD form of edited ones.
         for entity in removed {
-            await hotRemoveInterface(entity, backend: backend)
+            let ok = await hotRemoveInterface(entity, backend: backend)
+            if !ok {
+                allOk = false
+            }
         }
         for entity in changed {
             if let old = live[entity.id] {
-                await hotRemoveInterface(old, backend: backend)
+                let ok = await hotRemoveInterface(old, backend: backend)
+                if !ok {
+                    allOk = false
+                }
             }
         }
 
         // 3. Add new interfaces, and the NEW form of edited ones.
         for entity in added + changed {
-            await hotAddInterface(entity, backend: backend)
+            let ok = await hotAddInterface(entity, backend: backend)
+            if !ok {
+                allOk = false
+            }
         }
 
+        // 4. Keep the status-poll's matching set in sync with what's live.
+        pythonInterfaceEntities = freshById
+
         #if COLUMBA_RUNTIME_MODEL_B
-        // 4. Newly hot-added interfaces are created in normal (local-socket) mode.
-        // The tunnel-mode coordinator (`applyTunnelModeToInterfaces`) only fires on
-        // VPN *status* changes, not interface changes — so if background transport
-        // is already up, an interface added afterward (e.g. switching Auto -> a TCP
-        // relay after enabling background transport) would never enter tunnel mode,
-        // and with the packet tunnel active its own socket is black-holed
-        // (connected, rx=0 tx=0). Re-assert tunnel mode so anything added while the
-        // tunnel is up is bridged through the extension.
-        await reapplyTunnelModeIfActive()
+        if BackendPreference.modelB {
+            // Newly hot-added interfaces are created in normal (local-socket) mode.
+            // The tunnel-mode coordinator (`applyTunnelModeToInterfaces`) only fires
+            // on VPN *status* changes, not interface changes - so if background
+            // transport is already up, an interface added afterward (e.g. switching
+            // Auto -> a TCP relay after enabling background transport) would never
+            // enter tunnel mode, and with the packet tunnel active its own socket is
+            // black-holed (connected, rx=0 tx=0). Re-assert tunnel mode so anything
+            // added while the tunnel is up is bridged through the extension.
+            await reapplyTunnelModeIfActive()
+
+            // Fallback: if any hot op missed (NE not running, attach/detach
+            // rejected, etc.), fall back to a full NE restart - the pre-1.5.5
+            // behavior - so the change still lands.
+            if !allOk {
+                DiagLog.log("[RNS-HOT] modelB: one or more hot ops missed; falling back to NE restart")
+                let outcome = await restartPythonBackendUnlocked()
+                DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
+                switch outcome {
+                case .applied:
+                    return .applied
+                case .requiresRelaunch, .skipped:
+                    return .persistedRequiresRelaunch
+                case .failed:
+                    return .restartFailed
+                }
+            }
+        }
         #endif
 
-        // 5. Keep the status-poll's matching set in sync with what's live.
-        pythonInterfaceEntities = freshById
         return .applied
     }
 
     /// Hot-add one interface to the running Python stack and seed its Swift
     /// status mirror. Assumes the config file already contains the section
-    /// (callers run `writePythonConfig` first).
+    /// (callers run `writePythonConfig` first). Returns whether the backend op
+    /// actually attached the interface live (Model B's fallback uses this to
+    /// decide whether to restart the node; the Python flavor ignores it).
+    ///
+    /// The Swift-side status mirror (app-local TCP/Auto/BLE/RNode singletons) is
+    /// Python-flavor only: under Model B the NE owns the interfaces and the app
+    /// renders them from the NE's status push, so no app-local object is created.
     @MainActor
-    private func hotAddInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async {
+    private func hotAddInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async -> Bool {
         let section = PythonConfigWriter.sectionName(for: entity)
+        var ok = false
         do {
             let r = try await backend.addInterface(name: section)
+            ok = r.ok
             DiagLog.log("[RNS-HOT] add \(section): ok=\(r.ok) reason=\(r.reason)")
         } catch {
             DiagLog.log("[RNS-HOT] add \(section) error: \(error)")
         }
-        await seedSwiftStub(for: entity)
         #if COLUMBA_RUNTIME_PYTHON
+        await seedSwiftStub(for: entity)
         if entity.type == .autoInterface {
             noteAutoInterfaceAvailability(changed: false)
         }
         #endif
+        return ok
     }
 
     /// Hot-remove one interface from the running Python stack and tear down its
-    /// Swift status mirror.
+    /// Swift status mirror. Returns whether the backend op actually detached the
+    /// interface live (Model B's fallback uses this; the Python flavor ignores it).
+    /// The Swift-side teardown is Python-flavor only (see `hotAddInterface`).
     @MainActor
-    private func hotRemoveInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async {
+    private func hotRemoveInterface(_ entity: InterfaceEntity, backend: any RnsBackend) async -> Bool {
         let section = PythonConfigWriter.sectionName(for: entity)
+        var ok = false
         do {
             let r = try await backend.removeInterface(name: section)
+            ok = r.ok
             DiagLog.log("[RNS-HOT] remove \(section): ok=\(r.ok) reason=\(r.reason)")
         } catch {
             DiagLog.log("[RNS-HOT] remove \(section) error: \(error)")
         }
-        await teardownSwiftStub(for: entity)
         #if COLUMBA_RUNTIME_PYTHON
+        await teardownSwiftStub(for: entity)
         if entity.type == .autoInterface {
             noteAutoInterfaceAvailability(changed: true)
         }
         #endif
+        return ok
     }
 
     /// Create the Swift-side status mirror for a freshly hot-added interface so

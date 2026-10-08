@@ -334,6 +334,23 @@ final class NEPythonRNS: @unchecked Sendable {
         Self.dict(from: call("persist", kwargs: [:]))
     }
 
+    /// `rns_bridge.add_interface(name)` → `{ok, reason}`. Hot-attach an interface
+    /// to the live NE node without a restart (RNS 1.5.5). The app has already
+    /// rewritten the shared App-Group config, so the NE re-reads the fresh
+    /// `[[name]]` section. Returns nil if the bridge call itself failed (vs.
+    /// `{"ok": false, "reason": ...}` which means the attach was rejected).
+    func attachInterface(name: String) -> [String: Any]? {
+        Self.dict(from: call("add_interface", kwargs: ["name": name]))
+    }
+
+    /// `rns_bridge.remove_interface(name)` → `{ok, reason}`. Hot-detach an
+    /// interface from the live NE node without a restart (RNS 1.5.5, which tears
+    /// the interface's spawned children down too). Returns nil if the bridge call
+    /// itself failed.
+    func detachInterface(name: String) -> [String: Any]? {
+        Self.dict(from: call("remove_interface", kwargs: ["name": name]))
+    }
+
     /// Send one outbound LXMF message through the Python engine, with
     /// send-response-ambiguity dedup (P1 #6). If `sendId` is already recorded in
     /// `sentIds`, the send was already delivered (a lost live reply led the app to

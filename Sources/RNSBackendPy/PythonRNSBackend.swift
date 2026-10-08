@@ -70,7 +70,7 @@ public final class PythonRNSBackend: RnsBackend, @unchecked Sendable {
     public var capabilities: BackendCapabilities {
         BackendCapabilities(
             backendId: .pythonEmbedded,
-            versions: .init(reticulum: "1.5.2", lxmf: "1.1.0", lxst: nil, bleReticulum: "0.2.2"),
+            versions: .init(reticulum: "1.5.5", lxmf: "1.1.0", lxst: nil, bleReticulum: "0.2.2"),
             interfaces: .init(hotReloadInterfaces: true),
             telemetry: .init(
                 collectorHostMode: .unsupported,

@@ -891,31 +891,44 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     @discardableResult
     public func addInterface(name: String) async throws -> (ok: Bool, reason: String) {
-        throw BackendError.unsupportedInProxy(feature: "addInterface")
+        // Model B now hot-attaches over the NE instead of throwing
+        // unsupportedInProxy: the NE's `rns_bridge.add_interface` re-reads the
+        // freshly-written shared config and `attach_interface`s the section onto
+        // the live `Transport` (RNS 1.5.5). A bounded deadline keeps a wedged NE
+        // from hanging the toggle. `reason` carries the op name for the caller's
+        // log line (the NE returns a Bool, not a structured reason).
+        let ok = try await marshalBool(.attachInterface(name: name), op: "attachInterface", deadline: 15.0)
+        return (ok, ok ? "attached" : "attach-failed")
     }
 
     @discardableResult
     public func removeInterface(name: String) async throws -> (ok: Bool, reason: String) {
-        throw BackendError.unsupportedInProxy(feature: "removeInterface")
+        // Model B now hot-detaches over the NE instead of throwing
+        // unsupportedInProxy: the NE's `rns_bridge.remove_interface` calls
+        // `detach_interface` on the live `Transport` (RNS 1.5.5, which tears
+        // spawned children down too). Bounded deadline as with addInterface.
+        let ok = try await marshalBool(.detachInterface(name: name), op: "detachInterface", deadline: 15.0)
+        return (ok, ok ? "removed" : "detach-failed")
     }
 
     // MARK: - Capabilities
 
     /// Same backend-id as the native stack — under Model B the NE runs
-    /// reticulum-swift / LXMF-swift, so versions match `SwiftRNSBackend`. The
-    /// proxy declares hot-reload OFF (interface admin isn't proxied) and
-    /// telemetry unsupported (not proxied in A5b); refine when A5c wires the
-    /// remaining ops.
+    /// reticulum-swift / LXMF-swift, so versions match `SwiftRNSBackend`.
+    /// `hotReloadInterfaces` is now ON: Model B hot-attaches / hot-detaches
+    /// interfaces over the NE (RNS 1.5.5 live interface management), so interface
+    /// changes apply immediately without a restart. Telemetry collector-host mode
+    /// is still unsupported (not proxied in A5b).
     public var capabilities: BackendCapabilities {
         BackendCapabilities(
             backendId: .pythonEmbedded,
-            versions: .init(reticulum: nil, lxmf: nil, lxst: nil, bleReticulum: nil),
-            interfaces: .init(hotReloadInterfaces: false),
+            versions: .init(reticulum: "1.5.5", lxmf: nil, lxst: nil, bleReticulum: nil),
+            interfaces: .init(hotReloadInterfaces: true),
             telemetry: .init(
                 collectorHostMode: .unsupported,
                 storeOwnTelemetry: .unsupported,
                 allowedRequestersFilter: .unsupported,
-                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony/interface-admin are not proxied yet. NomadNet fetch IS proxied via the NE."
+                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony are not proxied yet. NomadNet fetch IS proxied via the NE. Interface hot-attach / hot-detach IS proxied via the NE (RNS 1.5.5)."
             ),
             performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )
