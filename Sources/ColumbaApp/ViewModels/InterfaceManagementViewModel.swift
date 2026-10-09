@@ -54,6 +54,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Current success message (auto-dismissing)
     public var successMessage: String?
 
+    /// Critical state the user MUST see - not a success confirmation, so it is
+    /// NOT gated by `requiresExplicitApply` and shows in every flavor. Used for
+    /// "Saved - applies on the next app relaunch": the change persisted but is
+    /// not live, so the user needs the relaunch instruction no matter which
+    /// build they're on. Auto-dismissing, longer than a success toast.
+    public var noticeMessage: String?
+
     /// Local Network permission + carrier health for the Auto Discovery
     /// interface (Python backend only; the Model B node owns its sockets in
     /// the NE and has no such state). nil = not applicable or not yet
@@ -651,10 +658,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         case .persistedRequiresRelaunch:
             // Saved to disk (takes effect on the next relaunch). Not live, but
             // not a failure either: clear pending so the user isn't nudged to
-            // retry an edit that already persisted.
+            // retry an edit that already persisted. The relaunch instruction is
+            // CRITICAL state (the change is not live), so it goes through
+            // showNotice - which shows in every flavor - not the
+            // Model-B-suppressed success channel.
             hasPendingChanges = false
             stagedEntityIDs.removeAll()
-            showSuccess("Saved - applies on the next app relaunch")
+            showNotice("Saved - applies on the next app relaunch")
         case .configWriteFailed:
             // Keep the change pending (Apply button stays) so the user can retry.
             showError("Changes could not be saved (config write failed); the running node is unchanged")
@@ -1245,6 +1255,21 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             if self.successMessage == message {
                 self.successMessage = nil
+            }
+        }
+    }
+
+    /// Show a critical-notice banner. Unlike showSuccess this is NOT gated by
+    /// `requiresExplicitApply` - the relaunch instruction is state the user
+    /// must see in every flavor (their change is saved but not live).
+    private func showNotice(_ message: String) {
+        noticeMessage = message
+        // Auto-dismiss after 8 seconds (longer than a success toast - this is
+        // information the user may need to act on).
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            if self.noticeMessage == message {
+                self.noticeMessage = nil
             }
         }
     }
