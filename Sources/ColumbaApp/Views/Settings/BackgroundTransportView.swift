@@ -147,7 +147,7 @@ struct BackgroundTransportView: View {
             )
             VPNExplainerUI.explainerRow(
                 icon: "point.3.connected.trianglepath.dotted",
-                text: String(localized: "Keeps your TCP and local-network (LAN) links connected to the Reticulum mesh in the background.")
+                text: String(localized: "Keeps you connected to the Reticulum mesh in the background.")
             )
             VPNExplainerUI.explainerRow(
                 icon: "bolt.fill",
