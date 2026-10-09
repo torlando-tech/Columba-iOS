@@ -54,6 +54,19 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// Current success message (auto-dismissing)
     public var successMessage: String?
 
+    /// Critical state the user MUST see - not a success confirmation, so it is
+    /// NOT gated by `requiresExplicitApply` and shows in every flavor. Used for
+    /// "Saved - applies on the next app relaunch": the change persisted but is
+    /// not live, so the user needs the relaunch instruction no matter which
+    /// build they're on. Auto-dismissing, longer than a success toast.
+    public var noticeMessage: String?
+
+    /// Generation counter for `showNotice`: each call bumps it, and a
+    /// dismissal timer only clears the banner if the generation still matches
+    /// its own snapshot - so an earlier identical notice's timer can't clear a
+    /// later one (see showNotice). Not UI state, never observed directly.
+    private var noticeGeneration: Int = 0
+
     /// Local Network permission + carrier health for the Auto Discovery
     /// interface (Python backend only; the Model B node owns its sockets in
     /// the NE and has no such state). nil = not applicable or not yet
@@ -651,10 +664,13 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         case .persistedRequiresRelaunch:
             // Saved to disk (takes effect on the next relaunch). Not live, but
             // not a failure either: clear pending so the user isn't nudged to
-            // retry an edit that already persisted.
+            // retry an edit that already persisted. The relaunch instruction is
+            // CRITICAL state (the change is not live), so it goes through
+            // showNotice - which shows in every flavor - not the
+            // Model-B-suppressed success channel.
             hasPendingChanges = false
             stagedEntityIDs.removeAll()
-            showSuccess("Saved - applies on the next app relaunch")
+            showNotice("Saved - applies on the next app relaunch")
         case .configWriteFailed:
             // Keep the change pending (Apply button stays) so the user can retry.
             showError("Changes could not be saved (config write failed); the running node is unchanged")
@@ -1230,12 +1246,42 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     }
 
     private func showSuccess(_ message: String) {
+        // Model B: no success banners at all. Every interface action applies
+        // the instant it's saved (no Apply button) and the UI itself confirms
+        // it - the toggle flips, the interface badge shows connected/disconnected,
+        // so a transient green "X enabled" / "Interface added" / "Interface
+        // changes applied" banner is redundant noise. The Python flavor keeps
+        // them: there an explicit Apply button is tapped and the user is waiting
+        // for a confirmation. Error banners are NOT gated here - a failed save
+        // is worth surfacing in both flavors.
+        guard requiresExplicitApply else { return }
         successMessage = message
         // Auto-dismiss after 3 seconds
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             if self.successMessage == message {
                 self.successMessage = nil
+            }
+        }
+    }
+
+    /// Show a critical-notice banner. Unlike showSuccess this is NOT gated by
+    /// `requiresExplicitApply` - the relaunch instruction is state the user
+    /// must see in every flavor (their change is saved but not live).
+    private func showNotice(_ message: String) {
+        // Bump a generation token so a dismissal timer started by an EARLIER
+        // identical notice can't clear a LATER one: if two edits within 8s
+        // both produce "Saved - applies on the next app relaunch", the first
+        // timer must not dismiss the second before the user can read it.
+        noticeGeneration &+= 1
+        let generation = noticeGeneration
+        noticeMessage = message
+        // Auto-dismiss after 8 seconds (longer than a success toast - this is
+        // information the user may need to act on).
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            if noticeGeneration == generation {
+                noticeMessage = nil
             }
         }
     }

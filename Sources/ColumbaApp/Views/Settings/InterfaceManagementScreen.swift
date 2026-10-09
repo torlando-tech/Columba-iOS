@@ -111,9 +111,16 @@ struct InterfaceManagementScreen: View {
                             .padding(.horizontal, 16)
                             .padding(.bottom, 8)
                     }
+                    if let notice = viewModel.noticeMessage {
+                        messageCard(notice, isError: false)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
                 }
                 .animation(.easeInOut, value: viewModel.errorMessage)
                 .animation(.easeInOut, value: viewModel.successMessage)
+                .animation(.easeInOut, value: viewModel.noticeMessage)
             }
         }
         .navigationTitle("Network Interfaces")
