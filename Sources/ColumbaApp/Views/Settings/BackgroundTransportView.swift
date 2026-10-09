@@ -196,24 +196,7 @@ struct BackgroundTransportView: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        if isEnabledState {
-            // Disable: clear on-demand + stop (a bare stop() would auto-reconnect).
-            Button {
-                errorMessage = nil
-                Task {
-                    do { try await tunnel.disable() }
-                    catch { errorMessage = error.localizedDescription }
-                }
-            } label: {
-                Text("Disable Background Transport")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Theme.error)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusLarge))
-            }
-        } else {
+        if !isEnabledState {
             // Enable: install the profile (also arms on-demand) then start.
             Button {
                 enable()
