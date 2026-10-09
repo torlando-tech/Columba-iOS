@@ -261,13 +261,29 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// Response payload: a Bool (JSON).
     case linkTeardown(linkId: Int)
 
+    /// Hot-attach an interface to the NE's live RNS node without a restart
+    /// (mirrors the in-process `PythonRNSBackend.addInterface` path). The NE's
+    /// `rns_bridge.add_interface` re-reads the freshly-written shared config and
+    /// `RNS.Reticulum.attach_interface`s the `[[name]]` section onto the running
+    /// `Transport`. `name` is the ConfigObj section name the app's
+    /// PythonConfigWriter emitted (the app rewrites the shared config BEFORE this
+    /// op). Response payload: a Bool (JSON) — `ok` from the NE. The app applies a
+    /// bounded IPC deadline so a wedged NE can't hang the toggle.
+    case attachInterface(name: String)
+
+    /// Hot-detach an interface from the NE's live RNS node without a restart
+    /// (mirrors the in-process `PythonRNSBackend.removeInterface` path). The NE's
+    /// `rns_bridge.remove_interface` calls `RNS.Reticulum.detach_interface`.
+    /// Response payload: a Bool (JSON) — `ok` from the NE.
+    case detachInterface(name: String)
+
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
         case op, displayName, destHashHex, content, method, fieldsData, sendId
         case path, timeoutSeconds, formFields
         case aspect, identityPublicKeyHex, linkId, dataHex
-        case maxSeq
+        case maxSeq, interfaceName
     }
 
     /// Stable discriminator strings (decoupled from the Swift case names so a
@@ -278,6 +294,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case drainEvents, bleConnections, bleDisconnect, nomadnetFetch
         case openLink, linkSend, linkIdentify, linkTeardown
         case ackInbox
+        case attachInterface, detachInterface
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -340,6 +357,12 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case .ackInbox(let maxSeq):
             try c.encode(Op.ackInbox, forKey: .op)
             try c.encode(maxSeq, forKey: .maxSeq)
+        case .attachInterface(let name):
+            try c.encode(Op.attachInterface, forKey: .op)
+            try c.encode(name, forKey: .interfaceName)
+        case .detachInterface(let name):
+            try c.encode(Op.detachInterface, forKey: .op)
+            try c.encode(name, forKey: .interfaceName)
         }
     }
 
@@ -401,6 +424,10 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .linkTeardown(linkId: try c.decode(Int.self, forKey: .linkId))
         case .ackInbox:
             self = .ackInbox(maxSeq: try c.decode(Int.self, forKey: .maxSeq))
+        case .attachInterface:
+            self = .attachInterface(name: try c.decode(String.self, forKey: .interfaceName))
+        case .detachInterface:
+            self = .detachInterface(name: try c.decode(String.self, forKey: .interfaceName))
         }
     }
 }

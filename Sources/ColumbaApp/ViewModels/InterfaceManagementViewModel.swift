@@ -79,19 +79,29 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
 
     /// Whether interface edits require an explicit "Apply" tap to take effect.
     ///
-    /// All builds stage edits and apply them in one shot when Apply is tapped:
-    /// a user may make several interface changes, and each RNS restart (Model B)
-    /// or hot reconfig (Python) is expensive, so changes are batched into a
-    /// single Apply. Model B's Apply rewrites the shared App-Group config and
-    /// restarts the in-NE Python RNS node once (`.stop` + `.start` over IPC;
-    /// `rns_bridge` has no hot add/remove). The Python build hot-adds /
-    /// hot-removes the delta on a running Transport.
-    public var requiresExplicitApply: Bool { true }
+    /// Model B: false - changes are applied live the moment they're saved via
+    /// RNS 1.5.5's hot attach/detach over the NE (no Apply button). Python:
+    /// true - changes are staged until the user taps "Apply" (in-process hot
+    /// add/remove delta).
+    public var requiresExplicitApply: Bool { !BackendPreference.modelB }
 
     /// Trailing hint for edit toasts — prompt to Apply only when an explicit
     /// Apply is required; on the live (Model B) path the change is already in
     /// effect, so no prompt is shown.
     private var applyHint: String { requiresExplicitApply ? " — tap Apply to take effect" : "" }
+
+    /// Model B: push the just-saved change to the running node immediately (no
+    /// explicit Apply). Runs on its own task so it can await the backend; the
+    /// `applyChanges` guard makes a no-op (no pending changes) free. On a failed
+    /// apply the change stays pending and the failure toast surfaces (the next
+    /// save/toggle retries). No-op on the Python build, which keeps the manual
+    /// Apply button.
+    private func scheduleModelBAutoApply() {
+        guard BackendPreference.modelB else { return }
+        Task { @MainActor in
+            await applyChanges()
+        }
+    }
 
     // MARK: - Dialog State
 
@@ -286,6 +296,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: enabled)
         markStaged(interface.id, enabled: enabled)
         showSuccess("\(interface.name) \(enabled ? "enabled" : "disabled")\(applyHint)")
+        scheduleModelBAutoApply()
     }
 
     /// Delete an interface. On Model B it's removed live; on Python the running
@@ -297,6 +308,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         applyRNodeLiveChange(config: interface.config, name: interface.name, enabled: false)
         markStaged(interface.id, enabled: false)
         showSuccess("Interface deleted\(applyHint)")
+        scheduleModelBAutoApply()
     }
 
     /// Confirm and delete the pending interface.
@@ -463,6 +475,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         // All builds: edits are staged; the user taps "Apply" to push them to the
         // running stack in one shot. (Model B: one `.stop`/`.start` over IPC;
         // Python: hot add/remove delta.)
+        scheduleModelBAutoApply()
     }
 
     /// Save a TCP client interface from the wizard flow.
@@ -508,8 +521,9 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
             markStaged(id, enabled: enabled)
         }
         dismissConfigSheet()
-        // Stage only — the user taps "Apply" to push (batching multiple changes
-        // into one RNS restart / hot reconfig).
+        // Model B: apply immediately (RNS 1.5.5 hot attach/detach). Python: the
+        // change is staged until the user taps "Apply".
+        scheduleModelBAutoApply()
     }
 
     /// Mark an interface entity as staged (config changed, not yet applied to the

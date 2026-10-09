@@ -480,6 +480,28 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let res = engine.status() else { return .ok(nil) }
             return .ok(res.data(using: .utf8))
 
+        case .attachInterface(let name):
+            // Hot-attach an interface to the live NE node without a restart
+            // (RNS 1.5.5). The app rewrote the shared config first, so the NE
+            // re-reads the fresh [[name]] section. rns_bridge returns {ok, reason};
+            // forward the ok Bool (a nil engine result = bridge-level failure →
+            // false, which the app treats as a hot-apply miss and falls back to a
+            // restart).
+            guard let res = engine.attachInterface(name: name) else {
+                return .ok(try? JSONEncoder().encode(false))
+            }
+            let ok = (res["ok"] as? Bool) ?? false
+            return .ok(try? JSONEncoder().encode(ok))
+
+        case .detachInterface(let name):
+            // Hot-detach an interface from the live NE node without a restart
+            // (RNS 1.5.5, which tears the interface's spawned children down too).
+            guard let res = engine.detachInterface(name: name) else {
+                return .ok(try? JSONEncoder().encode(false))
+            }
+            let ok = (res["ok"] as? Bool) ?? false
+            return .ok(try? JSONEncoder().encode(ok))
+
         case .heardAnnounces:
             // rns_bridge.drain_events() returns the event queue (snake_case
             // keys); keep the announce events and map them onto the

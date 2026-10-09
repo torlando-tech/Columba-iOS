@@ -2415,28 +2415,29 @@ def stop() -> None:
 
 
 def add_interface(name: str) -> dict[str, Any]:
-    """Hot-add a single interface to the *running* Reticulum stack — no restart.
+    """Hot-attach a single interface to the *running* Reticulum stack — no restart.
 
-    RNS attaches interfaces to a live `Transport` without re-initialising (it's
-    exactly what the 1.x interface-discovery autoconnect path does — see
-    `RNS.Discovery.InterfaceDiscovery.autoconnect` → `Reticulum._add_interface`).
-    We reuse the higher-level `Reticulum._synthesize_interface()` — the same code
-    path startup uses to bring up `[interfaces]` sections — so every interface
-    type (TCP, Auto, RNode, and the external iOS BLE module) is handled by RNS's
-    own logic rather than reimplemented here.
+    Delegates to RNS 1.5.5's public live-attach API `RNS.Reticulum.attach_interface`
+    (the same primitive `rnstatus --attach` uses). It re-reads the `[[name]]`
+    section fresh from the on-disk config (`Reticulum.configpath`) and synthesizes
+    the interface onto the live `Transport` — so every interface type (TCP, Auto,
+    RNode, and the external iOS BLE module) is handled by RNS's own logic rather
+    than reimplemented here. `name` is the ConfigObj section name
+    (PythonConfigWriter's sanitized "<display>-<id6>" form), which becomes the
+    interface's `iface.name` — the key `status()` and the Swift status poll use
+    to match an interface back to its `InterfaceEntity`.
 
-    `name` is the ConfigObj section name (PythonConfigWriter's sanitized
-    "<display>-<id6>" form); it becomes the interface's `iface.name`, which is
-    how `status()` and the Swift status poll match interfaces back to entities.
+    Swift's PythonConfigWriter has already rewritten the full config file (for
+    cold-launch durability) before calling here, so `attach_interface` reads the
+    fresh section. Idempotent — re-adding a live interface returns ok=True /
+    "already-present". A failing interface construction is degraded to an error
+    return (not a process crash) by swapping `RNS.panic` for an exception for the
+    duration: the new API's `_synthesize_interface` still calls `RNS.panic()`
+    (-> os._exit(255)) when an interface fails to construct, which at a cold
+    startup aborts cleanly but on a *runtime* attach would take the whole
+    process down.
 
-    The interface's `[[name]]` section is read *fresh from the on-disk config*
-    rather than the running `reticulum.config`: Swift's PythonConfigWriter has
-    already rewritten the full config file (for cold-launch durability) and the
-    in-memory `reticulum.config` was parsed at init, so it won't contain a
-    section added afterwards.
-
-    Returns {"ok": bool, "reason": str}. Idempotent — re-adding a live
-    interface returns ok=True / "already-present".
+    Returns {"ok": bool, "reason": str}.
     """
     with _lock:
         if not _state["started"]:
@@ -2450,110 +2451,97 @@ def add_interface(name: str) -> dict[str, Any]:
             if getattr(iface, "name", None) == name:
                 return {"ok": True, "reason": "already-present"}
 
+        # Pre-check the section exists so we can return an honest reason (the
+        # public attach_interface collapses "no config entry" into a bare None).
         from RNS.vendor.configobj import ConfigObj
         config_path = os.path.join(config_dir, "config")
         try:
             cfg = ConfigObj(config_path)
         except Exception as e:
             return {"ok": False, "reason": f"config-read-failed: {e}"}
-
         if "interfaces" not in cfg or name not in cfg["interfaces"]:
             return {"ok": False, "reason": f"section-not-found: {name}"}
-        section = cfg["interfaces"][name]
 
-        # `_synthesize_interface` calls `RNS.panic()` (→ os._exit(255)) when an
-        # interface fails to construct — at startup that aborts cleanly, but on
-        # a *runtime* add a bad/unreachable config would take the whole app
-        # down. Swap panic() for an exception for the duration so the failure
-        # degrades to an error return. Also stub signal.signal: some interface
-        # constructors (RNode) install handlers, which raises off the main
-        # thread (we're on the Swift bridge queue). Both are safe because all
-        # bridge entry points are serialized under `_lock`.
+        # Stub signal.signal too: some interface constructors (RNode) install
+        # handlers, which raises off the main thread (we're on the Swift bridge
+        # queue). Safe because all bridge entry points are serialized under `_lock`.
         import signal as _signal
         orig_panic = RNS.panic
         orig_signal = _signal.signal
 
         def _raise_panic():
-            raise RuntimeError("interface synthesis panicked (bad config or unreachable endpoint)")
+            raise RuntimeError("interface attach panicked (bad config or unreachable endpoint)")
 
         RNS.panic = _raise_panic
         _signal.signal = lambda *_a, **_kw: None
         try:
-            reticulum._synthesize_interface(section, name, instance_init=False)
+            attached = reticulum.attach_interface(name)
         except Exception as e:
             RNS.trace_exception(e)
-            return {"ok": False, "reason": f"synthesize-failed: {e}"}
+            attached = False
         finally:
             RNS.panic = orig_panic
             _signal.signal = orig_signal
 
-        # Keep the live in-memory config consistent with what's now attached,
-        # so a later status()/stop() reasons over the same view.
-        try:
-            if "interfaces" not in reticulum.config:
-                reticulum.config["interfaces"] = {}
-            reticulum.config["interfaces"][name] = dict(section)
-        except Exception:
-            pass
-
         for iface in RNS.Transport.interfaces:
             if getattr(iface, "name", None) == name:
-                RNS.log(f"Hot-added interface {name}", RNS.LOG_NOTICE)
-                return {"ok": True, "reason": "added"}
-        return {"ok": False, "reason": "not-attached"}
+                RNS.log(f"Hot-attached interface {name}", RNS.LOG_NOTICE)
+                return {"ok": True, "reason": "attached"}
+        if attached is None:
+            return {"ok": False, "reason": f"no-config-entry: {name}"}
+        return {"ok": False, "reason": "attach-failed"}
 
 
 def remove_interface(name: str) -> dict[str, Any]:
-    """Hot-remove an interface from the running Reticulum stack — no restart.
+    """Hot-detach an interface from the running Reticulum stack — no restart.
 
-    Calls the interface's `detach()` then drops it from
-    `RNS.Transport.interfaces`, along with any child interfaces that name it as
-    their `parent_interface` (e.g. AutoInterface's dynamically-spawned
-    AutoInterfacePeer rows).
+    Delegates to RNS 1.5.5's public live-detach API `RNS.Reticulum.detach_interface`
+    (the same primitive `rnstatus --detach` uses). It tears the interface down off
+    the live `Transport` — including any child interfaces it spawned (e.g. an
+    AutoInterface's dynamically-spawned peer rows) — via the interface's own
+    `detach()`. Since 1.5.5 `AutoInterface.detach()` releases its discovery /
+    multicast sockets and daemon threads cleanly, so re-attaching the same
+    interface mid-session no longer collides on the multicast bind — the failure
+    mode that made the pre-1.5.5 path restart the whole stack instead of
+    hot-swapping.
 
-    Teardown completeness depends on the interface type's `detach()`:
-      • TCPClientInterface.detach() shuts down + closes the socket — clean.
-      • AutoInterface.detach() upstream only sets `online = False`; it does NOT
-        close the multicast discovery sockets or join their daemon threads, so
-        the OS sockets stay bound until process exit. Re-adding the same
-        AutoInterface before a cold launch can therefore collide on the
-        multicast bind. (Tracked for an upstream RNS teardown fix; TCP/Backbone
-        removal is unaffected.)
+    RNS refuses to detach I2P and Local interfaces (returns False); Columba uses
+    neither. Idempotent — detaching an interface that is already absent returns
+    ok=True / "not-found" (the desired end state already holds), so a caller
+    reconciling from a stale live-set does not treat it as a failure.
 
     Returns {"ok": bool, "reason": str}.
     """
     with _lock:
         if not _state["started"]:
             return {"ok": False, "reason": "not-started"}
+        reticulum = _state["reticulum"]
+        if reticulum is None:
+            return {"ok": False, "reason": "no-reticulum"}
 
-        removed = 0
-        for iface in list(RNS.Transport.interfaces):
-            is_target = getattr(iface, "name", None) == name
-            parent = getattr(iface, "parent_interface", None)
-            is_child = parent is not None and getattr(parent, "name", None) == name
-            if not (is_target or is_child):
-                continue
-            try:
-                iface.detach()
-            except Exception as e:
-                RNS.log(f"detach failed for {iface}: {e}", RNS.LOG_ERROR)
-            try:
-                RNS.Transport.interfaces.remove(iface)
-                removed += 1
-            except ValueError:
-                pass
+        if not any(getattr(iface, "name", None) == name for iface in list(RNS.Transport.interfaces)):
+            return {"ok": True, "reason": "not-found"}
 
+        # Stub signal.signal: a detach can tear down a driver that had installed a
+        # handler, and we're off the main thread. Safe under `_lock`.
+        import signal as _signal
+        orig_signal = _signal.signal
+        _signal.signal = lambda *_a, **_kw: None
         try:
-            reticulum = _state["reticulum"]
-            if reticulum is not None and "interfaces" in reticulum.config \
-                    and name in reticulum.config["interfaces"]:
-                del reticulum.config["interfaces"][name]
-        except Exception:
-            pass
+            detached = reticulum.detach_interface(name)
+        except Exception as e:
+            RNS.trace_exception(e)
+            detached = False
+        finally:
+            _signal.signal = orig_signal
 
-        if removed:
-            RNS.log(f"Hot-removed interface {name} ({removed} entr{'y' if removed == 1 else 'ies'})", RNS.LOG_NOTICE)
-        return {"ok": removed > 0, "reason": f"removed-{removed}" if removed else "not-found"}
+        if detached is None:
+            return {"ok": False, "reason": "not-found"}
+        still_present = any(getattr(iface, "name", None) == name for iface in list(RNS.Transport.interfaces))
+        if detached is True or not still_present:
+            RNS.log(f"Hot-detached interface {name}", RNS.LOG_NOTICE)
+            return {"ok": True, "reason": "removed"}
+        return {"ok": False, "reason": "detach-failed"}
 
 
 def persist() -> dict[str, Any]:

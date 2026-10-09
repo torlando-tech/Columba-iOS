@@ -44,7 +44,15 @@ PIP_PYTHON="$PIP_VENV/bin/python"
 #   RETICULUM_LOCAL=~/repos/Reticulum support/fetch-wheels.sh
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
-RETICULUM_REF="${RETICULUM_REF:-754654fe8cbca180c784e9274d033cb3ce229312}"
+#
+# Pinned to the branch `rebase/columba-1.5.5` (head 3759488e): RNS 1.5.5 plus the
+# SAME six columba embedded-runtime hardening commits the previous pin
+# (754654fe, RNS 1.5.2 + 6) carried, re-applied on top of 1.5.5. 1.5.5 adds live
+# interface attach/detach/reload (RNS.Reticulum.attach_interface /
+# detach_interface / reload_interface) and a real AutoInterface.detach() teardown
+# — the teardown the in-NE node relies on for hot interface swaps. Bump
+# deliberately; the commit is on the same remote this script pulls from.
+RETICULUM_REF="${RETICULUM_REF:-3759488eba880489562268d9a1a993f443d1b8bd}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
