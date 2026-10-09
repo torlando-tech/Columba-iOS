@@ -647,7 +647,16 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         case .applied:
             hasPendingChanges = false
             stagedEntityIDs.removeAll()
-            showSuccess("Interface changes applied")
+            // Only announce here when there IS an explicit Apply action (the
+            // Python flavor, which keeps the Apply button): this is the
+            // confirmation the user is waiting for after tapping it. In Model B
+            // changes apply the instant they're saved and the per-action toast
+            // ("X enabled", "Interface added", "Interface deleted") already
+            // confirmed the specific change - a second "applied" banner is just
+            // noise, so it's suppressed there (matches requiresExplicitApply).
+            if requiresExplicitApply {
+                showSuccess("Interface changes applied")
+            }
         case .persistedRequiresRelaunch:
             // Saved to disk (takes effect on the next relaunch). Not live, but
             // not a failure either: clear pending so the user isn't nudged to
