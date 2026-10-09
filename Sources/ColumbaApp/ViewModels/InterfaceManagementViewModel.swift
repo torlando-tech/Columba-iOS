@@ -647,16 +647,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
         case .applied:
             hasPendingChanges = false
             stagedEntityIDs.removeAll()
-            // Only announce here when there IS an explicit Apply action (the
-            // Python flavor, which keeps the Apply button): this is the
-            // confirmation the user is waiting for after tapping it. In Model B
-            // changes apply the instant they're saved and the per-action toast
-            // ("X enabled", "Interface added", "Interface deleted") already
-            // confirmed the specific change - a second "applied" banner is just
-            // noise, so it's suppressed there (matches requiresExplicitApply).
-            if requiresExplicitApply {
-                showSuccess("Interface changes applied")
-            }
+            showSuccess("Interface changes applied")
         case .persistedRequiresRelaunch:
             // Saved to disk (takes effect on the next relaunch). Not live, but
             // not a failure either: clear pending so the user isn't nudged to
@@ -1239,6 +1230,15 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     }
 
     private func showSuccess(_ message: String) {
+        // Model B: no success banners at all. Every interface action applies
+        // the instant it's saved (no Apply button) and the UI itself confirms
+        // it - the toggle flips, the interface badge shows connected/disconnected,
+        // so a transient green "X enabled" / "Interface added" / "Interface
+        // changes applied" banner is redundant noise. The Python flavor keeps
+        // them: there an explicit Apply button is tapped and the user is waiting
+        // for a confirmation. Error banners are NOT gated here - a failed save
+        // is worth surfacing in both flavors.
+        guard requiresExplicitApply else { return }
         successMessage = message
         // Auto-dismiss after 3 seconds
         Task { @MainActor in
