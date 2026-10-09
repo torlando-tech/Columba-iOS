@@ -3244,16 +3244,6 @@
           }
         }
       }
-    },
-    "Uses more battery and data than running only in the foreground.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Uses more battery and data than running only in the foreground."
-          }
-        }
-      }
     }
   },
   "version": "1.0"
