@@ -35,7 +35,7 @@ struct VPNNotCommercialExplainer: View {
             )
             VPNExplainerUI.explainerRow(
                 icon: "iphone",
-                text: "The component carries Columba and Reticulum traffic, which may use the relay and interfaces you configured."
+                text: "The component carries Columba and Reticulum traffic, which uses the relay and interfaces you configured."
             )
         }
     }
