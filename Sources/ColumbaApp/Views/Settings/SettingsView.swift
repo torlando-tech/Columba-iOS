@@ -57,8 +57,12 @@ struct SettingsView: View {
     @AppStorage(ComposerKeyboardPreference.key)
     private var sendsOnReturn = ComposerKeyboardPreference.defaultValue
     #if COLUMBA_RUNTIME_MODEL_B
-    /// Presents the background-transport explainer / enable sheet.
-    @State private var showBackgroundTransport = false
+    /// Expanded state for the Reticulum Network card (Settings).
+    @State private var isReticulumExpanded = false
+    /// Transient busy state for the card's Start/Stop action.
+    @State private var isReticulumActionWorking = false
+    /// Presents the Reticulum Network explainer / first-time consent sheet.
+    @State private var showReticulumExplainer = false
     #endif
     @State private var interfaceRepository: InterfaceRepository?
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
@@ -75,12 +79,12 @@ struct SettingsView: View {
                         // Network
                         networkCard(vm)
 
-                        // Background Transport — the Model B Network Extension VPN
-                        // tunnel that keeps the experimental native node alive when
-                        // the app is backgrounded. It is compiled entirely out of the
-                        // shipping Python product.
+                        // Reticulum Network — the Model B in-NE RNS runtime.
+                        // Manually start/stop it; defaults to enabled on app
+                        // launch. Compiled entirely out of the shipping Python
+                        // product.
                         #if COLUMBA_RUNTIME_MODEL_B
-                        backgroundTransportCard()
+                        reticulumNetworkCard()
                         #endif
 
                         // Delivery & Retrieval
@@ -526,97 +530,109 @@ struct SettingsView: View {
     // card and its NetworkExtension types are absent from the shipping Python app.
 
     @ViewBuilder
-    private func backgroundTransportCard() -> some View {
+    private func reticulumNetworkCard() -> some View {
         if let tunnel = appServices.tunnelManager {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.accentColor)
+            ExpandableSettingsCard(
+                icon: "antenna.radiowaves.left.and.right.circle.fill",
+                title: "Reticulum Network",
+                isExpanded: $isReticulumExpanded
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Manually stop or start the background Reticulum service.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
 
-                    Text("Background Transport")
-                        .font(.headline)
-                        .foregroundStyle(Theme.textPrimary)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(reticulumStatusColor(tunnel))
+                            .frame(width: 8, height: 8)
+                        Text(reticulumStatusLabel(tunnel))
+                            .font(.caption)
+                            .foregroundStyle(reticulumStatusColor(tunnel))
+                    }
 
-                    Spacer()
-
-                    // Quick toggle for users who've already set this up.
-                    // Enabling installs the VPN profile (which also arms
-                    // on-demand connect) before starting, matching the
-                    // explainer screen's Enable path. The full explainer +
-                    // first-time consent lives behind "Learn more & set up".
-                    Toggle("", isOn: Binding(
-                        get: { tunnel.isRunning },
-                        set: { newValue in
-                            Task {
-                                if newValue {
-                                    try? await tunnel.install()
-                                    try? await tunnel.start()
+                    // Stop/Start the in-NE RNS runtime. Stop is non-persistent:
+                    // disable() clears the on-demand connect rule so the tunnel
+                    // actually stays down for this session (a bare stop() would
+                    // let iOS auto-reconnect it shortly after, making Stop feel
+                    // broken). It does NOT touch the backgroundDeliveryEnabled
+                    // flag, so the default-enabled behavior is preserved — on the
+                    // next app launch ensureBackgroundDeliveryTunnel() sees the
+                    // flag still set, re-installs + re-arms on-demand, and brings
+                    // the tunnel back up without prompting. Start reinstalls the
+                    // profile (re-arms on-demand) and reconnects in this session.
+                    Button {
+                        guard !isReticulumActionWorking else { return }
+                        let stopping = tunnel.isRunning
+                        isReticulumActionWorking = true
+                        Task {
+                            defer { isReticulumActionWorking = false }
+                            do {
+                                if stopping {
+                                    try await tunnel.disable()
                                 } else {
-                                    // disable() clears on-demand so iOS won't
-                                    // auto-reconnect (a bare stop() would).
-                                    try? await tunnel.disable()
+                                    try await tunnel.install()
+                                    try await tunnel.start()
                                 }
+                            } catch {
+                                DiagLog.log("[RNS-CARD] start/stop failed: \(error.localizedDescription)")
                             }
                         }
-                    ))
-                    .labelsHidden()
-                    .tint(Theme.accentColor)
-                }
-
-                Text("Keep TCP and LAN connections alive when the app is backgrounded. Enables receiving messages and notifications without opening the app.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(backgroundTransportStatusColor(tunnel))
-                        .frame(width: 8, height: 8)
-
-                    Text(backgroundTransportStatusLabel(tunnel))
-                        .font(.caption)
-                        .foregroundStyle(backgroundTransportStatusColor(tunnel))
-                }
-
-                Button {
-                    showBackgroundTransport = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("Learn more & set up")
-                            .font(.system(size: 15, weight: .medium))
+                    } label: {
+                        Group {
+                            if isReticulumActionWorking {
+                                ProgressView().tint(.white)
+                            } else {
+                                Text(tunnel.isRunning ? "Stop" : "Start")
+                            }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(tunnel.isRunning ? Theme.error : Theme.accentGradient)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                     }
-                    .foregroundStyle(Theme.textPrimary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Theme.backgroundTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                    .disabled(isReticulumActionWorking)
+
+                    Button {
+                        showReticulumExplainer = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("Learn more & set up")
+                                .font(.system(size: 15, weight: .medium))
+                        }
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.backgroundTertiary)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                    }
                 }
             }
-            .padding(16)
-            .glassCard()
-            .sheet(isPresented: $showBackgroundTransport) {
+            .sheet(isPresented: $showReticulumExplainer) {
                 BackgroundTransportView(tunnel: tunnel) {
-                    showBackgroundTransport = false
+                    showReticulumExplainer = false
                 }
             }
         }
     }
 
-    private func backgroundTransportStatusLabel(_ tunnel: TunnelManager) -> String {
+    private func reticulumStatusLabel(_ tunnel: TunnelManager) -> String {
         switch tunnel.status {
         case .connected: return "Running"
-        case .connecting: return "Connecting…"
+        case .connecting: return "Starting…"
         case .reasserting: return "Reconnecting…"
-        case .disconnecting: return "Disconnecting…"
+        case .disconnecting: return "Stopping…"
         case .invalid: return "Not configured"
         case .disconnected: return "Stopped"
         @unknown default: return tunnel.isEnabled ? "Enabled" : "Stopped"
         }
     }
 
-    private func backgroundTransportStatusColor(_ tunnel: TunnelManager) -> Color {
+    private func reticulumStatusColor(_ tunnel: TunnelManager) -> Color {
         switch tunnel.status {
         case .connected: return Theme.success
         case .connecting, .reasserting, .disconnecting: return Theme.warning
