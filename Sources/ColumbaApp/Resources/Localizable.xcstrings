@@ -3174,6 +3174,86 @@
           }
         }
       }
+    },
+    "Not a commercial VPN": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not a commercial VPN"
+          }
+        }
+      }
+    },
+    "Your other apps and web traffic are not proxied or routed through Columba.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your other apps and web traffic are not proxied or routed through Columba."
+          }
+        }
+      }
+    },
+    "The component carries Columba and Reticulum traffic, which uses the relay and interfaces you configured.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The component carries Columba and Reticulum traffic, which uses the relay and interfaces you configured."
+          }
+        }
+      }
+    },
+    "The VPN indicator": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The VPN indicator"
+          }
+        }
+      }
+    },
+    "What it does": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What it does"
+          }
+        }
+      }
+    },
+    "Receives messages, calls, and announcements even when Columba isn't open.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receives messages, calls, and announcements even when Columba isn't open."
+          }
+        }
+      }
+    },
+    "Keeps your TCP and local-network (LAN) links connected to the Reticulum mesh in the background.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keeps your TCP and local-network (LAN) links connected to the Reticulum mesh in the background."
+          }
+        }
+      }
+    },
+    "Uses more battery and data than running only in the foreground.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uses more battery and data than running only in the foreground."
+          }
+        }
+      }
     }
   },
   "version": "1.0"
