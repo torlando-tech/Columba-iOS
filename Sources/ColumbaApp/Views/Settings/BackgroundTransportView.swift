@@ -161,7 +161,7 @@ struct BackgroundTransportView: View {
     // MARK: - Status-Bar Badge Card
 
     private var badgeCard: some View {
-        VPNBadgeExplainer(featureName: "background transport")
+        VPNBadgeExplainer()
             .padding(16)
             .glassCard()
     }

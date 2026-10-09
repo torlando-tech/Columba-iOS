@@ -3164,6 +3164,16 @@
           }
         }
       }
+    },
+    "The indicator means iOS has an active network extension. It stays visible while Reticulum is running.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The indicator means iOS has an active network extension. It stays visible while Reticulum is running."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

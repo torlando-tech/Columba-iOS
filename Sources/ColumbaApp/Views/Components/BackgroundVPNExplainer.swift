@@ -42,11 +42,10 @@ struct VPNNotCommercialExplainer: View {
 }
 
 /// "The VPN badge" explainer — pre-empts the iOS status-bar VPN badge, the thing that
-/// makes the feature look like a traditional VPN. `featureName` fills the trailing
-/// sentence so each surface uses its own term ("background transport" vs "delivery").
+/// makes the feature look like a traditional VPN. The indicator is tied to the in-NE
+/// Reticulum runtime, so the trailing sentence reads "…while Reticulum is running".
 @available(iOS 17.0, macOS 14.0, *)
 struct VPNBadgeExplainer: View {
-    let featureName: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -67,7 +66,7 @@ struct VPNBadgeExplainer: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("The indicator means iOS has an active network extension. It stays visible while \(featureName) is enabled.")
+            Text(String(localized: "The indicator means iOS has an active network extension. It stays visible while Reticulum is running."))
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
