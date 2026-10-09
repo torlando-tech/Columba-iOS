@@ -107,8 +107,17 @@ class _FakeRNS:
         self.log = lambda *a, **k: None
 
 
+_ABSENT = object()
+
+
 def _install_fake_configobj():
-    """Provide RNS.vendor.configobj.ConfigObj for the function's inner import."""
+    """Provide RNS.vendor.configobj.ConfigObj for the function's inner import.
+
+    Returns the prior ``sys.modules`` state for every key it touches so the
+    caller can restore it (see :func:`_restore_fake_configobj`). The CI static
+    harness runs many test modules in one interpreter, so leaving these fakes
+    in ``sys.modules`` would shadow other tests' real imports (P2).
+    """
     mod = types.ModuleType("RNS.vendor.configobj")
 
     class ConfigObj:
@@ -126,14 +135,27 @@ def _install_fake_configobj():
     mod.ConfigObj = ConfigObj
     vendor = types.ModuleType("RNS.vendor")
     vendor.configobj = mod
+    prior = {key: sys.modules.get(key, _ABSENT)
+             for key in ("RNS", "RNS.vendor", "RNS.vendor.configobj")}
     sys.modules.setdefault("RNS", types.ModuleType("RNS"))
     sys.modules.setdefault("RNS.vendor", vendor)
     sys.modules["RNS.vendor.configobj"] = mod
+    return prior
+
+
+def _restore_fake_configobj(prior):
+    """Undo :func:`_install_fake_configobj`: restore each ``sys.modules`` key to
+    its prior value, or remove it if it was absent before the test ran."""
+    for key, old in prior.items():
+        if old is _ABSENT:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = old
 
 
 class HotInterfaceOpsTest(unittest.TestCase):
     def setUp(self):
-        _install_fake_configobj()
+        self._mod_prior = _install_fake_configobj()
         self.ns = _extract_namespace()
         self.transport = _Transport()
         self.rns = _FakeRNS(self.transport)
@@ -142,6 +164,11 @@ class HotInterfaceOpsTest(unittest.TestCase):
         self.ret = FakeReticulum(self.transport, sections=["relay1"])
         self.ns["_state"]["reticulum"] = self.ret
         self.ns["RNS"] = self.rns
+
+    def tearDown(self):
+        # P2: restore sys.modules so these fakes don't shadow other tests'
+        # imports in the CI static harness (one interpreter, many modules).
+        _restore_fake_configobj(self._mod_prior)
 
     # --- add_interface ------------------------------------------------------
 

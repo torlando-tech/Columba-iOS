@@ -3318,14 +3318,23 @@ public final class AppServices {
         DiagLog.log("[RNS-HOT] applyInterfaceChanges: +\(added.count) -\(removed.count) ~\(changed.count)")
 
         // Track whether every hot op actually went live (Model B uses this to
-        // decide whether to fall back to a full NE restart).
+        // decide whether to fall back to a full NE restart) AND build the
+        // accurate post-op live set. We NEVER write `pythonInterfaceEntities =
+        // freshById` optimistically: that would claim a failed attach is already
+        // live, so the next save's diff (desired vs this set) skips it and can
+        // report success without the interface ever being attached. Instead each
+        // op updates `newLive` only when it actually succeeded; the whole desired
+        // set is adopted only after a successful restart re-seeds it.
         var allOk = true
+        var newLive = live
 
         // 2. Remove dropped interfaces, and the OLD form of edited ones.
         for entity in removed {
             let ok = await hotRemoveInterface(entity, backend: backend)
             if !ok {
                 allOk = false
+            } else {
+                newLive[entity.id] = nil
             }
         }
         for entity in changed {
@@ -3333,6 +3342,11 @@ public final class AppServices {
                 let ok = await hotRemoveInterface(old, backend: backend)
                 if !ok {
                     allOk = false
+                } else {
+                    // Old form is gone; the NEW form is added in step 3. Mark it
+                    // absent now so that if the re-add below also fails, the id
+                    // is left dropped rather than pinned to the stale old form.
+                    newLive[entity.id] = nil
                 }
             }
         }
@@ -3342,11 +3356,17 @@ public final class AppServices {
             let ok = await hotAddInterface(entity, backend: backend)
             if !ok {
                 allOk = false
+                // Left at its step-2 state: a plain add stays absent; an edited
+                // one whose old form was already removed stays dropped.
+            } else {
+                newLive[entity.id] = entity
             }
         }
 
-        // 4. Keep the status-poll's matching set in sync with what's live.
-        pythonInterfaceEntities = freshById
+        // 4. Keep the status-poll's matching set in sync with what's ACTUALLY
+        // live (only the ops that succeeded), not with the desired set. A failed
+        // op stays out of `newLive` so the next save re-diffs it and retries.
+        pythonInterfaceEntities = newLive
 
         #if COLUMBA_RUNTIME_MODEL_B
         if BackendPreference.modelB {
@@ -3369,8 +3389,16 @@ public final class AppServices {
                 DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
                 switch outcome {
                 case .applied:
+                    // A successful in-process restart re-ran initializeUnlocked,
+                    // which re-seeded pythonInterfaceEntities to the full fresh
+                    // set - every change is live, so the optimistic value is now
+                    // correct.
                     return .applied
                 case .requiresRelaunch, .skipped:
+                    // The old node kept running (e.g. an AutoInterface blocks a
+                    // same-process re-init). pythonInterfaceEntities still holds
+                    // the accurate partial set, so the next save re-diffs and
+                    // retries the interfaces that never went live.
                     return .persistedRequiresRelaunch
                 case .failed:
                     return .restartFailed
