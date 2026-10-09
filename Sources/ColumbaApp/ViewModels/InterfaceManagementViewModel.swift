@@ -61,6 +61,12 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// build they're on. Auto-dismissing, longer than a success toast.
     public var noticeMessage: String?
 
+    /// Generation counter for `showNotice`: each call bumps it, and a
+    /// dismissal timer only clears the banner if the generation still matches
+    /// its own snapshot - so an earlier identical notice's timer can't clear a
+    /// later one (see showNotice). Not UI state, never observed directly.
+    private var noticeGeneration: Int = 0
+
     /// Local Network permission + carrier health for the Auto Discovery
     /// interface (Python backend only; the Model B node owns its sockets in
     /// the NE and has no such state). nil = not applicable or not yet
@@ -1263,13 +1269,19 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
     /// `requiresExplicitApply` - the relaunch instruction is state the user
     /// must see in every flavor (their change is saved but not live).
     private func showNotice(_ message: String) {
+        // Bump a generation token so a dismissal timer started by an EARLIER
+        // identical notice can't clear a LATER one: if two edits within 8s
+        // both produce "Saved - applies on the next app relaunch", the first
+        // timer must not dismiss the second before the user can read it.
+        noticeGeneration &+= 1
+        let generation = noticeGeneration
         noticeMessage = message
         // Auto-dismiss after 8 seconds (longer than a success toast - this is
         // information the user may need to act on).
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 8_000_000_000)
-            if self.noticeMessage == message {
-                self.noticeMessage = nil
+            if noticeGeneration == generation {
+                noticeMessage = nil
             }
         }
     }
