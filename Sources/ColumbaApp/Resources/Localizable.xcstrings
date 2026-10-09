@@ -3235,12 +3235,12 @@
         }
       }
     },
-    "Keeps your TCP and local-network (LAN) links connected to the Reticulum mesh in the background.": {
+    "Keeps you connected to the Reticulum mesh in the background.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Keeps your TCP and local-network (LAN) links connected to the Reticulum mesh in the background."
+            "value": "Keeps you connected to the Reticulum mesh in the background."
           }
         }
       }
