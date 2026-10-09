@@ -563,7 +563,7 @@ struct SettingsView: View {
                     // profile (re-arms on-demand) and reconnects in this session.
                     Button {
                         guard !isReticulumActionWorking else { return }
-                        let stopping = tunnel.isRunning
+                        let stopping = reticulumIsOn(tunnel)
                         isReticulumActionWorking = true
                         Task {
                             defer { isReticulumActionWorking = false }
@@ -583,14 +583,14 @@ struct SettingsView: View {
                             if isReticulumActionWorking {
                                 ProgressView().tint(.white)
                             } else {
-                                Text(tunnel.isRunning ? String(localized: "Stop") : String(localized: "Start"))
+                                Text(reticulumIsOn(tunnel) ? String(localized: "Stop") : String(localized: "Start"))
                             }
                         }
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(tunnel.isRunning
+                        .background(reticulumIsOn(tunnel)
                             ? LinearGradient(colors: [Theme.error], startPoint: .top, endPoint: .bottom)
                             : Theme.accentGradient)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
@@ -641,6 +641,24 @@ struct SettingsView: View {
         case .invalid: return Theme.error
         case .disconnected: return Theme.textSecondary
         @unknown default: return Theme.textSecondary
+        }
+    }
+
+    /// Whether the card's action button should present the "Stop" (disable)
+    /// affordance. Mirrors the explainer sheet's `isEnabledState`: the tunnel
+    /// counts as "on" whenever it is connected, mid-connect, reasserting, or
+    /// tearing down - so a user can cancel a slow connect / in-progress stop
+    /// instead of being stuck on "Start". (A bare `isRunning` is only true for
+    /// `.connected`, which hides the stop action during `.connecting` /
+    /// `.reasserting` - the gap PR #217's removed explainer button used to cover.)
+    private func reticulumIsOn(_ tunnel: TunnelManager) -> Bool {
+        switch tunnel.status {
+        case .connected, .connecting, .reasserting, .disconnecting:
+            return true
+        case .disconnected, .invalid:
+            return false
+        @unknown default:
+            return tunnel.isEnabled
         }
     }
     #endif
