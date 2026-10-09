@@ -22,35 +22,34 @@ import SwiftUI
 struct VPNNotCommercialExplainer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VPNExplainerUI.sectionHeader(icon: "lock.shield.fill", title: "Not a commercial VPN")
+            VPNExplainerUI.sectionHeader(icon: "lock.shield.fill", title: String(localized: "Not a commercial VPN"))
 
-            Text("Columba uses Apple's VPN system to keep its own network component available in the background. It is not a commercial VPN service.")
+            Text(String(localized: "Columba uses Apple's VPN system to keep its own network component available in the background. It is not a commercial VPN service."))
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VPNExplainerUI.explainerRow(
                 icon: "checkmark.shield.fill",
-                text: "Your other apps and web traffic are not proxied or routed through Columba."
+                text: String(localized: "Your other apps and web traffic are not proxied or routed through Columba.")
             )
             VPNExplainerUI.explainerRow(
                 icon: "iphone",
-                text: "The component carries Columba and Reticulum traffic, which may use the relay and interfaces you configured."
+                text: String(localized: "The component carries Columba and Reticulum traffic, which uses the relay and interfaces you configured.")
             )
         }
     }
 }
 
 /// "The VPN badge" explainer — pre-empts the iOS status-bar VPN badge, the thing that
-/// makes the feature look like a traditional VPN. `featureName` fills the trailing
-/// sentence so each surface uses its own term ("background transport" vs "delivery").
+/// makes the feature look like a traditional VPN. The indicator is tied to the in-NE
+/// Reticulum runtime, so the trailing sentence reads "…while Reticulum is running".
 @available(iOS 17.0, macOS 14.0, *)
 struct VPNBadgeExplainer: View {
-    let featureName: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VPNExplainerUI.sectionHeader(icon: "rectangle.topthird.inset.filled", title: "The VPN indicator")
+            VPNExplainerUI.sectionHeader(icon: "rectangle.topthird.inset.filled", title: String(localized: "The VPN indicator"))
 
             HStack(spacing: 10) {
                 Text("VPN")
@@ -61,13 +60,13 @@ struct VPNBadgeExplainer: View {
                     .background(Theme.accentColor)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                Text("While this is on, iOS shows a VPN indicator.")
+                Text(String(localized: "While this is on, iOS shows a VPN indicator."))
                     .font(.subheadline)
                     .foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("The indicator means iOS has an active network extension. It stays visible while \(featureName) is enabled.")
+            Text(String(localized: "The indicator means iOS has an active network extension. It stays visible while Reticulum is running."))
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -81,7 +80,7 @@ struct VPNBadgeExplainer: View {
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor
 enum VPNExplainerUI {
-    static func sectionHeader(icon: String, title: LocalizedStringKey) -> some View {
+    static func sectionHeader(icon: String, title: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
@@ -93,7 +92,7 @@ enum VPNExplainerUI {
         }
     }
 
-    static func explainerRow(icon: String, text: LocalizedStringKey) -> some View {
+    static func explainerRow(icon: String, text: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 16))

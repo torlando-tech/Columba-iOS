@@ -157,11 +157,11 @@ struct BackgroundDeliveryPage: View {
             .explainerCardStyle()
     }
 
-    /// "The VPN badge" note, shared with settings via `VPNBadgeExplainer`. The feature
-    /// name reads "background delivery" to match this flow (settings says "background
-    /// transport").
+    /// "The VPN badge" note, shared with settings via `VPNBadgeExplainer`. The
+    /// indicator text reads "…while Reticulum is running" (the badge is tied to
+    /// the in-NE Reticulum runtime on every surface).
     private var badgeCard: some View {
-        VPNBadgeExplainer(featureName: "background delivery")
+        VPNBadgeExplainer()
             .explainerCardStyle()
     }
 }

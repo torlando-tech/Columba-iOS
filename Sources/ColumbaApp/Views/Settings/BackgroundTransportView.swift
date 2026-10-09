@@ -139,19 +139,15 @@ struct BackgroundTransportView: View {
 
     private var explainerCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VPNExplainerUI.sectionHeader(icon: "questionmark.circle", title: "What it does")
+            VPNExplainerUI.sectionHeader(icon: "questionmark.circle", title: String(localized: "What it does"))
 
             VPNExplainerUI.explainerRow(
                 icon: "tray.and.arrow.down.fill",
-                text: "Receives messages, calls, and announcements even when Columba isn't open."
+                text: String(localized: "Receives messages, calls, and announcements even when Columba isn't open.")
             )
             VPNExplainerUI.explainerRow(
                 icon: "point.3.connected.trianglepath.dotted",
-                text: "Keeps your TCP and local-network (LAN) links connected to the Reticulum mesh in the background."
-            )
-            VPNExplainerUI.explainerRow(
-                icon: "bolt.fill",
-                text: "Uses more battery and data than running only in the foreground."
+                text: String(localized: "Keeps you connected to the Reticulum network in the background.")
             )
         }
         .padding(16)
@@ -161,7 +157,7 @@ struct BackgroundTransportView: View {
     // MARK: - Status-Bar Badge Card
 
     private var badgeCard: some View {
-        VPNBadgeExplainer(featureName: "background transport")
+        VPNBadgeExplainer()
             .padding(16)
             .glassCard()
     }

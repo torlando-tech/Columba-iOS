@@ -3054,6 +3054,196 @@
           }
         }
       }
+    },
+    "Running": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Running"
+          }
+        }
+      }
+    },
+    "Starting…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starting…"
+          }
+        }
+      }
+    },
+    "Reconnecting…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reconnecting…"
+          }
+        }
+      }
+    },
+    "Stopping…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopping…"
+          }
+        }
+      }
+    },
+    "Not configured": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not configured"
+          }
+        }
+      }
+    },
+    "Stopped": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopped"
+          }
+        }
+      }
+    },
+    "Reticulum Network": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reticulum Network"
+          }
+        }
+      }
+    },
+    "Manually stop or start the background Reticulum service.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manually stop or start the background Reticulum service."
+          }
+        }
+      }
+    },
+    "Start": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start"
+          }
+        }
+      }
+    },
+    "Stop": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop"
+          }
+        }
+      }
+    },
+    "Learn more & set up": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Learn more & set up"
+          }
+        }
+      }
+    },
+    "The indicator means iOS has an active network extension. It stays visible while Reticulum is running.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The indicator means iOS has an active network extension. It stays visible while Reticulum is running."
+          }
+        }
+      }
+    },
+    "Not a commercial VPN": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not a commercial VPN"
+          }
+        }
+      }
+    },
+    "Your other apps and web traffic are not proxied or routed through Columba.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your other apps and web traffic are not proxied or routed through Columba."
+          }
+        }
+      }
+    },
+    "The component carries Columba and Reticulum traffic, which uses the relay and interfaces you configured.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The component carries Columba and Reticulum traffic, which uses the relay and interfaces you configured."
+          }
+        }
+      }
+    },
+    "The VPN indicator": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The VPN indicator"
+          }
+        }
+      }
+    },
+    "What it does": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What it does"
+          }
+        }
+      }
+    },
+    "Receives messages, calls, and announcements even when Columba isn't open.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receives messages, calls, and announcements even when Columba isn't open."
+          }
+        }
+      }
+    },
+    "Keeps you connected to the Reticulum network in the background.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keeps you connected to the Reticulum network in the background."
+          }
+        }
+      }
     }
   },
   "version": "1.0"
