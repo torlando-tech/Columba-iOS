@@ -534,11 +534,11 @@ struct SettingsView: View {
         if let tunnel = appServices.tunnelManager {
             ExpandableSettingsCard(
                 icon: "antenna.radiowaves.left.and.right.circle.fill",
-                title: "Reticulum Network",
+                title: String(localized: "Reticulum Network"),
                 isExpanded: $isReticulumExpanded
             ) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Manually stop or start the background Reticulum service.")
+                    Text(String(localized: "Manually stop or start the background Reticulum service."))
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
 
@@ -583,7 +583,7 @@ struct SettingsView: View {
                             if isReticulumActionWorking {
                                 ProgressView().tint(.white)
                             } else {
-                                Text(tunnel.isRunning ? "Stop" : "Start")
+                                Text(tunnel.isRunning ? String(localized: "Stop") : String(localized: "Start"))
                             }
                         }
                         .font(.subheadline.weight(.semibold))
@@ -603,7 +603,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "info.circle")
                                 .font(.system(size: 14, weight: .medium))
-                            Text("Learn more & set up")
+                            Text(String(localized: "Learn more & set up"))
                                 .font(.system(size: 15, weight: .medium))
                         }
                         .foregroundStyle(Theme.textPrimary)
@@ -624,13 +624,13 @@ struct SettingsView: View {
 
     private func reticulumStatusLabel(_ tunnel: TunnelManager) -> String {
         switch tunnel.status {
-        case .connected: return "Running"
-        case .connecting: return "Starting…"
-        case .reasserting: return "Reconnecting…"
-        case .disconnecting: return "Stopping…"
-        case .invalid: return "Not configured"
-        case .disconnected: return "Stopped"
-        @unknown default: return tunnel.isEnabled ? "Enabled" : "Stopped"
+        case .connected: return String(localized: "Running")
+        case .connecting: return String(localized: "Starting…")
+        case .reasserting: return String(localized: "Reconnecting…")
+        case .disconnecting: return String(localized: "Stopping…")
+        case .invalid: return String(localized: "Not configured")
+        case .disconnected: return String(localized: "Stopped")
+        @unknown default: return tunnel.isEnabled ? String(localized: "Enabled") : String(localized: "Stopped")
         }
     }
 
