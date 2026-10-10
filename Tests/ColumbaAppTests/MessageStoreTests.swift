@@ -59,6 +59,43 @@ final class MessageStoreTests: XCTestCase {
         XCTAssertEqual(pk, ["message_id"], "messages PK changed")
         let fk = try foreignKeyTables(in: pool, "messages")
         XCTAssertEqual(fk, ["conversations"], "messages FK target changed")
+
+        // Column types are part of the frozen contract too: a .blob <-> .text
+        // drift would silently corrupt cross-process data the NE writes.
+        let types = try columnTypes(in: pool, "messages")
+        let expectedTypes: [String: String] = [
+            "message_id": "BLOB", "conversation_hash": "BLOB", "destination_hash": "BLOB",
+            "source_hash": "BLOB", "signature": "BLOB", "timestamp": "DOUBLE", "title": "BLOB",
+            "content": "BLOB", "fields": "BLOB", "stamp": "BLOB", "state": "INTEGER",
+            "method": "INTEGER", "delivery_attempts": "INTEGER", "progress": "DOUBLE",
+            "incoming": "INTEGER", "rssi": "DOUBLE", "snr": "DOUBLE", "q": "DOUBLE",
+            "ratchet_id": "BLOB", "packed_lxmf": "BLOB", "created_at": "DOUBLE",
+            "updated_at": "DOUBLE", "receiving_interface": "TEXT", "reply_to_id": "TEXT",
+            "reactions_json": "TEXT",
+        ]
+        XCTAssertEqual(types, expectedTypes, "messages column types drifted")
+
+        // Required (NOT NULL) columns: the NE writer must satisfy these on every
+        // INSERT, so a drift here breaks inbound delivery.
+        let notNull = try notNullColumns(in: pool, "messages")
+        let expectedNotNull: Set<String> = [
+            "message_id", "conversation_hash", "destination_hash", "source_hash",
+            "signature", "timestamp", "content", "state", "method", "incoming",
+            "packed_lxmf", "created_at", "updated_at",
+        ]
+        XCTAssertEqual(Set(notNull), expectedNotNull, "messages NOT NULL set drifted")
+
+        // FK columns + delete behavior: deleting a conversation must cascade to
+        // its messages. A name-only check (above) would still pass if .cascade
+        // were dropped, while breaking conversation deletion.
+        let fkDetails = try foreignKeyDetails(in: pool, "messages")
+        XCTAssertEqual(fkDetails.count, 1, "messages FK count changed")
+        if let fk = fkDetails.first {
+            XCTAssertEqual(fk.0, "conversations", "messages FK target table drifted")
+            XCTAssertEqual(fk.1, "conversation_hash", "messages FK from-column drifted")
+            XCTAssertEqual(fk.2, "destination_hash", "messages FK to-column drifted")
+            XCTAssertEqual(fk.3, "CASCADE", "messages FK on_delete drifted (cascade lost)")
+        }
     }
 
     func testConversationSchemaMatchesNEWriterContract() throws {
@@ -75,6 +112,20 @@ final class MessageStoreTests: XCTestCase {
         XCTAssertEqual(Set(columns), expected,
                        "conversations schema drifted from the NE writer contract")
         XCTAssertEqual(try primaryKeyColumns(in: pool, "conversations"), ["destination_hash"])
+
+        // Column types + NOT NULL: same cross-process contract as messages.
+        let types = try columnTypes(in: pool, "conversations")
+        let expectedTypes: [String: String] = [
+            "destination_hash": "BLOB", "display_name": "TEXT", "last_message_timestamp": "DOUBLE",
+            "last_message_preview": "TEXT", "unread_count": "INTEGER", "is_unread": "INTEGER",
+            "created_at": "DOUBLE", "updated_at": "DOUBLE", "is_favorite": "INTEGER",
+            "icon_name": "TEXT", "icon_fg_color": "TEXT", "icon_bg_color": "TEXT",
+            "is_pinned": "INTEGER",
+        ]
+        XCTAssertEqual(types, expectedTypes, "conversations column types drifted")
+        let notNull = try notNullColumns(in: pool, "conversations")
+        XCTAssertEqual(Set(notNull), ["destination_hash", "created_at", "updated_at"],
+                       "conversations NOT NULL set drifted")
     }
 
     func testIndexesAreFrozen() throws {
@@ -403,6 +454,45 @@ private func foreignKeyTables(in pool: DatabasePool, _ table: String) throws -> 
     try pool.read { db in
         let rows = try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(\(table))")
         return rows.compactMap { $0["table"] as? String }
+    }
+}
+private func columnTypes(in pool: DatabasePool, _ table: String) throws -> [String: String] {
+    // `PRAGMA table_info` `type` is the declared column type (BLOB/TEXT/INTEGER/
+    // REAL, uppercase). The frozen contract pins it per-column.
+    try pool.read { db in
+        let rows = try Row.fetchAll(db, sql: "SELECT name, type FROM pragma_table_info('\(table)')")
+        var result: [String: String] = [:]
+        for row in rows { result[row["name"] as String] = row["type"] as? String }
+        return result
+    }
+}
+private func notNullColumns(in pool: DatabasePool, _ table: String) throws -> [String] {
+    // Filtering happens in SQLite (`WHERE notnull = 1`), avoiding GRDB's
+    // `Row` pragma-value bridging for the 0/1 `notnull` flag.
+    try pool.read { db in
+        try String.fetchAll(
+            db,
+            sql: "SELECT name FROM pragma_table_info('\(table)') WHERE \"notnull\" = 1"
+        )
+    }
+}
+private func foreignKeyDetails(
+    in pool: DatabasePool, _ table: String
+) throws -> [(String, String, String, String)] {
+    // Full FK contract: referenced table, from-column, to-column, and on_delete
+    // behavior (CASCADE/NO ACTION/... uppercase). A name-only check would miss a
+    // dropped `.cascade` that breaks conversation deletion.
+    try pool.read { db in
+        let rows = try Row.fetchAll(
+            db, sql: "SELECT \"table\", \"from\", \"to\", \"on_delete\" FROM pragma_foreign_key_list('\(table)')"
+        )
+        return rows.compactMap { row in
+            guard let t = row["table"] as? String,
+                  let from = row["from"] as? String,
+                  let to = row["to"] as? String,
+                  let onDelete = row["on_delete"] as? String else { return nil }
+            return (t, from, to, onDelete)
+        }
     }
 }
 private func indexNames(in pool: DatabasePool) throws -> [String] {
