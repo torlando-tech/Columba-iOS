@@ -161,11 +161,19 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         repository = (
             ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
         ).read_text()
-        self.assertIn("if message.method == .unknown", repository)
-        self.assertIn("record.method = 0", repository)
+        # The Android-parity store re-scope moved the unknown-method sentinel and
+        # the atomic save from `saveMessage` into the mappers + `store.saveMessage`.
+        # The regression this guard targets is unchanged: an inbound message whose
+        # effective transport is unknown must persist as raw sentinel byte 0 (the
+        # GRDB enum cannot represent unknown) and map back to `.unknown` on read,
+        # and the save must be atomic (conversation + message in one write).
+        self.assertIn("case .unknown:       return 0", repository)
+        self.assertIn(
+            "guard let m = GRDBDeliveryMethod(rawValue: raw) else { return .unknown }",
+            repository,
+        )
+        self.assertIn("try await store.saveMessage(row)", repository)
         self.assertIn("try await replacementPool.write", repository)
-        self.assertIn("try Self.updateConversation(for: mapped, in: db)", repository)
-        self.assertIn("try record.save(db)", repository)
         bubble = MESSAGE_BUBBLE.read_text()
         self.assertIn("case LXDeliveryMethod.paper.rawValue:", bubble)
         self.assertIn('self.deliveryMethod = "paper"', bubble)

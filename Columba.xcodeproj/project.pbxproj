@@ -47,6 +47,10 @@
 		024 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* AppServices.swift */; };
 		LNP003 /* LocalNetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNP002 /* LocalNetworkProbe.swift */; };
 		025 /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
+		MSGSTOREBF /* MessageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGSTOREREF /* MessageStore.swift */; };
+		MSGDBBF /* GRDBVocabulary.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGDBREF /* GRDBVocabulary.swift */; };
+		MSCVRBF /* ConversationRecordStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSCVRREF /* ConversationRecordStore.swift */; };
+		MSGROWBF /* MessageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGROWREF /* MessageRow.swift */; };
 		CHF004 /* CallHistoryFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHF003 /* CallHistoryFormatting.swift */; };
 		CHM002 /* CallHistoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHM001 /* CallHistoryModels.swift */; };
 		CHR002 /* CallHistoryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHR001 /* CallHistoryRepository.swift */; };
@@ -291,6 +295,7 @@
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
 		RQP02 /* ReplyQuoteParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RQP01 /* ReplyQuoteParityTests.swift */; };
 		DRAFT002 /* DraftMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DRAFT001 /* DraftMessageTests.swift */; };
+		MSTST002 /* MessageStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSTST001 /* MessageStoreTests.swift */; };
 		DIAGROT002 /* DiagLogRotationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DIAGROT001 /* DiagLogRotationTests.swift */; };
 		DA143A000000000000000002 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
 		DA143A000000000000000003 /* DraftAutosaveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA143A000000000000000001 /* DraftAutosaveController.swift */; };
@@ -328,6 +333,10 @@
 		C2487934101CA21C68F1F458 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C41F9E953D0445F3C34AE7 /* PythonRuntime.swift */; };
 		C4F369EC98C2B903701CE74A /* SyncStatusBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B5525A88EBCEAF05E9DE3F /* SyncStatusBottomSheet.swift */; };
 		C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* MessageRepository.swift */; };
+		MSGSTOREBFMB /* MessageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGSTOREREF /* MessageStore.swift */; };
+		MSGDBBFMB /* GRDBVocabulary.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGDBREF /* GRDBVocabulary.swift */; };
+		MSCVRBFMB /* ConversationRecordStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSCVRREF /* ConversationRecordStore.swift */; };
+		MSGROWBFMB /* MessageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGROWREF /* MessageRow.swift */; };
 		CHF005 /* CallHistoryFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHF003 /* CallHistoryFormatting.swift */; };
 		CHM003 /* CallHistoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHM001 /* CallHistoryModels.swift */; };
 		CHR003 /* CallHistoryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHR001 /* CallHistoryRepository.swift */; };
@@ -533,6 +542,7 @@
 		ACT01 /* AnnounceClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnounceClassificationTests.swift; sourceTree = "<group>"; };
 		RQP01 /* ReplyQuoteParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyQuoteParityTests.swift; sourceTree = "<group>"; };
 		DRAFT001 /* DraftMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftMessageTests.swift; sourceTree = "<group>"; };
+		MSTST001 /* MessageStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessageStoreTests.swift; path = MessageStoreTests.swift; sourceTree = "<group>"; };
 		DIAGROT001 /* DiagLogRotationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagLogRotationTests.swift; sourceTree = "<group>"; };
 		DA143A000000000000000001 /* DraftAutosaveController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftAutosaveController.swift; sourceTree = "<group>"; };
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TCPClientWizardViewModel.swift; sourceTree = "<group>"; };
@@ -608,6 +618,10 @@
 		F024 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
 		LNP002 /* LocalNetworkProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetworkProbe.swift; sourceTree = "<group>"; };
 		F025 /* MessageRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRepository.swift; sourceTree = "<group>"; };
+		MSGSTOREREF /* MessageStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessageStore.swift; path = MessageStore/MessageStore.swift; sourceTree = "<group>"; };
+		MSGDBREF /* GRDBVocabulary.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GRDBVocabulary.swift; path = MessageStore/GRDBVocabulary.swift; sourceTree = "<group>"; };
+		MSCVRREF /* ConversationRecordStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConversationRecordStore.swift; path = MessageStore/ConversationRecordStore.swift; sourceTree = "<group>"; };
+		MSGROWREF /* MessageRow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessageRow.swift; path = MessageStore/MessageRow.swift; sourceTree = "<group>"; };
 		CHF003 /* CallHistoryFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryFormatting.swift; sourceTree = "<group>"; };
 		CHM001 /* CallHistoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryModels.swift; sourceTree = "<group>"; };
 		CHR001 /* CallHistoryRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHistoryRepository.swift; sourceTree = "<group>"; };
@@ -1142,6 +1156,10 @@
 				E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */,
 				BKF002 /* BackendFactory.swift */,
 				F025 /* MessageRepository.swift */,
+				MSGSTOREREF /* MessageStore.swift */,
+				MSGDBREF /* GRDBVocabulary.swift */,
+				MSCVRREF /* ConversationRecordStore.swift */,
+				MSGROWREF /* MessageRow.swift */,
 				CHF003 /* CallHistoryFormatting.swift */,
 				CHM001 /* CallHistoryModels.swift */,
 				CHR001 /* CallHistoryRepository.swift */,
@@ -1201,6 +1219,7 @@
 				ACT01 /* AnnounceClassificationTests.swift */,
 				RQP01 /* ReplyQuoteParityTests.swift */,
 				DRAFT001 /* DraftMessageTests.swift */,
+				MSTST001 /* MessageStoreTests.swift */,
 				DIAGROT001 /* DiagLogRotationTests.swift */,
 				EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */,
 				RDRF01 /* ProxyDrainRaceTests.swift */,
@@ -1672,6 +1691,10 @@
 				369F5A4E725880AF2972AFD2 /* AppServices.swift in Sources */,
 				D591F21C232FBE2AF23D50F5 /* BackendFactory.swift in Sources */,
 				C60C9313A6AFB95FCFB8969A /* MessageRepository.swift in Sources */,
+				MSGSTOREBF /* MessageStore.swift in Sources */,
+				MSGDBBF /* GRDBVocabulary.swift in Sources */,
+				MSCVRBF /* ConversationRecordStore.swift in Sources */,
+				MSGROWBF /* MessageRow.swift in Sources */,
 				CHF005 /* CallHistoryFormatting.swift in Sources */,
 				CHM003 /* CallHistoryModels.swift in Sources */,
 				CHR003 /* CallHistoryRepository.swift in Sources */,
@@ -1894,6 +1917,10 @@
 				099A0C66CE2C1444E52912D0 /* DiscoveredInterfacesViewModel.swift in Sources */,
 				BKF001 /* BackendFactory.swift in Sources */,
 				025 /* MessageRepository.swift in Sources */,
+				MSGSTOREBFMB /* MessageStore.swift in Sources */,
+				MSGDBBFMB /* GRDBVocabulary.swift in Sources */,
+				MSCVRBFMB /* ConversationRecordStore.swift in Sources */,
+				MSGROWBFMB /* MessageRow.swift in Sources */,
 				CHF004 /* CallHistoryFormatting.swift in Sources */,
 				CHM002 /* CallHistoryModels.swift in Sources */,
 				CHR002 /* CallHistoryRepository.swift in Sources */,
@@ -2021,6 +2048,7 @@
 				ACT02 /* AnnounceClassificationTests.swift in Sources */,
 				RQP02 /* ReplyQuoteParityTests.swift in Sources */,
 				DRAFT002 /* DraftMessageTests.swift in Sources */,
+				MSTST002 /* MessageStoreTests.swift in Sources */,
 				DIAGROT002 /* DiagLogRotationTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* IncomingMessageSizeLimitTests.swift in Sources */,

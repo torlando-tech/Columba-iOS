@@ -1950,7 +1950,7 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     // MARK: Conversation mapping (Date<-Double, String<-String?)
 
     func testMapConversationFullFields() {
-        var c = LXMFSwift.ConversationRecord(
+        var c = ConversationStoreRow(
             destinationHash: Data([0x01, 0x02, 0x03]),
             displayName: "Alice",
             lastMessageTimestamp: 1_700_000_000.5,
@@ -1980,7 +1980,7 @@ final class MessageRepositoryAdapterTests: XCTestCase {
 
     func testMapConversationNilDisplayNameBecomesEmptyString() {
         // displayName is String? on the GRDB side, non-optional String on RNSAPI.
-        let c = LXMFSwift.ConversationRecord(
+        let c = ConversationStoreRow(
             destinationHash: Data([0xAB]),
             displayName: nil,
             lastMessageTimestamp: 0,
@@ -1999,14 +1999,14 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     // MARK: State enum <- UInt8
 
     func testMapStateSemantic() {
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.generating), .draft)
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.outbound), .outbound)
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.sending), .sending)
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.sent), .sent)
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.delivered), .delivered)
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.rejected), .failed)
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.cancelled), .failed)
-        XCTAssertEqual(MessageRepository.mapState(LXMFSwift.LXMessageState.failed), .failed)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.generating), .draft)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.outbound), .outbound)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.sending), .sending)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.sent), .sent)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.delivered), .delivered)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.rejected), .failed)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.cancelled), .failed)
+        XCTAssertEqual(MessageRepository.mapState(GRDBState.failed), .failed)
     }
 
     func testMapStateFromRawByte() {
@@ -2020,8 +2020,8 @@ final class MessageRepositoryAdapterTests: XCTestCase {
 
     func testMapStateToGRDBRoundTrip() {
         // received is inbound-only on RNSAPI; GRDB has no peer → delivered.
-        XCTAssertEqual(MessageRepository.mapStateToGRDB(.received), .delivered)
-        XCTAssertEqual(MessageRepository.mapStateToGRDB(.draft), .generating)
+        XCTAssertEqual(MessageRepository.mapStateToGRDB(.received), GRDBState.delivered.rawValue)
+        XCTAssertEqual(MessageRepository.mapStateToGRDB(.draft), GRDBState.generating.rawValue)
         for s: RNSAPI.LXMessageState in [.outbound, .sending, .sent, .delivered, .failed] {
             XCTAssertEqual(MessageRepository.mapState(MessageRepository.mapStateToGRDB(s)), s,
                            "round-trip should be stable for \(s)")
@@ -2031,10 +2031,10 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     // MARK: Method enum <- UInt8
 
     func testMapMethodSemantic() {
-        XCTAssertEqual(MessageRepository.mapMethod(LXMFSwift.LXDeliveryMethod.opportunistic), .opportunistic)
-        XCTAssertEqual(MessageRepository.mapMethod(LXMFSwift.LXDeliveryMethod.direct), .direct)
-        XCTAssertEqual(MessageRepository.mapMethod(LXMFSwift.LXDeliveryMethod.propagated), .propagated)
-        XCTAssertEqual(MessageRepository.mapMethod(LXMFSwift.LXDeliveryMethod.paper), .paper)
+        XCTAssertEqual(MessageRepository.mapMethod(GRDBDeliveryMethod.opportunistic), .opportunistic)
+        XCTAssertEqual(MessageRepository.mapMethod(GRDBDeliveryMethod.direct), .direct)
+        XCTAssertEqual(MessageRepository.mapMethod(GRDBDeliveryMethod.propagated), .propagated)
+        XCTAssertEqual(MessageRepository.mapMethod(GRDBDeliveryMethod.paper), .paper)
     }
 
     func testMapMethodFromRawByte() {
@@ -2047,7 +2047,7 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     }
 
     func testMapMethodToGRDBUnknownDefaultsOpportunistic() {
-        XCTAssertEqual(MessageRepository.mapMethodToGRDB(.unknown), .opportunistic)
+        XCTAssertEqual(MessageRepository.mapMethodToGRDB(.unknown), 0)
         for m: RNSAPI.LXDeliveryMethod in [.opportunistic, .direct, .propagated, .paper] {
             XCTAssertEqual(MessageRepository.mapMethod(MessageRepository.mapMethodToGRDB(m)), m,
                            "round-trip should be stable for \(m)")
@@ -2061,31 +2061,25 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     /// so seed it from a no-identity LXMFSwift.LXMessage (with `packed` set
     /// manually so the init's `guard packed != nil` passes), then set the
     /// columns that `init(from:)` doesn't take from the message.
-    private func makeGRDBRecord() throws -> LXMFSwift.MessageRecord {
-        var msg = LXMFSwift.LXMessage(
-            destinationHash: Data([0xDE, 0xAD, 0x01]),  // arbitrary
-            sourceHash: Data([0x50, 0x52, 0x43]),
-            content: Data("body".utf8),
-            title: Data("subj".utf8),
-            timestamp: 1_650_000_000.25,
-            state: .delivered,
-            incoming: true
+    private func makeGRDBRecord() -> MessageRow {
+        // Seed an app-owned row directly (no wire-type constructor). incoming so
+        // conversationHash == sourceHash; packedLxmf carries the field map.
+        let dest = Data([0xDE, 0xAD, 0x01])
+        let src = Data([0x50, 0x52, 0x43])
+        let id = Data([0xAA, 0xBB, 0xCC])
+        let now = 1_650_000_000.25
+        let fields = [LXMFSwift.LXMessage.FIELD_IMAGE: ["png", Data([0x89, 0x50])] as [Any]]
+        let packed = LxmfFieldCodec.pack(fields)
+        return MessageRow(
+            messageId: id, conversationHash: src, destinationHash: dest, sourceHash: src,
+            signature: Data(), timestamp: now, title: Data("subj".utf8), content: Data("body".utf8),
+            fields: nil, stamp: nil, state: GRDBState.delivered.rawValue,
+            method: GRDBDeliveryMethod.direct.rawValue,
+            deliveryAttempts: 0, progress: 0.0, incoming: true,
+            rssi: -42.0, snr: 7.5, q: 0.9, ratchetId: nil, receivingInterface: "TCPClient",
+            replyToId: "deadbeef", reactionsJson: "{\"👍\":[\"abc\"]}",
+            packedLxmf: packed, createdAt: now, updatedAt: now
         )
-        msg.hash = Data([0xAA, 0xBB, 0xCC])
-        msg.method = .direct
-        msg.rssi = -42.0
-        msg.snr = 7.5
-        msg.q = 0.9
-        msg.receivingInterface = "TCPClient"
-        // packed carries the MessagePack field map (A0 bridge convention).
-        msg.fields = [LXMFSwift.LXMessage.FIELD_IMAGE: ["png", Data([0x89, 0x50])] as [Any]]
-        msg.packed = LxmfFieldCodec.pack(msg.fields!)
-
-        var rec = try LXMFSwift.MessageRecord(from: msg)
-        // Columns init(from:) doesn't carry from the message:
-        rec.replyToId = "deadbeef"
-        rec.reactionsJson = "{\"👍\":[\"abc\"]}"
-        return rec
     }
 
     func testMapRecordAllFields() throws {
@@ -2127,16 +2121,6 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         XCTAssertEqual(m.snr, 7.5)
         // Fields recovered from packedLxmf for attachment rendering.
         XCTAssertNotNil(m.fields?[LXMFSwift.LXMessage.FIELD_IMAGE])
-    }
-
-    // MARK: Icon mapping
-
-    func testMapIcon() {
-        let i = LXMFSwift.IconAppearance(iconName: "star", foregroundColor: "abcdef", backgroundColor: "012345")
-        let r = MessageRepository.mapIcon(i)
-        XCTAssertEqual(r.iconName, "star")
-        XCTAssertEqual(r.foregroundColor, "abcdef")
-        XCTAssertEqual(r.backgroundColor, "012345")
     }
 
     // MARK: packed_lxmf = field map vs LXMF wire (A0 follow-up #2)
@@ -2192,28 +2176,29 @@ final class MessageRepositoryAdapterTests: XCTestCase {
     /// (a) A realistic FIELD-MAP row (app / Python path): `packed_lxmf` =
     /// `LxmfFieldCodec.pack(fields)`. Seeded onto a no-identity GRDB LXMessage
     /// exactly as `MessageRepository.mapToGRDBMessage` does.
-    private func makeFieldMapRecord() throws -> LXMFSwift.MessageRecord {
-        var msg = LXMFSwift.LXMessage(
-            destinationHash: Data([0xDE, 0xAD, 0x10]),
-            sourceHash: Data([0x50, 0x52, 0x43]),
-            content: Data("body".utf8),
-            title: Data("subj".utf8),
-            timestamp: 1_650_000_000.25,
-            state: .delivered,
-            incoming: true
+    private func makeFieldMapRecord() -> MessageRow {
+        let dest = Data([0xDE, 0xAD, 0x10])
+        let src = Data([0x50, 0x52, 0x43])
+        let id = Data([0xAA, 0xBB, 0xCC])
+        let now = 1_650_000_000.25
+        let fields = attachmentFields()
+        let packed = LxmfFieldCodec.pack(fields)  // FIELD MAP, not wire
+        return MessageRow(
+            messageId: id, conversationHash: src, destinationHash: dest, sourceHash: src,
+            signature: Data(), timestamp: now, title: Data("subj".utf8), content: Data("body".utf8),
+            fields: nil, stamp: nil, state: GRDBState.delivered.rawValue,
+            method: GRDBDeliveryMethod.direct.rawValue,
+            deliveryAttempts: 0, progress: 0.0, incoming: true,
+            rssi: nil, snr: nil, q: nil, ratchetId: nil, receivingInterface: nil,
+            replyToId: nil, reactionsJson: nil, packedLxmf: packed, createdAt: now, updatedAt: now
         )
-        msg.hash = Data([0xAA, 0xBB, 0xCC])
-        msg.method = .direct
-        msg.fields = attachmentFields()
-        msg.packed = LxmfFieldCodec.pack(msg.fields!)  // FIELD MAP, not wire
-        return try LXMFSwift.MessageRecord(from: msg)
     }
 
     /// (b) A realistic WIRE row (Swift / NE path): a genuine LXMessage signed +
     /// packed to the on-wire format via the real pack path, then persisted —
     /// `MessageRecord.init(from:)` copies `LXMessage.packed` (the wire) into
     /// `packed_lxmf`, exactly like `LXMRouter` does on inbound delivery.
-    private func makeWireRecord() throws -> (rec: LXMFSwift.MessageRecord, wire: Data) {
+    private func makeWireRecord() throws -> (rec: MessageRow, wire: Data) {
         // Real ReticulumSwift identity (re-exported via LXMFSwift) so `pack()`
         // can sign. Qualified to avoid the RNSAPI.Identity Compat-stub collision.
         // The destination hash value is irrelevant to field recovery — any
@@ -2233,7 +2218,17 @@ final class MessageRepositoryAdapterTests: XCTestCase {
         XCTAssertNil(LxmfFieldCodec.unpack(wire),
                      "wire bytes must NOT decode as a field map (else no bug)")
         XCTAssertGreaterThan(wire.count, 96, "wire carries dest+src+sig header")
-        let rec = try LXMFSwift.MessageRecord(from: msg)
+        let now = msg.timestamp
+        let rec = MessageRow(
+            messageId: msg.hash, conversationHash: msg.sourceHash,
+            destinationHash: msg.destinationHash, sourceHash: msg.sourceHash,
+            signature: msg.signature, timestamp: now, title: msg.title, content: msg.content,
+            fields: nil, stamp: msg.stamp, state: GRDBState.delivered.rawValue,
+            method: GRDBDeliveryMethod.direct.rawValue,
+            deliveryAttempts: 0, progress: 0.0, incoming: true,
+            rssi: nil, snr: nil, q: nil, ratchetId: nil, receivingInterface: nil,
+            replyToId: nil, reactionsJson: nil, packedLxmf: wire, createdAt: now, updatedAt: now
+        )
         XCTAssertEqual(rec.packedLxmf, wire, "record must store the wire verbatim")
         return (rec, wire)
     }
@@ -2360,10 +2355,10 @@ final class MessageRepositoryAdapterTests: XCTestCase {
 
 final class DeliveryProofMonotonicityTests: XCTestCase {
     func testReducerRejectsStaleRetryButAdmitsTerminalRelayFailure() {
-        let sending = Int(LXMFSwift.LXMessageState.sending.rawValue)
-        let sent = Int(LXMFSwift.LXMessageState.sent.rawValue)
-        let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
-        let failed = Int(LXMFSwift.LXMessageState.failed.rawValue)
+        let sending = Int(GRDBState.sending.rawValue)
+        let sent = Int(GRDBState.sent.rawValue)
+        let delivered = Int(GRDBState.delivered.rawValue)
+        let failed = Int(GRDBState.failed.rawValue)
 
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: sending), sent)
         XCTAssertEqual(MessageRepository.monotonicDeliveryState(existing: sent, incoming: failed), failed)

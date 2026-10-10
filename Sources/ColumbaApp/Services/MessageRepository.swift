@@ -5,16 +5,17 @@
 //  Async wrapper for the LXMF message store, providing thread-safe message
 //  and conversation access for SwiftUI ViewModels.
 //
-//  ── ARCHITECTURE (Track A0 — unify the canonical message store) ──────────────
-//  This is the SOLE file in ColumbaApp that imports `LXMFSwift`. It opens the
-//  GRDB-backed `LXMFSwift.LXMFDatabase` that the Swift / Network-Extension
-//  backend writes (at `<configDir>/lxmf-swift.db`), so Swift/NE-delivered
-//  messages show up in the existing SwiftUI layer WITHOUT changing the UI or
-//  ViewModels — every public method below still takes/returns the RNSAPI
-//  *Compat* types (RNSAPI.ConversationRecord / RNSAPI.MessageRecord /
-//  RNSAPI.LXMessage / RNSAPI.IconAppearance / RNSAPI.LXMessageState /
-//  RNSAPI.LXDeliveryMethod). The GRDB store's LXMFSwift types are adapted to
-//  the RNSAPI types via the pure `static` mapping funcs at the bottom.
+//  ── ARCHITECTURE (Android-parity store — app-owned GRDB store) ──────────────
+//  This is the collector/boundary (Android's MessageCollector). It owns the
+//  app-side `MessageStore` (Sources/.../MessageStore/) — the GRDB store lifted
+//  out of LXMFSwift so the store no longer depends on the wire library. It opens
+//  the same shared `lxmf-swift.db` the Network-Extension's embedded Python node
+//  writes, so NE-delivered messages show up in the SwiftUI layer WITHOUT
+//  changing the UI or ViewModels — every public method still takes/returns the
+//  RNSAPI *Compat* types. `import LXMFSwift` is retained ONLY for the wire codec
+//  (`LXMessage.unpackFromBytes`) used to recover field maps from wire rows;
+//  the store itself (MessageStore / MessageRow / ConversationStoreRow / GRDBState /
+//  GRDBDeliveryMethod) is app-owned and has no LXMFSwift dependency.
 //
 //  `import LXMFSwift` MUST NOT be added to AppServices.swift / ColumbaApp.swift
 //  / MapView.swift or any other RNSAPI-dense file: LXMFSwift transitively
@@ -23,9 +24,9 @@
 //  use, producing an un-fixable ambiguity cascade. Keep the LXMFSwift import
 //  walled off here.
 //
-//  A5 NOTE: this opens the GRDB store read-WRITE for now (the app's Python
-//  inbound-persist path still writes through here). Once the NE owns all writes
-//  (Track A5), switch to `LXMFSwift.LXMFDatabase(path:, readonly: true)`.
+//  NOTE: this opens the store read-WRITE because the app's own raw SQL writes
+//  (drafts, retry staging, delivery-proof rekeying via `replacementPool`) need
+//  write access. The NE's inbound-persist path writes the SAME file directly.
 //
 
 import Foundation
@@ -52,7 +53,7 @@ public struct DraftRecord: Equatable, Sendable {
 
 /// Actor for thread-safe message database operations.
 ///
-/// Wraps the GRDB-backed `LXMFSwift.LXMFDatabase` and exposes RNSAPI Compat
+/// Wraps the app-owned `MessageStore` and exposes RNSAPI Compat
 /// types so the existing ViewModels compile unchanged. All operations are
 /// serialized through the underlying GRDB actor.
 public actor MessageRepository {
@@ -109,8 +110,8 @@ public actor MessageRepository {
 
     // MARK: - Properties
 
-    /// The GRDB-backed canonical store written by the Swift / NE backend.
-    private let database: LXMFSwift.LXMFDatabase
+    /// The app-owned canonical GRDB store (shared with the NE writer).
+    private let store: MessageStore
     /// Suspension-aware pool used only for atomic app-owned retry replacement.
     private let replacementPool: DatabasePool
 
@@ -125,9 +126,9 @@ public actor MessageRepository {
     /// owns writes).
     ///
     /// - Parameter grdbPath: Filesystem path to `lxmf-swift.db`.
-    /// - Throws: rethrows `LXMFSwift.LXMFDatabase` initialization errors.
+    /// - Throws: rethrows `MessageStore` initialization errors.
     public init(grdbPath: String) throws {
-        self.database = try LXMFSwift.LXMFDatabase(path: grdbPath, readonly: false)
+        self.store = try MessageStore(path: grdbPath, readonly: false)
         var config = Configuration()
         config.defaultTransactionKind = .immediate
         config.foreignKeysEnabled = true
@@ -174,7 +175,7 @@ public actor MessageRepository {
 
     /// Fetch all conversations, sorted by most recent message.
     public func fetchConversations(limit: Int = 100, offset: Int = 0) async throws -> [RNSAPI.ConversationRecord] {
-        try await database.getConversations(limit: limit, offset: offset).map(Self.mapConversation)
+        try await store.getConversations(limit: limit, offset: offset).map(Self.mapConversation)
     }
 
     /// Fetch conversations by their exact destination hashes without applying
@@ -184,12 +185,12 @@ public actor MessageRepository {
         guard !hashes.isEmpty else { return [] }
 
         return try await replacementPool.read { db in
-            var records: [LXMFSwift.ConversationRecord] = []
+            var records: [ConversationStoreRow] = []
             for start in stride(from: 0, to: hashes.count, by: Self.conversationQueryChunkSize) {
                 let end = min(start + Self.conversationQueryChunkSize, hashes.count)
                 let chunk = Array(hashes[start..<end])
                 let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
-                records += try LXMFSwift.ConversationRecord.fetchAll(
+                records += try ConversationStoreRow.fetchAll(
                     db,
                     sql: """
                         SELECT *
@@ -237,7 +238,7 @@ public actor MessageRepository {
 
     /// Fetch a single conversation by destination hash.
     public func fetchConversation(_ conversationHash: Data) async throws -> RNSAPI.ConversationRecord? {
-        try await database.getConversation(hash: conversationHash).map(Self.mapConversation)
+        try await store.getConversation(hash: conversationHash).map(Self.mapConversation)
     }
 
     /// Return the durable unread-message total used for the application icon
@@ -259,7 +260,7 @@ public actor MessageRepository {
 
     /// Mark conversation as read (reset unread count).
     public func markConversationRead(_ conversationHash: Data) async throws {
-        try await database.markConversationRead(hash: conversationHash)
+        try await store.markConversationRead(hash: conversationHash)
         NotificationCenter.default.post(
             name: Self.conversationReadNotification,
             object: nil,
@@ -269,7 +270,7 @@ public actor MessageRepository {
 
     /// Set the unread count for a conversation (e.g. mark as unread with count=1).
     public func setUnreadCount(_ conversationHash: Data, count: Int) async throws {
-        try await database.setUnreadCount(hash: conversationHash, count: count)
+        try await store.setUnreadCount(hash: conversationHash, count: count)
     }
 
     /// Delete a conversation, its messages, and its app-owned draft.
@@ -283,7 +284,7 @@ public actor MessageRepository {
         _ conversationHash: Data,
         afterCanonicalDelete: (@Sendable () async -> Void)?
     ) async throws {
-        try await database.deleteConversation(hash: conversationHash)
+        try await store.deleteConversation(hash: conversationHash)
         if let afterCanonicalDelete {
             await afterCanonicalDelete()
         }
@@ -292,12 +293,12 @@ public actor MessageRepository {
 
     /// Delete a single message by its ID hash.
     public func deleteMessage(_ messageId: Data) async throws {
-        try await database.deleteMessage(id: messageId)
+        try await store.deleteMessage(id: messageId)
     }
 
     /// Ensure a conversation exists for a destination.
     public func ensureConversation(_ conversationHash: Data, displayName: String?) async throws {
-        try await database.ensureConversation(hash: conversationHash, displayName: displayName)
+        try await store.ensureConversation(hash: conversationHash, displayName: displayName)
     }
 
     // MARK: - Draft Operations
@@ -434,7 +435,7 @@ public actor MessageRepository {
 
     /// Set favorite status for a conversation.
     public func setFavorite(_ conversationHash: Data, isFavorite: Bool) async throws {
-        try await database.setFavorite(hash: conversationHash, isFavorite: isFavorite)
+        try await store.setFavorite(hash: conversationHash, isFavorite: isFavorite)
         NotificationCenter.default.post(
             name: Self.favoriteStatusChangedNotification,
             object: nil,
@@ -444,12 +445,12 @@ public actor MessageRepository {
 
     /// Set pinned status for a conversation.
     public func setPinned(_ conversationHash: Data, isPinned: Bool) async throws {
-        try await database.setPinned(hash: conversationHash, isPinned: isPinned)
+        try await store.setPinned(hash: conversationHash, isPinned: isPinned)
     }
 
     /// Update display name for a conversation.
     public func updateDisplayName(_ conversationHash: Data, displayName: String?) async throws {
-        try await database.updateDisplayName(hash: conversationHash, displayName: displayName)
+        try await store.updateDisplayName(hash: conversationHash, displayName: displayName)
     }
 
     /// Apply an announced peer name only while the durable row still contains
@@ -500,34 +501,35 @@ public actor MessageRepository {
 
     /// Update peer icon appearance for a conversation.
     public func updatePeerIcon(_ hash: Data, icon: RNSAPI.IconAppearance) async throws {
-        try await database.updatePeerIcon(hash, iconName: icon.iconName, fgColor: icon.foregroundColor, bgColor: icon.backgroundColor)
+        try await store.updatePeerIcon(hash, iconName: icon.iconName, fgColor: icon.foregroundColor, bgColor: icon.backgroundColor)
     }
 
     /// Get peer icon appearance for a conversation.
     public func getPeerIcon(_ hash: Data) async throws -> RNSAPI.IconAppearance? {
-        try await database.getPeerIcon(hash).map(Self.mapIcon)
+        guard let f = try await store.getPeerIconFields(hash) else { return nil }
+        return RNSAPI.IconAppearance(iconName: f.name, foregroundColor: f.fg, backgroundColor: f.bg)
     }
 
     // MARK: - Reply & Reaction Operations
 
     /// Update the reply_to_id for a message.
     public func updateReplyToId(_ messageId: Data, replyToId: String) async throws {
-        try await database.updateReplyToId(messageId: messageId, replyToId: replyToId)
+        try await store.updateReplyToId(messageId: messageId, replyToId: replyToId)
     }
 
     /// Update the reactions_json for a message.
     public func updateReactions(_ messageId: Data, reactionsJson: String) async throws {
-        try await database.updateReactions(messageId: messageId, reactionsJson: reactionsJson)
+        try await store.updateReactions(messageId: messageId, reactionsJson: reactionsJson)
     }
 
     /// Get the reactions_json for a message.
     public func getReactionsJson(_ messageId: Data) async throws -> String? {
-        try await database.getReactionsJson(messageId: messageId)
+        try await store.getReactionsJson(messageId: messageId)
     }
 
     /// Get a single message record by ID (lightweight).
     public func getMessageRecord(id: Data) async throws -> RNSAPI.MessageRecord? {
-        try await database.getMessageRecord(id: id).map(Self.mapRecord)
+        try await store.getMessageRecord(id: id).map(Self.mapRecord)
     }
 
     // MARK: - Message Operations
@@ -539,7 +541,7 @@ public actor MessageRepository {
     /// (app / Python path) or the signed LXMF wire (Swift / NE path). Ordered
     /// newest-first to match `getMessages`.
     public func fetchMessages(for conversationHash: Data, limit: Int = 50, offset: Int = 0) async throws -> [RNSAPI.LXMessage] {
-        try await database.getMessageRecords(forConversation: conversationHash, limit: limit, offset: offset)
+        try await store.getMessageRecords(forConversation: conversationHash, limit: limit, offset: offset)
             .map(Self.mapToLXMessage)
     }
 
@@ -548,7 +550,7 @@ public actor MessageRepository {
     /// This is the hot read path the chat UI uses. Returns RNSAPI
     /// `MessageRecord`s mapped directly from the GRDB rows.
     public func fetchMessageRecords(for conversationHash: Data, limit: Int = 50, offset: Int = 0) async throws -> [RNSAPI.MessageRecord] {
-        try await database.getMessageRecords(forConversation: conversationHash, limit: limit, offset: offset)
+        try await store.getMessageRecords(forConversation: conversationHash, limit: limit, offset: offset)
             .map(Self.mapRecord)
     }
 
@@ -569,7 +571,7 @@ public actor MessageRepository {
     /// sequence and are excluded, so notifications describe new durable insertions.
     public func fetchIncomingMessagesInserted(after cursor: Int64) async throws -> [RNSAPI.LXMessage] {
         try await replacementPool.read { db in
-            try LXMFSwift.MessageRecord.fetchAll(
+            try MessageRow.fetchAll(
                 db,
                 sql: """
                     SELECT messages.*
@@ -593,68 +595,16 @@ public actor MessageRepository {
     /// which `mapRecord` passes back through as the RNSAPI `packedLxmf` field
     /// map so the chat UI's `LxmfFieldCodec.unpack` can recover attachments.
     public func saveMessage(_ message: RNSAPI.LXMessage) async throws {
-        let mapped = Self.mapToGRDBMessage(message)
-        if message.method == .unknown {
-            // LXMFSwift's enum cannot represent unknown, but its persisted record
-            // stores a raw byte. Build the record from the mapped message, replace
-            // only that byte with an out-of-domain sentinel, and save the
-            // conversation + message in one immediate transaction. This prevents
-            // readers or competing writers from observing a temporary
-            // Opportunistic value.
-            var record = try LXMFSwift.MessageRecord(from: mapped)
-            record.method = 0
-            try await replacementPool.write { db in
-                try Self.updateConversation(for: mapped, in: db)
-                try record.save(db)
-            }
-        } else {
-            try await database.saveMessage(mapped)
-        }
+        // Build the app-owned row directly from the RNSAPI domain type (no wire
+        // type in the store). `.unknown` method persists as raw sentinel 0.
+        let row = Self.makeRow(from: message)
+        try await store.saveMessage(row)
         if !message.incoming {
             NotificationCenter.default.post(
                 name: Self.conversationActivityNotification,
                 object: nil,
                 userInfo: [Self.conversationHashUserInfoKey: message.destinationHash]
             )
-        }
-    }
-
-    /// Mirror LXMFSwift's conversation update inside the app-owned transaction
-    /// used for raw method values that its enum cannot represent.
-    private static func updateConversation(
-        for message: LXMFSwift.LXMessage,
-        in db: Database
-    ) throws {
-        let conversationHash = message.incoming ? message.sourceHash : message.destinationHash
-        if var conversation = try LXMFSwift.ConversationRecord
-            .filter(Column("destination_hash") == conversationHash)
-            .fetchOne(db) {
-            if message.timestamp >= conversation.lastMessageTimestamp {
-                conversation.lastMessageTimestamp = message.timestamp
-                conversation.updatedAt = Date().timeIntervalSince1970
-                if !message.content.isEmpty,
-                   let content = String(data: message.content, encoding: .utf8),
-                   !content.isEmpty {
-                    conversation.lastMessagePreview = String(content.prefix(100))
-                }
-            }
-            if message.incoming {
-                conversation.unreadCount += 1
-                conversation.isUnread = 1
-            }
-            try conversation.update(db)
-        } else {
-            let preview = String(data: message.content, encoding: .utf8).map {
-                String($0.prefix(100))
-            }
-            let conversation = LXMFSwift.ConversationRecord(
-                destinationHash: conversationHash,
-                displayName: nil,
-                lastMessageTimestamp: message.timestamp,
-                lastMessagePreview: preview,
-                unreadCount: message.incoming ? 1 : 0
-            )
-            try conversation.insert(db)
         }
     }
 
@@ -683,13 +633,13 @@ public actor MessageRepository {
                     """,
                 arguments: [
                     message.hash,
-                    Self.mapStateToGRDB(message.state).rawValue,
-                    Self.mapMethodToGRDB(message.method).rawValue,
+                    Self.mapStateToGRDB(message.state),
+                    Self.mapMethodToGRDB(message.method),
                     message.timestamp,
                     Self.stagedRetryMarker,
                     Date().timeIntervalSince1970,
                     oldId,
-                    LXMFSwift.LXMessageState.failed.rawValue,
+                    GRDBState.failed.rawValue,
                     Self.uncertainRetryMarker + "%",
                     Self.optimisticOutboundMarker,
                 ]
@@ -730,7 +680,7 @@ public actor MessageRepository {
                       AND receiving_interface = ?
                     """,
                 arguments: [
-                    LXMFSwift.LXMessageState.failed.rawValue,
+                    GRDBState.failed.rawValue,
                     Self.uncertainRetryMarker(canonicalHash: canonicalHash),
                     Date().timeIntervalSince1970,
                     messageId,
@@ -758,8 +708,8 @@ public actor MessageRepository {
                     """,
                 arguments: StatementArguments([
                     message.hash,
-                    Self.mapStateToGRDB(message.state).rawValue,
-                    Self.mapMethodToGRDB(message.method).rawValue,
+                    Self.mapStateToGRDB(message.state),
+                    Self.mapMethodToGRDB(message.method),
                     message.timestamp,
                     retryMarker,
                     Date().timeIntervalSince1970,
@@ -803,10 +753,10 @@ public actor MessageRepository {
                     WHERE incoming = 0 AND state = ? AND receiving_interface = ?
                     """,
                 arguments: [
-                    LXMFSwift.LXMessageState.failed.rawValue,
+                    GRDBState.failed.rawValue,
                     Self.uncertainRetryMarker,
                     Date().timeIntervalSince1970,
-                    LXMFSwift.LXMessageState.sending.rawValue,
+                    GRDBState.sending.rawValue,
                     Self.stagedRetryMarker,
                 ]
             )
@@ -827,7 +777,7 @@ public actor MessageRepository {
                     """,
                 arguments: [
                     destinationHash,
-                    LXMFSwift.LXMessageState.failed.rawValue,
+                    GRDBState.failed.rawValue,
                     Self.uncertainRetryMarker + "%",
                 ]
             ) ?? 0
@@ -837,12 +787,12 @@ public actor MessageRepository {
 
     /// Get message by ID (LXMessage form), rebuilt from the GRDB record.
     public func getMessage(id: Data) async throws -> RNSAPI.LXMessage? {
-        try await database.getMessageRecord(id: id).map(Self.mapToLXMessage)
+        try await store.getMessageRecord(id: id).map(Self.mapToLXMessage)
     }
 
     /// Check if message exists.
     public func hasMessage(id: Data) async throws -> Bool {
-        try await database.hasMessage(id: id)
+        try await store.hasMessage(id: id)
     }
 
     /// Update message delivery state and optional effective transport without
@@ -854,7 +804,7 @@ public actor MessageRepository {
         method: RNSAPI.LXDeliveryMethod? = nil
     ) async throws -> Bool {
         try await replacementPool.write { db in
-            let incomingState = Int(Self.mapStateToGRDB(state).rawValue)
+            let incomingState = Int(Self.mapStateToGRDB(state))
             let existingState = try Int.fetchOne(
                 db,
                 sql: "SELECT state FROM messages WHERE message_id = ?",
@@ -865,7 +815,7 @@ public actor MessageRepository {
                 incoming: incomingState
             )
             let persistedMethod = persistedState == incomingState
-                ? method.map { Self.mapMethodToGRDB($0).rawValue }
+                ? method.map { Self.mapMethodToGRDB($0) }
                 : nil
             try db.execute(
                 sql: """
@@ -890,10 +840,10 @@ public actor MessageRepository {
     /// rekey it to the wire hash. This path works without an open chat view.
     static func monotonicDeliveryState(existing: Int?, incoming: Int) -> Int {
         guard let existing else { return incoming }
-        let sending = Int(LXMFSwift.LXMessageState.sending.rawValue)
-        let sent = Int(LXMFSwift.LXMessageState.sent.rawValue)
-        let delivered = Int(LXMFSwift.LXMessageState.delivered.rawValue)
-        let failed = Int(LXMFSwift.LXMessageState.failed.rawValue)
+        let sending = Int(GRDBState.sending.rawValue)
+        let sent = Int(GRDBState.sent.rawValue)
+        let delivered = Int(GRDBState.delivered.rawValue)
+        let failed = Int(GRDBState.failed.rawValue)
 
         if existing == delivered || incoming == delivered { return delivered }
 
@@ -916,8 +866,8 @@ public actor MessageRepository {
         method: RNSAPI.LXDeliveryMethod? = nil
     ) async throws -> Bool {
         try await replacementPool.write { db in
-            let incomingState = Int(Self.mapStateToGRDB(state).rawValue)
-            let mappedMethod = method.map { Self.mapMethodToGRDB($0).rawValue }
+            let incomingState = Int(Self.mapStateToGRDB(state))
+            let mappedMethod = method.map { Self.mapMethodToGRDB($0) }
             let now = Date().timeIntervalSince1970
             let existingCanonicalState = try Int.fetchOne(
                 db,
@@ -1011,22 +961,20 @@ public actor MessageRepository {
     /// the GRDB `loadPendingOutbound` / `loadFailedOutbound` record IDs and
     /// re-fetching their raw records, so the result maps through the field-map
     /// bridge rather than the wire-unpack path.
-    private func loadOutbound(matching state: LXMFSwift.LXMessageState) async throws -> [RNSAPI.LXMessage] {
-        // The GRDB store only exposes outbound/failed via LXMessage-returning
-        // methods (which wire-unpack). Those would throw on app-written rows
-        // whose `packed_lxmf` is a field map, not real wire — so instead fetch
-        // the matching records by ID through `getMessageRecord` and bridge.
-        let messages: [LXMFSwift.LXMessage]
+    private func loadOutbound(matching state: GRDBState) async throws -> [RNSAPI.LXMessage] {
+        // The store exposes outbound/failed as raw message IDs (no wire unpack). We
+        // re-fetch each lightweight row and bridge through the field-map path so the
+        // mapping is uniform with the read paths above (wire rows would throw if we
+        // wire-unpacked them here, since app-written rows store a field map).
+        let ids: [Data]
         switch state {
-        case .outbound: messages = (try? await database.loadPendingOutbound()) ?? []
-        case .failed:   messages = (try? await database.loadFailedOutbound()) ?? []
-        default:        messages = []
+        case .outbound: ids = (try? await store.loadPendingOutboundIds()) ?? []
+        case .failed:   ids = (try? await store.loadFailedOutboundIds()) ?? []
+        default:        ids = []
         }
-        // For each (successfully-unpacked) message, re-fetch its lightweight
-        // record so the RNSAPI mapping is uniform with the read paths above.
         var out: [RNSAPI.LXMessage] = []
-        for m in messages {
-            if let rec = try await database.getMessageRecord(id: m.hash) {
+        for id in ids {
+            if let rec = try await store.getMessageRecord(id: id) {
                 out.append(Self.mapToLXMessage(rec))
             }
         }
@@ -1048,8 +996,8 @@ extension MessageRepository {
 
     // MARK: Conversation
 
-    /// GRDB `ConversationRecord` → RNSAPI `ConversationRecord`.
-    static func mapConversation(_ c: LXMFSwift.ConversationRecord) -> RNSAPI.ConversationRecord {
+    /// GRDB `ConversationStoreRow` → RNSAPI `ConversationStoreRow`.
+    static func mapConversation(_ c: ConversationStoreRow) -> RNSAPI.ConversationRecord {
         RNSAPI.ConversationRecord(
             hash: c.destinationHash,
             displayName: c.displayName ?? "",
@@ -1065,15 +1013,6 @@ extension MessageRepository {
     }
 
     // MARK: Icon
-
-    /// GRDB `IconAppearance` → RNSAPI `IconAppearance`.
-    static func mapIcon(_ i: LXMFSwift.IconAppearance) -> RNSAPI.IconAppearance {
-        RNSAPI.IconAppearance(
-            iconName: i.iconName,
-            foregroundColor: i.foregroundColor,
-            backgroundColor: i.backgroundColor
-        )
-    }
 
     // MARK: Message record
 
@@ -1149,7 +1088,7 @@ extension MessageRepository {
     /// store the signed LXMF wire — those are unpacked and re-packed as a field
     /// map so the chat UI's `LxmfFieldCodec.unpack(record.packedLxmf)` recovers
     /// their attachments/icons too. See `recoverFields` / `normalizedFieldMap`.
-    static func mapRecord(_ r: LXMFSwift.MessageRecord) -> RNSAPI.MessageRecord {
+    static func mapRecord(_ r: MessageRow) -> RNSAPI.MessageRecord {
         RNSAPI.MessageRecord(
             id: r.messageId,
             conversationHash: r.conversationHash,
@@ -1170,7 +1109,7 @@ extension MessageRepository {
     }
 
     /// GRDB `MessageRecord` → RNSAPI `LXMessage` (via the field-map bridge).
-    static func mapToLXMessage(_ r: LXMFSwift.MessageRecord) -> RNSAPI.LXMessage {
+    static func mapToLXMessage(_ r: MessageRow) -> RNSAPI.LXMessage {
         // Recover fields whether `packed_lxmf` is a field map or the LXMF wire,
         // so attachment/icon fields survive for Swift/NE-delivered rows too.
         let fields = recoverFields(from: r.packedLxmf)
@@ -1198,35 +1137,48 @@ extension MessageRepository {
         return msg
     }
 
-    /// RNSAPI `LXMessage` → GRDB `LXMessage` (for the save path).
+    /// RNSAPI `LXMessage` → app-owned `MessageRow` (for the save path).
     ///
-    /// Uses the GRDB no-identity outbound init, then carries the field map in
-    /// `packed` so `MessageRecord(from:)` persists it into `packed_lxmf`. The
-    /// conversation key (incoming → sourceHash, outbound → destinationHash) is
-    /// preserved by setting `incoming` to match.
-    static func mapToGRDBMessage(_ m: RNSAPI.LXMessage) -> LXMFSwift.LXMessage {
-        var out = LXMFSwift.LXMessage(
+    /// Builds the row directly from the RNSAPI domain fields (no wire type in the
+    /// store). `packed_lxmf` carries the MessagePack field map (empty when there
+    /// are no fields), mirroring what the lifted `MessageRecord(from:)` produced;
+    /// the `fields` column stays nil (the app reads it back via `packed_lxmf`).
+    static func makeRow(from m: RNSAPI.LXMessage) -> MessageRow {
+        let now = Date().timeIntervalSince1970
+        let conversationHash = m.incoming ? m.sourceHash : m.destinationHash
+        var replyToId: String? = nil
+        if let appData = m.fields?[RNSAPI.LXMessage.FIELD_APP_DATA] as? [String: Any],
+           let replyTo = appData["reply_to"] as? String {
+            replyToId = replyTo
+        }
+        let packed = (m.fields?.isEmpty == false) ? LxmfFieldCodec.pack(m.fields!) : Data()
+        return MessageRow(
+            messageId: m.hash,
+            conversationHash: conversationHash,
             destinationHash: m.destinationHash,
             sourceHash: m.sourceHash,
-            content: m.content,
-            title: m.title,
+            signature: m.signature,
             timestamp: m.timestamp,
-            state: mapStateToGRDB(m.state),
-            incoming: m.incoming
+            title: m.title,
+            content: m.content,
+            fields: nil,
+            stamp: m.stamp,
+            state: Self.mapStateToGRDB(m.state),
+            method: Self.mapMethodToGRDB(m.method),
+            deliveryAttempts: m.deliveryAttempts,
+            progress: 0.0,
+            incoming: m.incoming,
+            rssi: m.rssi,
+            snr: m.snr,
+            q: m.q,
+            ratchetId: nil,
+            receivingInterface: m.receivingInterface,
+            replyToId: replyToId,
+            reactionsJson: nil,
+            packedLxmf: packed,
+            createdAt: now,
+            updatedAt: now
         )
-        out.hash = m.hash
-        out.method = mapMethodToGRDB(m.method)
-        out.rssi = m.rssi
-        out.snr = m.snr
-        out.q = m.q
-        out.receivingInterface = m.receivingInterface
-        out.fields = m.fields
-        // Carry the MessagePack field map as `packed` so `MessageRecord(from:)`
-        // (which requires non-nil `packed` and copies it to `packed_lxmf`)
-        // succeeds without the signed LXMF wire. Empty Data when no fields,
-        // matching `LxmfFieldCodec.pack`'s empty-map convention.
-        out.packed = (m.fields?.isEmpty == false) ? LxmfFieldCodec.pack(m.fields!) : Data()
-        return out
     }
 
     // MARK: State
@@ -1235,7 +1187,7 @@ extension MessageRepository {
     ///
     /// GRDB has `generating`/`rejected`/`cancelled` with no RNSAPI peer:
     /// `generating` → `.draft`; `rejected`/`cancelled` → `.failed`.
-    static func mapState(_ s: LXMFSwift.LXMessageState) -> RNSAPI.LXMessageState {
+    static func mapState(_ s: GRDBState) -> RNSAPI.LXMessageState {
         switch s {
         case .generating: return .draft
         case .outbound:   return .outbound
@@ -1252,7 +1204,7 @@ extension MessageRepository {
     /// back to `.sent` (matches the chat UI's `default` arm in
     /// `Message(from:)`).
     static func mapState(_ raw: UInt8) -> RNSAPI.LXMessageState {
-        guard let s = LXMFSwift.LXMessageState(rawValue: raw) else { return .sent }
+        guard let s = GRDBState(rawValue: raw) else { return .sent }
         return mapState(s)
     }
 
@@ -1260,22 +1212,22 @@ extension MessageRepository {
     ///
     /// RNSAPI `.received` (inbound) maps to GRDB `.delivered` (the GRDB store
     /// has no inbound-specific state; `incoming` carries that distinction).
-    static func mapStateToGRDB(_ s: RNSAPI.LXMessageState) -> LXMFSwift.LXMessageState {
+    static func mapStateToGRDB(_ s: RNSAPI.LXMessageState) -> UInt8 {
         switch s {
-        case .draft:     return .generating
-        case .outbound:  return .outbound
-        case .sending:   return .sending
-        case .sent:      return .sent
-        case .delivered: return .delivered
-        case .failed:    return .failed
-        case .received:  return .delivered
+        case .draft:     return GRDBState.generating.rawValue
+        case .outbound:  return GRDBState.outbound.rawValue
+        case .sending:   return GRDBState.sending.rawValue
+        case .sent:      return GRDBState.sent.rawValue
+        case .delivered: return GRDBState.delivered.rawValue
+        case .failed:    return GRDBState.failed.rawValue
+        case .received:  return GRDBState.delivered.rawValue
         }
     }
 
     // MARK: Method
 
     /// GRDB `LXDeliveryMethod` (UInt8) → RNSAPI `LXDeliveryMethod`.
-    static func mapMethod(_ m: LXMFSwift.LXDeliveryMethod) -> RNSAPI.LXDeliveryMethod {
+    static func mapMethod(_ m: GRDBDeliveryMethod) -> RNSAPI.LXDeliveryMethod {
         switch m {
         case .opportunistic: return .opportunistic
         case .direct:        return .direct
@@ -1287,7 +1239,7 @@ extension MessageRepository {
     /// Map a raw GRDB method byte → RNSAPI `LXDeliveryMethod`. Unknown bytes
     /// fall back to `.unknown`.
     static func mapMethod(_ raw: UInt8) -> RNSAPI.LXDeliveryMethod {
-        guard let m = LXMFSwift.LXDeliveryMethod(rawValue: raw) else { return .unknown }
+        guard let m = GRDBDeliveryMethod(rawValue: raw) else { return .unknown }
         return mapMethod(m)
     }
 
@@ -1296,13 +1248,13 @@ extension MessageRepository {
     /// RNSAPI `.unknown` has no GRDB enum peer. `saveMessage` replaces the
     /// mapped record's temporary value with raw sentinel zero before inserting
     /// it in the same transaction, so reads map it back to `.unknown`.
-    static func mapMethodToGRDB(_ m: RNSAPI.LXDeliveryMethod) -> LXMFSwift.LXDeliveryMethod {
+    static func mapMethodToGRDB(_ m: RNSAPI.LXDeliveryMethod) -> UInt8 {
         switch m {
-        case .opportunistic: return .opportunistic
-        case .direct:        return .direct
-        case .propagated:    return .propagated
-        case .paper:         return .paper
-        case .unknown:       return .opportunistic
+        case .opportunistic: return GRDBDeliveryMethod.opportunistic.rawValue
+        case .direct:        return GRDBDeliveryMethod.direct.rawValue
+        case .propagated:    return GRDBDeliveryMethod.propagated.rawValue
+        case .paper:         return GRDBDeliveryMethod.paper.rawValue
+        case .unknown:       return 0
         }
     }
 }
