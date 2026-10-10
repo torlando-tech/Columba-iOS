@@ -48,7 +48,7 @@ ruby support/generate-module-graph.rb
 
 The script reads Xcode targets and target/package-product dependencies through the `xcodeproj` Ruby gem, plus SPM targets through `swift package dump-package`. It overwrites only the block between the marker comments below. Do not edit that block by hand; changes are lost on regeneration.
 
-Reading the graph: an edge means a **declared `packageProductDependency`**, not necessarily a linked framework. In particular `ColumbaNetworkExtension --> ReticulumSwift` is a compile-time declaration only (it satisfies `import ReticulumSwift` in shared files compiled into the NE) - ReticulumSwift is absent from the NE's frameworks build phase, so it is not linked into the extension binary. The NE's actual node engine is embedded-Python RNS (see the Model B deep-dive).
+Reading the graph: edges show Xcode target dependencies, declared `packageProductDependencies`, or Swift package target dependencies. A package-product edge does not necessarily mean a linked framework. In particular `ColumbaNetworkExtension --> ReticulumSwift` is a compile-time declaration only (it satisfies `import ReticulumSwift` in shared files compiled into the NE) - ReticulumSwift is absent from the NE's frameworks build phase, so it is not linked into the extension binary. The NE's actual node engine is embedded-Python RNS (see the Model B deep-dive).
 
 ## Target Graph
 
