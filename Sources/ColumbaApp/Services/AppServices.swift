@@ -1836,10 +1836,10 @@ public final class AppServices {
         // missing/empty preference can never produce a nameless startup announce.
         let displayName = await SettingsRepository().resolveDisplayName()
 
-        // Model B (Track C3): when `BackendPreference.modelB` is on,
-        // `BackendFactory.make` returns the thin-client `ProxyRnsBackend`, which
-        // needs a live IPC transport to the NE's `NEReticulumNode`. Inject
-        // `TunnelManager.proxySend` (wraps `sendProviderMessage`). Resolved LAZILY
+        // Model B (Track C3): `BackendFactory.make` returns the thin-client
+        // `ProxyRnsBackend`, which needs a live IPC transport to the NE's Python
+        // node (`NEPythonRNS`). Inject `TunnelManager.proxySend` (wraps
+        // `sendProviderMessage`). Resolved LAZILY
         // (read `self.tunnelManager` at send-time, not make-time) so it works even
         // though one of the two init paths creates the tunnel after this call. The
         // closure is `@Sendable`; it hops to the @MainActor `AppServices` to read
@@ -4204,25 +4204,28 @@ public final class AppServices {
     }
 
     #if COLUMBA_RUNTIME_MODEL_B
-    /// Switch every TCPInterface and AutoInterface into or out of
-    /// tunnel mode in response to the VPN extension's status.
+    /// Re-assert tunnel mode over the app-side TCP interfaces after a VPN
+    /// status change.
     ///
-    /// In tunnel mode the interface tears down its own NWConnection
-    /// and routes outbound bytes through `TunnelManager.sendFrame`,
-    /// which the extension forwards on its authoritative socket.
-    /// Inbound continues to flow via `ExtensionFrameReader` →
-    /// `transport.handleReceivedData` regardless.
+    /// Model B note: under this flavor the app holds NO live RNS runtime - the
+    /// NE's embedded-Python node owns every transport. The app-side
+    /// `tcpInterfaces` dictionary is never populated in Model B (interface
+    /// hot-add goes through `backend.addInterface` -> the NE, not the local
+    /// `connectTCPInterface`), so the loop below is effectively a no-op. This
+    /// method is retained so the VPN status callback has a stable, guarded hook
+    /// and so the (historically live) frame-bridging path still compiles.
     @MainActor
     private func applyTunnelModeToInterfaces(active: Bool) async {
         guard let tunnel = tunnelManager else { return }
         tunnelModeActive = active
 
-        // Tunnel mode is TCP-only. The AutoInterface is deliberately NOT bridged:
-        // forwarding its frames to `tunnel.sendFrame(tag: .auto)` black-holes them
-        // — PacketTunnelProvider drops every non-ProxyRequest frame, and the NE
-        // node has no UDP/Auto path to send them on anyway. Leaving Auto in its
-        // local mode keeps its own foreground LAN socket working; tunneling it can
-        // only break background Auto outbound. (ports #57 d3719c2 fix #3)
+        // In tunnel mode each app-side TCP stub would hand its outbound frames to
+        // `tunnel.sendFrame`; the AutoInterface is deliberately not part of this
+        // loop. (ports #57 d3719c2 fix #3) Under the current Model B topology the
+        // NE runs the AutoInterface itself (it reads the same shared RNS config
+        // the app writes), so there is no app-side Auto socket to bridge or keep
+        // local - this log line's "Auto stays local" is historical wording, not a
+        // description of a live app-side Auto path.
         if active {
             for (_, iface) in tcpInterfaces {
                 await iface.beginTunnelMode { [weak tunnel] frame in
@@ -4230,7 +4233,7 @@ public final class AppServices {
                     await tunnel?.sendFrame(frame, interfaceTag: FrameInterfaceTag.tcp.rawValue)
                 }
             }
-            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s); Auto stays local")
+            DiagLog.log("[TUNNEL] enabled tunnel mode on \(self.tcpInterfaces.count) TCP interface(s) [no-op in Model B: app holds no live RNS runtime]")
         } else {
             for (_, iface) in tcpInterfaces {
                 await iface.endTunnelMode()

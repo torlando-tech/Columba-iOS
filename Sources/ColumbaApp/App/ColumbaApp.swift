@@ -880,11 +880,15 @@ final class ColumbaApplicationRuntime {
                 switch iface.type {
                 case .tcpClient:
                     if BackendPreference.modelB {
-                        // Model B: the NE owns the single TCP relay interface. The app
-                        // must NOT open a competing/duplicate one — doing so spawns a
-                        // second socket to the relay and surfaces as a stray
-                        // "enabled but disconnected" interface in the UI. The app owns
-                        // only Auto/BLE/RNode in Model B; their frames bridge to the NE.
+                        // Model B: the NE's embedded-Python node owns ALL transports
+                        // (TCP relay, AutoInterface, BLE, RNode); the app holds no
+                        // live RNS runtime. It must NOT open a competing/duplicate
+                        // socket here - doing so spawns a second socket to the relay
+                        // and surfaces as a stray "enabled but disconnected" interface
+                        // in the UI. (The app-side `connectTCPInterface` /
+                        // `startAutoInterface` paths are RNSAPI no-op stubs under
+                        // Model B; the real interfaces come up in the NE from the
+                        // shared RNS config the app writes.)
                         DiagLog.log("[STARTUP] Model B: skipping app-side TCP interface (NE owns TCP)")
                     } else if case .tcpClient(let config) = iface.config {
                         let entityId = iface.id

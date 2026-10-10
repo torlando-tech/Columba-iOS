@@ -9,13 +9,13 @@ Columba has one shipping app target and one isolated experimental app target. Fl
 | App target | `ColumbaApp` | `ColumbaModelBApp` |
 | Scheme | `Columba` | `Columba-ModelB` |
 | Canonical runtime condition | `COLUMBA_RUNTIME_PYTHON` | `COLUMBA_RUNTIME_MODEL_B` |
-| Messaging runtime | Embedded Python RNS/LXMF through `PythonRNSBackend` and the Python bridge | `ProxyRnsBackend` controlling a native ReticulumSwift/LXMFSwift node in `ColumbaNetworkExtension` |
+| Messaging runtime | Embedded Python RNS/LXMF (`PythonRNSBackend`) running in-process in the app | `ProxyRnsBackend` (Foundation-only IPC) reaching the same embedded-Python RNS node running in-process in `ColumbaNetworkExtension` |
 | Runtime-owned sources | Python bridge/runtime, Python backend and models, Python network transport | Model B proxy, host lifecycle, App Group IPC/frame seams, BLE/RNode proxy lifecycle, background-delivery UI |
 | Runtime-owned packaging | `Python.xcframework`, Python `app/` resources, wheels, standard library, bridging header, install/embed phases | Signed `ColumbaNetworkExtension.appex`; no Python framework, resources, wheels, bridging header, or Python packaging |
 | Extension relationship | No target dependency, embed, packet-tunnel entitlement, or Model B lifecycle/UI/proxy behavior | Direct target dependency and signed embed; owns VPN permission, install/start/wait lifecycle, status/settings UI, onboarding gate, and diagnostics |
 | Delivery expectation | Internet TCP delivery is foreground/opportunistic; no guaranteed background Internet TCP delivery | Experimental background delivery while the extension is active |
 
-Both apps retain shared product/UI code. `ColumbaModelBApp` links ReticulumSwift directly because it runs the native stack. `ColumbaApp` also has a target-local ReticulumSwift link only because retained public `MessageRepository`/`LXMFSwift` signatures expose ReticulumSwift types; it does not run native Model B.
+Both apps retain shared product/UI code. Neither flavor runs a native ReticulumSwift stack: the engine is embedded-Python RNS in both, hosted in the app (shipping) or the Network Extension (Model B). Both app targets still carry a compile-time `ReticulumSwift` link only because retained shared sources reference `ReticulumSwift`/`LXMFSwift` types in their signatures (e.g. `MessageRepository`, `LocationSharingManager`, `CeaseTelemetry`) or `import ReticulumSwift` (e.g. `SwiftRNSBackend`, `NomadNetFetch`, `AppGroupBridgeInterface`). That linkage satisfies the compiler; it does not mean either app runs a native RNS runtime.
 
 Each app target must define exactly one canonical runtime condition. `Columba-Swift`, `Debug-Swift`, `Release-Swift`, and the `BackendPreference.modelB` selector are retired. `COLUMBA_BACKEND_SWIFT` remains on Model B as a temporary compatibility condition for transport settings, but it does not select the runtime architecture. Persisted `useSwiftBackend` state has no architectural effect. Debug and Release choose optimization, not runtime flavor.
 
@@ -23,7 +23,7 @@ Each app target must define exactly one canonical runtime condition. `Columba-Sw
 
 - `Columba` builds and runs only the shipping `ColumbaApp`; its test action hosts `ColumbaAppTests`. It has no Network Extension dependency or embed.
 - `Columba-ModelB` is the canonical experimental workflow. Its Build action includes `ColumbaModelBApp` and `ColumbaNetworkExtension`, and its Test action includes `ColumbaModelBAppTests`; the app depends on and embeds the signed extension.
-- `ColumbaNetworkExtension` owns its target-local ReticulumSwift and LXMFSwift package-product dependencies. Neither dependency object nor its frameworks build file is shared with an app target.
+- `ColumbaNetworkExtension` runs the node engine as embedded-Python RNS; its `ReticulumSwift`/`LXMFSwift` entries are compile-time `packageProductDependencies` only (they satisfy `import ReticulumSwift` in the shared files compiled into the NE, e.g. `NomadNetFetch.swift` / `AppGroupBridgeInterface.swift`). They are **not** in the NE's frameworks build phase, so ReticulumSwift is not linked into the extension binary and no ReticulumSwift object ever runs there. Neither dependency object nor its frameworks build file is shared with an app target.
 - Building `ColumbaNetworkExtension` separately can be useful for diagnosis, but it is not the canonical Model B build path.
 
 ## Project maintenance
@@ -47,6 +47,8 @@ ruby support/generate-module-graph.rb
 ```
 
 The script reads Xcode targets and target/package-product dependencies through the `xcodeproj` Ruby gem, plus SPM targets through `swift package dump-package`. It overwrites only the block between the marker comments below. Do not edit that block by hand; changes are lost on regeneration.
+
+Reading the graph: an edge means a **declared `packageProductDependency`**, not necessarily a linked framework. In particular `ColumbaNetworkExtension --> ReticulumSwift` is a compile-time declaration only (it satisfies `import ReticulumSwift` in shared files compiled into the NE) - ReticulumSwift is absent from the NE's frameworks build phase, so it is not linked into the extension binary. The NE's actual node engine is embedded-Python RNS (see the Model B deep-dive).
 
 ## Target Graph
 

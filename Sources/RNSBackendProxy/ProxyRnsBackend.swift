@@ -5,12 +5,12 @@
 //  Track A5b — the app-side thin client for the Model B send path.
 //
 //  Under Model B the Network Extension owns the canonical `lxmf.delivery`
-//  destination + node (A5a's `NEReticulumNode`). The app therefore must NOT run
-//  its own destination-owning backend — instead `BackendFactory` hands the app
-//  this `ProxyRnsBackend`, which conforms to the full `RnsBackend` protocol but
-//  *marshals* node-owning operations to the NE over IPC (`ProxyIPC` envelopes
-//  sent through an injected async send closure) rather than touching a local
-//  reticulum-swift / LXMF-swift stack.
+//  destination + node (the in-NE Python RNS engine, `NEPythonRNS`). The app
+//  therefore must NOT run its own destination-owning backend - instead
+//  `BackendFactory` hands the app this `ProxyRnsBackend`, which conforms to the
+//  full `RnsBackend` protocol but *marshals* node-owning operations to the NE
+//  over IPC (`ProxyIPC` envelopes sent through an injected async send closure)
+//  rather than touching a local reticulum-swift / LXMF-swift stack.
 //
 //  ── ALWAYS-THE-NODE INVARIANT ────────────────────────────────────────────────
 //  This type owns NO destination, identity, transport, or router. When Model B

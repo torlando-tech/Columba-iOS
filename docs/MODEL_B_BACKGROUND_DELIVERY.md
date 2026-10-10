@@ -22,7 +22,7 @@ A suspended iOS app cannot be woken to finish arbitrary network work, so backgro
 
 ## Engine
 
-The node is **Python RNS** (`app/rns_bridge.py`), embedded and run in-process inside the extension. It is the single Reticulum runtime in the build - there is no ReticulumSwift, no `LXMFSwift`/`LXMFDatabase`, and no `NEReticulumNode` in the NE. The Swift extension code is a thin host:
+The node is **Python RNS** (`app/rns_bridge.py`), embedded and run in-process inside the extension. It is the single Reticulum runtime in the build - there is no ReticulumSwift, no `LXMFSwift`/`LXMFDatabase`, and no `NEReticulumNode` in the NE. (Precisely: the NE target still *declares* `ReticulumSwift`/`LXMFSwift` as compile-time `packageProductDependencies` so the shared files it compiles that `import` them type-check, but they are absent from the NE's frameworks build phase - ReticulumSwift is not linked into the extension binary and no ReticulumSwift object runs there.) The Swift extension code is a thin host:
 
 - `NEPythonRNS` (`Sources/ColumbaNetworkExtension/`) drives the embedded CPython runtime and calls the `rns_bridge` module over the C-API (start/stop, `drain_events`, `send_opportunistic`, link ops, BLE, RNode).
 - `PacketTunnelProvider.dispatchPython` decodes a `ProxyRequest` from the app and maps each op onto an `NEPythonRNS` call, then maps the Python JSON result back onto a `ProxyResponse`.
