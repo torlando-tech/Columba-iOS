@@ -9,13 +9,13 @@ Columba has two compile-time app flavors. They are separate targets and schemes,
 | Flavor | App target | Scheme | Runtime flag | Purpose |
 |---|---|---|---|---|
 | Shipping | `ColumbaApp` | `Columba` | `COLUMBA_RUNTIME_PYTHON` | Embedded Python RNS/LXMF runtime; this is the standard build |
-| Experimental Model B | `ColumbaModelBApp` | `Columba-ModelB` | `COLUMBA_RUNTIME_MODEL_B` | Native proxy/Network Extension background-delivery experiment; not part of the shipping artifact |
+| Experimental Model B | `ColumbaModelBApp` | `Columba-ModelB` | `COLUMBA_RUNTIME_MODEL_B` | Background-delivery experiment: the embedded-Python RNS node runs in the Network Extension, the app is a proxy/UI client; not part of the shipping artifact |
 
 The shipping app owns `Python.xcframework`, the Python bridge and runtime, Python model/backend sources, the Python `app/` resources, wheels, standard-library installation, and packaging. It has no Network Extension target dependency or embed, no packet-tunnel entitlement, and no Model B lifecycle, UI, or proxy behavior. Its default Internet TCP delivery is foreground/opportunistic; the shipping artifact does not guarantee background Internet TCP delivery.
 
-`ColumbaApp` still links `ReticulumSwift` because shared public `MessageRepository`/`LXMFSwift` signatures expose ReticulumSwift types. That linkage does not mean the shipping app runs the native Model B stack.
+`ColumbaApp` still carries a compile-time `ReticulumSwift` link because retained shared sources reference `ReticulumSwift`/`LXMFSwift` types (e.g. `MessageRepository`, `LocationSharingManager`, `CeaseTelemetry`). That linkage satisfies the compiler; it does not mean the shipping app runs a native Model B stack (its runtime is the embedded-Python RNS in `PythonRNSBackend`).
 
-The experimental app owns `ProxyRnsBackend`, Model B host/proxy/App Group IPC sources, direct ReticulumSwift linkage, and the dependency and signed embed for `ColumbaNetworkExtension`. It excludes the Python framework, Python-only sources and resources, wheels, bridging header, and Python packaging phases. See [Model B — Background LXMF Delivery](docs/MODEL_B_BACKGROUND_DELIVERY.md).
+The experimental app owns `ProxyRnsBackend`, the Model B host/proxy/App Group IPC sources, and the dependency and signed embed for `ColumbaNetworkExtension`. Its compile-time `ReticulumSwift` link (like the shipping app's) is for shared-source type compatibility, not a native runtime. It excludes the Python framework, Python-only sources and resources, wheels, bridging header, and Python packaging phases. See [Model B — Background LXMF Delivery](docs/MODEL_B_BACKGROUND_DELIVERY.md).
 
 Build flavor is fixed at compile time. Each app target has exactly one canonical runtime flag. The old `Columba-Swift` scheme, `Debug-Swift`/`Release-Swift` configurations, and `BackendPreference.modelB` runtime selector are retired. `COLUMBA_BACKEND_SWIFT` remains on Model B as a temporary compatibility condition for a transport-settings branch; it is not the architecture selector. A persisted `useSwiftBackend` value does not select the architecture.
 
@@ -77,9 +77,9 @@ SPM resolves the listed URLs to local checkouts, so library changes are picked u
 
 ## Architecture
 
-- **Embedded Python RNS/LXMF** — default shipping messaging runtime
-- **ReticulumSwift** — native Reticulum stack used directly by experimental Model B and linked by shipping for shared public type signatures
-- **LXMFSwift** — shared LXMF persistence/API surface and Model B router
+- **Embedded Python RNS/LXMF** — the messaging runtime in both flavors; runs in-process in the app (shipping) or in the Network Extension (Model B)
+- **ReticulumSwift** — native Reticulum stack; not the runtime in either flavor. Carried as a compile-time link by the app targets for shared-source type compatibility
+- **LXMFSwift** — shared LXMF persistence/API surface
 - **LXSTSwift** — voice call transport
 - **MapLibre** — offline-capable map rendering
 

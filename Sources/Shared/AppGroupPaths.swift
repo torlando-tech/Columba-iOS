@@ -4,9 +4,9 @@
 //
 //  Single source of truth for the App-Group-shared on-disk paths the app and the
 //  Network Extension MUST agree on (Model B). Before this file existed, the two
-//  processes each computed the canonical LXMF store path independently — the app
-//  in `AppServices.grdbDatabaseFilePath(for:)`, the NE in
-//  `NEReticulumNode.appGroupLXMFDatabasePath(identityHashHex:)` — and any drift in
+//  processes each computed the canonical LXMF store path independently - the app
+//  in `AppServices.grdbDatabaseFilePath(for:)`, the NE via the same App-Group
+//  layout - and any drift in
 //  the layout meant they opened DIFFERENT GRDB files and never converged. This
 //  enum is the one place that layout is defined; BOTH sides delegate here so they
 //  CANNOT drift.

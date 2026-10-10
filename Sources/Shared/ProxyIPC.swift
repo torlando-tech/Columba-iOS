@@ -5,16 +5,16 @@
 //  Track A5b — the app↔NE IPC envelope for the Model B send path.
 //
 //  In Model B the Network Extension owns the canonical `lxmf.delivery`
-//  destination + node (A5a's `NEReticulumNode`); the app becomes a thin client
-//  that marshals node-owning operations (start / stop / announce / status /
-//  persist / lxmf-send / …) to the NE over `NETunnelProviderSession
-//  .sendProviderMessage`. This file defines the request/response wire types and
-//  their JSON codec used by both ends:
+//  destination + node (the in-NE Python RNS engine, `NEPythonRNS`); the app
+//  becomes a thin client that marshals node-owning operations (start / stop /
+//  announce / status / persist / lxmf-send / …) to the NE over
+//  `NETunnelProviderSession.sendProviderMessage`. This file defines the
+//  request/response wire types and their JSON codec used by both ends:
 //    • app side  → `ProxyRnsBackend` encodes a `ProxyRequest`, sends it, decodes
 //      the `ProxyResponse`;
 //    • NE side   → `PacketTunnelProvider.handleAppMessage` try-decodes a
-//      `ProxyRequest`, dispatches to `NEReticulumNode`, encodes a
-//      `ProxyResponse`.
+//      `ProxyRequest`, dispatches to `NEPythonRNS` (via `dispatchPython`),
+//      encodes a `ProxyResponse`.
 //
 //  ── COLLISION RULE (HARD) ────────────────────────────────────────────────────
 //  This file imports Foundation ONLY. It is linked into BOTH targets, so it must

@@ -15,11 +15,12 @@
 //      send) the proxy appends an `OutboxEntry` here and returns optimistically so
 //      the UI shows the message pending instead of failed.
 //
-//    • DRAIN (NE side, `NEReticulumNode.start`): once the in-NE node is fully up
-//      (transport + router + delivery destination), it `drainAll()`s the queue and
-//      replays each entry through its existing `sendLxmfForIPC(...)` path. The send
-//      is then packed + signed + queued by LXMF-swift exactly as a live IPC send
-//      would have been.
+//    • DRAIN (NE side, `NEPythonRNS.replayOutbox` at node start): once the
+//      in-NE Python node is fully up (transport + router + delivery destination),
+//      it drains the queue and replays each entry through `lxmfSend(...)`, which
+//      marshals into `rns_bridge.send_opportunistic`. The send is then packed +
+//      signed + queued by the Python LXMF layer exactly as a live IPC send would
+//      have been.
 //
 //  ── DURABILITY MODEL ─────────────────────────────────────────────────────────
 //  This MIRRORS `SharedFrameQueue` exactly: an append-only file in the App-Group
@@ -37,7 +38,7 @@
 //  linked into the NE. An `OutboxEntry` therefore carries ONLY already-serialized
 //  scalars / `Data` (the same shape `ProxyRequest.lxmfSend` crosses the seam with),
 //  never a protocol object. The enqueue site (`ProxyRnsBackend`, imports RNSAPI
-//  only) and the drain site (`NEReticulumNode`, imports ReticulumSwift + LXMFSwift)
+//  only) and the drain site (`NEPythonRNS`, imports Foundation/Security only)
 //  both keep their own import sets; this Foundation-only seam is what lets them
 //  share the queue without either gaining the other's imports.
 //
@@ -49,7 +50,7 @@ import Foundation
 /// One pending outbound LXMF send, persisted while the NE is down so it can be
 /// replayed on the next NE start. The fields mirror `ProxyRequest.lxmfSend`
 /// (`destHashHex` / `content` / `method` / `fieldsData`) so the drain site can
-/// hand them straight to `NEReticulumNode.sendLxmfForIPC(...)` with no remapping.
+/// hand them straight to `NEPythonRNS.lxmfSend(...)` with no remapping.
 ///
 /// `Codable` via Foundation's synthesized conformance; `Data` rides as base64 and
 /// every other field is a JSON-native scalar, keeping the record (and this whole
@@ -84,8 +85,8 @@ public struct OutboxEntry: Codable, Sendable, Equatable {
     /// not a TODO stub. The canonical LXMF message hash is
     /// `SHA256(destHash + sourceHash + msgpack([timestamp, title, content, fields]))`
     /// (see LXMF-swift `LXMessage.pack`), where `timestamp` is assigned at PACK
-    /// time. Packing happens NE-side at drain (`sendLxmfForIPC` -> `LXMRouter
-    /// .handleOutbound`), and the proxy that enqueues here imports RNSAPI ONLY - it
+    /// time. Packing happens NE-side at drain (`NEPythonRNS.lxmfSend` ->
+    /// `rns_bridge.send_opportunistic`), and the proxy that enqueues here imports RNSAPI ONLY - it
     /// has no `Identity`, no LXMF-swift, and no pack-time timestamp, so it cannot
     /// compute the real hash. (The app's only "optimistic" id is a random `UUID` in
     /// `MessagingViewModel`, which is never passed down to the backend.) Dedup does

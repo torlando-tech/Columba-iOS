@@ -68,11 +68,11 @@ enum BackendPreference {
     /// the foreground embedded-Python node.
     ///
     /// INVARIANT: when `true`, the NE is the SINGLE owner of `lxmf.delivery`
-    /// (see `BackendFactory.make()` / `ProxyRnsBackend`). The NE mirrors this via
-    /// `NEReticulumNode.modelBNodeEnabled`, which is likewise hardcoded `true`
-    /// (the extension only exists to be the node). Hardcoding both sides also
-    /// removes the cross-process flag race that used to leave the NE in sniff
-    /// mode while the app came up as the proxy.
+    /// (see `BackendFactory.make()` / `ProxyRnsBackend`). The extension has no
+    /// sniff/opt-out mode of its own - it only exists to run the Python node -
+    /// so there is no separate NE-side flag to race against. This removes the
+    /// cross-process flag race that historically left the extension in a
+    /// non-node state while the app came up as the proxy.
     static var modelB: Bool {
         runtimeFlavor == .modelB
     }
