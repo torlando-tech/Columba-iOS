@@ -331,29 +331,39 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         stateLock.unlock()
         // Initial catch-up drain (anything delivered while the app was suspended or
         // before this start). The ping-driven drains keep it current from here.
-        requestDrain()
+        requestDrain(expectedGeneration: expectedGeneration)
     }
 
     /// Coalesce ping-driven drains into at most one in-flight + one trailing pass.
-    private func requestDrain() {
+    private func requestDrain(expectedGeneration: Int? = nil) {
         stateLock.lock()
+        guard cachedLocalInfo != nil,
+              expectedGeneration == nil || expectedGeneration == startGeneration else {
+            stateLock.unlock()
+            return
+        }
         if draining {
             rescanRequested = true
             stateLock.unlock()
             return
         }
         draining = true
+        let drainGeneration = startGeneration
         stateLock.unlock()
         Task { [weak self] in
             defer {
                 self?.stateLock.lock()
-                self?.draining = false
-                let again = self?.rescanRequested ?? false
-                self?.rescanRequested = false
+                // A stopped worker must not clear a restarted worker's state.
+                let ownsDrain = self?.startGeneration == drainGeneration
+                let again = ownsDrain && (self?.rescanRequested ?? false)
+                if ownsDrain {
+                    self?.draining = false
+                    self?.rescanRequested = false
+                }
                 self?.stateLock.unlock()
-                if again { self?.requestDrain() }
+                if again { self?.requestDrain(expectedGeneration: drainGeneration) }
             }
-            await self?.drainNow()
+            await self?.drainNow(expectedGeneration: drainGeneration)
         }
     }
 
@@ -365,10 +375,11 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// the generation BEFORE the await and re-check it UNDER the lock after, so a
     /// stale drain discards its payload instead of yielding events or resurrecting
     /// `lastSeenAnnounce` for a node that is stopped.
-    private func drainNow() async {
+    private func drainNow(expectedGeneration myGeneration: Int) async {
         stateLock.lock()
-        let myGeneration = startGeneration
+        let isLive = myGeneration == startGeneration
         stateLock.unlock()
+        guard isLive else { return }
         guard let response = try? await roundTrip(.drainEvents, op: "drainEvents"),
               case .ok(let payload) = response, let payload,
               let events = try? JSONDecoder().decode([ProxyEvent].self, from: payload)
@@ -385,8 +396,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         // we have re-emitted the whole batch on the event stream, ack the highest
         // `seq` so the NE advances its cursor and deletes only the processed
         // rows. Ack the max over EVERY event in the batch (not just the ones we
-        // yielded): the NE already emitted each row, so a deduped announce we
-        // skip here is still consumed. An ack is fire-and-forget: if it is lost,
+        // yielded): a deduped announce is still consumed. If an ack is lost,
         // or the app dies before it lands, the unacked rows survive and are
         // re-returned on the next drain (at-least-once; announce dedup + the
         // UI's message-hash idempotency make the re-delivery harmless).
@@ -485,7 +495,22 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             let stillLive = (myGeneration == startGeneration)
             stateLock.unlock()
             if stillLive {
-                _ = try? await roundTrip(.ackInbox(maxSeq: ackSeq), op: "ackInbox")
+                let reply = try? await roundTrip(.ackInbox(maxSeq: ackSeq), op: "ackInbox")
+                let acknowledged: Bool
+                if case .ok(let payload) = reply, let payload {
+                    acknowledged = (try? JSONDecoder().decode(Bool.self, from: payload)) == true
+                } else {
+                    acknowledged = false
+                }
+                // A lost/failed ack must replay the page, not spin IPC at full
+                // speed. Successful acks immediately fetch the next page, even
+                // when no new Darwin ping arrives while the app catches up.
+                if !acknowledged {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+                stateLock.lock()
+                if myGeneration == startGeneration { rescanRequested = true }
+                stateLock.unlock()
             }
         }
     }

@@ -93,6 +93,29 @@ ONE destination on the NE. The app is a thin client that marshals node-owning op
 
 This path runs entirely in the extension while `ColumbaModelBApp` is suspended or locked.
 
+## Durable inbox replay limits
+
+The extension returns at most 128 events and 256 KiB of Python event JSON per
+`drainEvents` request. The byte budget includes JSON escaping and separators;
+IPC envelopes add overhead. Reads preserve SQLite rows until `ackInbox` commits.
+The app then requests the next page until empty, without waiting for another
+Darwin notification. Failed or lost acknowledgments trigger a delayed replay;
+a stopped or restarted backend invalidates the old catch-up worker.
+
+Malformed events and individual events exceeding the byte limit are copied to
+`ne_inbox_quarantine` in the same identity's `ne-inbox.db`. This table retains
+`seq`, `kind`, the original `payload`, and `reason`. A small `inbox_error` marker
+lets normal acknowledgment advance past the row. The proxy consumes that
+marker without yielding a backend event. A warning records its sequence and
+reason; payload contents are not logged. Quarantined rows are retained for
+manual recovery, not automatically retried or pruned. Message persistence in
+the shared message store is independent of inbox replay.
+
+Regression checks: `python3 -m unittest discover -s tests` and the
+`ColumbaModelBAppTests/ProxyDrainRaceTests` Xcode tests. Device validation must
+include backlog catch-up, a cold restart, and background delivery; passing a
+short startup test does not establish overnight reliability.
+
 ## Outbound/send flow
 
 1. The app calls `ProxyRnsBackend.sendLxmfMessage(...)` with one app-assigned stable `sendId` per logical send (architecture review P1 #6).

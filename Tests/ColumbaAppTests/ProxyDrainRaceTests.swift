@@ -185,3 +185,123 @@ final class ProxyDrainRaceTests: XCTestCase {
                        "a drain that resumed after stop() must not yield events (stale incarnation): \(snapshot)")
     }
 }
+
+extension ProxyDrainRaceTests {
+    /// Catch-up must cross page boundaries without another Darwin notification.
+    func testCatchUpContinuesAfterAckUntilEmpty() async throws {
+        let finished = expectation(description: "all pages acknowledged and empty read reached")
+        let lock = NSLock()
+        var acknowledged: [Int] = []
+        var reads = 0
+        let backend = ProxyRnsBackend(send: { wire in
+            guard let request = try? ProxyIPC.decodeRequest(wire) else { return nil }
+            switch request {
+            case .start:
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(
+                    ProxyLocalInfo(identityHash: "11", destinationHash: "22"))))
+            case .drainEvents:
+                lock.lock()
+                reads += 1
+                let page = reads
+                let acks = acknowledged
+                lock.unlock()
+                if page <= 2 {
+                    XCTAssertEqual(acks, Array(1..<page), "next page must follow successful ack")
+                    let event = ProxyEvent(kind: "state", t: Double(page), state: "running", seq: page)
+                    return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([event])))
+                }
+                XCTAssertEqual(page, 3, "an empty page must end catch-up")
+                finished.fulfill()
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([ProxyEvent]())))
+            case .ackInbox(let seq):
+                lock.lock(); acknowledged.append(seq); lock.unlock()
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(true)))
+            default:
+                return ProxyIPC.encodeResponse(.ok(nil))
+            }
+        })
+        _ = try await backend.start(startParams())
+        await fulfillment(of: [finished], timeout: 5)
+        await backend.stop()
+        XCTAssertEqual(acknowledged, [1, 2])
+    }
+
+    /// A failed ack retains/replays the page, with a delay to prevent a hot loop.
+    func testFailedAckRetriesSamePageBeforeAdvancing() async throws {
+        let finished = expectation(description: "failed ack retried and catch-up finished")
+        let lock = NSLock()
+        var ackAttempts = 0
+        var reads = 0
+        var failedAt: Date?
+        let backend = ProxyRnsBackend(send: { wire in
+            guard let request = try? ProxyIPC.decodeRequest(wire) else { return nil }
+            switch request {
+            case .start:
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(
+                    ProxyLocalInfo(identityHash: "11", destinationHash: "22"))))
+            case .drainEvents:
+                lock.lock()
+                reads += 1
+                let attempts = ackAttempts
+                let previousFailure = failedAt
+                lock.unlock()
+                if attempts >= 2 {
+                    finished.fulfill()
+                    return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([ProxyEvent]())))
+                }
+                if let previousFailure {
+                    XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(previousFailure), 0.9)
+                }
+                let event = ProxyEvent(kind: "state", t: 1, state: "running", seq: 1)
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([event])))
+            case .ackInbox(let seq):
+                XCTAssertEqual(seq, 1)
+                lock.lock()
+                ackAttempts += 1
+                let succeeds = ackAttempts > 1
+                if !succeeds { failedAt = Date() }
+                lock.unlock()
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(succeeds)))
+            default:
+                return ProxyIPC.encodeResponse(.ok(nil))
+            }
+        })
+        _ = try await backend.start(startParams())
+        await fulfillment(of: [finished], timeout: 5)
+        await backend.stop()
+        XCTAssertEqual(reads, 3)
+        XCTAssertEqual(ackAttempts, 2)
+    }
+}
+
+extension ProxyDrainRaceTests {
+    func testStopDuringAckDoesNotScheduleAnotherPage() async throws {
+        let ackGate = DrainGate()
+        let lock = NSLock()
+        var reads = 0
+        let backend = ProxyRnsBackend(send: { wire in
+            guard let request = try? ProxyIPC.decodeRequest(wire) else { return nil }
+            switch request {
+            case .start:
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(
+                    ProxyLocalInfo(identityHash: "11", destinationHash: "22"))))
+            case .drainEvents:
+                lock.lock(); reads += 1; lock.unlock()
+                let event = ProxyEvent(kind: "state", t: 1, state: "running", seq: 1)
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([event])))
+            case .ackInbox:
+                return await ackGate.request()
+            default:
+                return ProxyIPC.encodeResponse(.ok(nil))
+            }
+        })
+        _ = try await backend.start(startParams())
+        let entered = await ackGate.waitEntered(timeout: 5)
+        XCTAssertTrue(entered)
+        await backend.stop()
+        ackGate.resolve(ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(true))))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        lock.lock(); let count = reads; lock.unlock()
+        XCTAssertEqual(count, 1, "stopped incarnation must not continue catch-up")
+    }
+}
