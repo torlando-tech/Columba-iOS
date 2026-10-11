@@ -1,7 +1,7 @@
 """Exercise the real inbox functions with SQLite, without loading iOS/RNS.
 
 Only the named functions/constants are extracted; their SQL and replay logic run
-unchanged. Run: python3 -m unittest discover -s tests -p test_rns_bridge_inbox.py
+unchanged. Run: python3 -m unittest Tests.static.test_rns_bridge_inbox
 """
 import ast
 import json
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 class InboxReplayTests(unittest.TestCase):
     def setUp(self):
-        source = ast.parse((Path(__file__).resolve().parents[1] / 'app/rns_bridge.py').read_text())
+        source = ast.parse((Path(__file__).resolve().parents[2] / 'app/rns_bridge.py').read_text())
         names = {'drain_inbox', 'ack_inbox', '_quarantine_inbox_event'}
         nodes = [n for n in source.body if
                  isinstance(n, ast.FunctionDef) and n.name in names or

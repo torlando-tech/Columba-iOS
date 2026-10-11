@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import CoreFoundation
 import RNSAPI
 @testable import ColumbaModelBApp
 
@@ -303,5 +304,73 @@ extension ProxyDrainRaceTests {
         try await Task.sleep(nanoseconds: 300_000_000)
         lock.lock(); let count = reads; lock.unlock()
         XCTAssertEqual(count, 1, "stopped incarnation must not continue catch-up")
+    }
+}
+
+extension ProxyDrainRaceTests {
+    /// Releasing the old worker must preserve BOTH flags owned by its replacement.
+    /// A notification while the replacement is blocked must coalesce, and its
+    /// trailing pass must still run when the replacement eventually completes.
+    func testRestartWhileOldAckBlockedPreservesNewDrainOwnership() async throws {
+        let oldAck = DrainGate()
+        let newDrain = DrainGate()
+        let caughtUp = expectation(description: "new worker retains its trailing drain")
+        let lock = NSLock()
+        var reads = 0
+        let empty = ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([ProxyEvent]())))
+        let ack = ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(true)))
+        defer { oldAck.resolve(ack); newDrain.resolve(empty) }
+        let backend = ProxyRnsBackend(send: { wire in
+            guard let request = try? ProxyIPC.decodeRequest(wire) else { return nil }
+            switch request {
+            case .start:
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(
+                    ProxyLocalInfo(identityHash: "11", destinationHash: "22"))))
+            case .drainEvents:
+                lock.lock(); reads += 1; let page = reads; lock.unlock()
+                if page == 1 {
+                    let event = ProxyEvent(kind: "state", t: 1, state: "running", seq: 1)
+                    return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([event])))
+                }
+                if page == 2 { return await newDrain.request() }
+                XCTAssertEqual(page, 3, "old worker must not create an extra drain")
+                caughtUp.fulfill()
+                return empty
+            case .ackInbox:
+                return await oldAck.request()
+            default:
+                return ProxyIPC.encodeResponse(.ok(nil))
+            }
+        })
+        _ = try await backend.start(startParams())
+        let oldEntered = await oldAck.waitEntered(timeout: 5)
+        XCTAssertTrue(oldEntered)
+        await backend.stop()
+        _ = try await backend.start(startParams())
+        let newEntered = await newDrain.waitEntered(timeout: 5)
+        XCTAssertTrue(newEntered)
+
+        func ping() {
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                CFNotificationName("network.columba.events" as CFString), nil, nil, true)
+        }
+        // Set the new worker's trailing-pass flag, then finish the obsolete worker.
+        ping()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        oldAck.resolve(ack)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        lock.lock(); let afterOldReply = reads; lock.unlock()
+        XCTAssertEqual(afterOldReply, 2, "old completion must not start a drain")
+        // If the old defer cleared `draining`, this ping starts a concurrent read.
+        ping()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        lock.lock(); let whileNewBlocked = reads; lock.unlock()
+        XCTAssertEqual(whileNewBlocked, 2, "replacement must still own draining")
+        newDrain.resolve(empty)
+        await fulfillment(of: [caughtUp], timeout: 5)
+        await backend.stop()
+        lock.lock(); let finalReads = reads; lock.unlock()
+        XCTAssertEqual(finalReads, 3)
     }
 }

@@ -111,7 +111,7 @@ reason; payload contents are not logged. Quarantined rows are retained for
 manual recovery, not automatically retried or pruned. Message persistence in
 the shared message store is independent of inbox replay.
 
-Regression checks: `python3 -m unittest discover -s tests` and the
+Regression checks: `python3 -m unittest Tests.static.test_rns_bridge_inbox` and the
 `ColumbaModelBAppTests/ProxyDrainRaceTests` Xcode tests. Device validation must
 include backlog catch-up, a cold restart, and background delivery; passing a
 short startup test does not establish overnight reliability.
