@@ -27,6 +27,7 @@ final class PythonNodeEngine: @unchecked Sendable {
     /// the retry loop is armed. Guarded by `stateLock`; the task is cancelled in
     /// `stop()` so it can never outlive the node it is retrying for.
     private var replayRetryTask: Task<Void, Never>?
+    private var propagationSyncTask: Task<Void, Never>?
 
     /// Cadence between outbox-retry passes while the node is running (P1 #4): a
     /// transient send failure (peer not connected yet, router not warm) is
@@ -246,6 +247,7 @@ final class PythonNodeEngine: @unchecked Sendable {
             replayOutbox()
         }
         armReplayRetry()
+        if restarting { armPropagationSync() }
         started = true
         return result
     }
@@ -280,6 +282,38 @@ final class PythonNodeEngine: @unchecked Sendable {
         stateLock.unlock()
     }
 
+    /// The node owns retrieval in both hosts. In the extension this continues
+    /// while the UI is suspended; a foreground node resumes when its app does.
+    /// Re-read the seam each pass so relay/interval/enable edits need no restart.
+    private func armPropagationSync() {
+        propagationSyncTask?.cancel()
+        propagationSyncTask = Task.detached { [weak self] in
+            var schedule = NodePropagationSchedule()
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 2_000_000_000) }
+                catch { return }
+                guard let self else { return }
+                self.performScheduledPropagationSync(schedule: &schedule)
+            }
+        }
+    }
+
+    private func performScheduledPropagationSync(schedule: inout NodePropagationSchedule) {
+        // Serialize with stop/start. A cancelled old worker must never touch a
+        // new node, even if it was waiting for this lock during a restart.
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard !Task.isCancelled, isRunning else { return }
+        let config = PropagationSeamConfig.loadFromAppGroup()
+        guard schedule.shouldSync(config: config, now: Date()),
+              let config, let hash = config.propagationNodeHash else { return }
+        guard Self.dict(from: call("set_propagation_node", kwargs: [
+            "dest_hash_hex": hash.map { String(format: "%02x", $0) }.joined(),
+            "stamp_cost": config.stampCost
+        ]))?["ok"] as? Bool == true else { return }
+        _ = call("propagation_sync", kwargs: ["timeout": 20.0])
+    }
+
     @discardableResult
     func stop() -> Bool {
         lifecycleLock.lock()
@@ -293,6 +327,8 @@ final class PythonNodeEngine: @unchecked Sendable {
         isRunning = false
         replayRetryTask?.cancel()
         replayRetryTask = nil
+        propagationSyncTask?.cancel()
+        propagationSyncTask = nil
         stateLock.unlock()
         processLease.release()
         ExtensionDiagLog.log("[NE-PY-RNS] stop")

@@ -35,7 +35,7 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         )
     }
 
-    func testIOSBackgroundRefreshIsTheOnlyPeriodicSyncScheduler() {
+    func testIOSManagerDoesNotDuplicateNodeOwnedPeriodicScheduler() {
         let manager = PropagationNodeManager(appServices: AppServices())
         manager.periodicSyncEnabled = true
         manager.syncInterval = 900
@@ -44,6 +44,30 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         defer { manager.stopPeriodicSync() }
 
         XCTAssertFalse(manager.hasInProcessPeriodicSyncTaskForTesting)
+    }
+
+    func testNodeRetrievalScheduleTracksSelectionIntervalAndDisable() {
+        var schedule = NodePropagationSchedule()
+        let start = Date(timeIntervalSince1970: 1000)
+        var config = PropagationSeamConfig(propagationNodeHash: Data([1]), stampCost: 0,
+                                          syncInterval: 60, periodicSyncEnabled: true)
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start))
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(59)))
+        XCTAssertTrue(schedule.shouldSync(config: config, now: start.addingTimeInterval(60)))
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(60)))
+        config.syncInterval = 30
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(70)))
+        XCTAssertTrue(schedule.shouldSync(config: config, now: start.addingTimeInterval(100)))
+        config.periodicSyncEnabled = false
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(200)))
+        config.periodicSyncEnabled = true
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(201)))
+        config.propagationNodeHash = Data([2])
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(230)))
+        XCTAssertTrue(schedule.shouldSync(config: config, now: start.addingTimeInterval(260)))
+        XCTAssertFalse(schedule.shouldSync(config: nil, now: start.addingTimeInterval(400)))
+        config.propagationNodeHash = nil
+        XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(500)))
     }
 
     func testNormalNotificationPolicyHonorsEnabledAndFavoritesOnlySettings() {

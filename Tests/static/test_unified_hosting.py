@@ -24,3 +24,35 @@ class UnifiedHostingContracts(unittest.TestCase):
             subprocess.run(["swiftc", *(str(ROOT / s) for s in sources), "-o", executable], check=True, capture_output=True, text=True)
             result = subprocess.run([executable], check=True, capture_output=True, text=True)
             self.assertIn("Host contracts passed", result.stdout)
+
+    def test_discovery_entry_uses_shared_backend_and_navigation(self):
+        source = (ROOT / 'Sources/ColumbaApp/Views/Settings/InterfaceManagementScreen.swift').read_text()
+        entry = source.split('private var discoveryEntryCard:')[1].split('} label:')[0]
+        self.assertIn('onOpenDiscoveredInterfaces()', entry)
+        summary = source.split('private func refreshDiscoverySummary()')[1].split('guard let snapshot')[0]
+        self.assertIn('await appServices.backend?.core.discovery()', summary)
+
+    def test_transport_toggle_restarts_node_and_reports_deferred_changes(self):
+        source = (ROOT / 'Sources/ColumbaApp/Views/Settings/SettingsView.swift').read_text()
+        toggle = source.split('private func transportModeCard')[1].split('// MARK: - Background Transport Card')[0]
+        self.assertIn('await appServices.restartPythonBackend()', toggle)
+        self.assertIn('case .requiresRelaunch:', toggle)
+        self.assertNotIn('setTransportEnabled(', toggle)
+
+    def test_periodic_retrieval_is_owned_by_shared_node(self):
+        source = (ROOT / 'Sources/RNSHost/PythonNodeEngine.swift').read_text()
+        self.assertIn('if restarting { armPropagationSync() }', source)
+        self.assertIn('propagationSyncTask?.cancel()', source)
+        worker = source.split('private func performScheduledPropagationSync')[1].split('@discardableResult')[0]
+        self.assertIn('guard !Task.isCancelled, isRunning', worker)
+        self.assertIn('PropagationSeamConfig.loadFromAppGroup()', worker)
+        self.assertIn('schedule.shouldSync(config: config, now: Date())', worker)
+        self.assertIn('call("propagation_sync", kwargs: ["timeout": 20.0])', worker)
+
+    def test_simulator_install_has_only_simctl_arguments(self):
+        workflow = (ROOT / '.github/workflows/tests.yml').read_text()
+        installs = [line for line in workflow.splitlines() if 'simctl install' in line]
+        self.assertTrue(installs)
+        for line in installs:
+            self.assertNotIn('--allow-empty-simulator-entitlements', line)
+        self.assertIn('"$SHIPPING_APP" --allow-empty-simulator-entitlements', workflow)

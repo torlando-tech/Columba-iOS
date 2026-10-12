@@ -301,7 +301,7 @@ jobs:
           SHIPPING_APP="$PWD/DerivedData-Python/Build/Products/Debug-iphonesimulator/ColumbaApp.app"
           xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
           xcrun simctl bootstatus "$DEVICE_ID" -b
-          xcrun simctl install "$DEVICE_ID" "$SHIPPING_APP" --allow-empty-simulator-entitlements
+          xcrun simctl install "$DEVICE_ID" "$SHIPPING_APP"
           export PATH="$HOME/.maestro/bin:$PATH"
           mkdir -p ui-screenshots
           screenshot_status=0

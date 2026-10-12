@@ -43,6 +43,7 @@ struct SettingsView: View {
 
     @State private var viewModel: SettingsViewModel?
     @State private var showMyIdentity = false
+    @State private var transportChangeNotice: String?
     @State private var showManageIdentities = false
     @State private var showInterfaceManagement = false
     @State private var showDiscoveredInterfaces = false
@@ -228,6 +229,14 @@ struct SettingsView: View {
         #endif
         .onAppear {
             viewModel?.refreshSyncState()
+        }
+        .alert("Transport Mode", isPresented: Binding(
+            get: { transportChangeNotice != nil },
+            set: { if !$0 { transportChangeNotice = nil } }
+        )) {
+            Button("OK") { transportChangeNotice = nil }
+        } message: {
+            Text(transportChangeNotice ?? "")
         }
         .fullScreenCover(item: $onboardingReviewIdentity) { existingIdentity in
             #if COLUMBA_ONBOARDING_ENABLED
@@ -485,13 +494,16 @@ struct SettingsView: View {
                 vm.isTransportEnabled = newValue
                 vm.saveSettings()
                 Task {
-                    // Swift backend: route through the transport seam, not the
-                    // Python-only restart below. restartPythonBackend() is a
-                    // no-op without an embedded Python backend, so the toggle
-                    // would otherwise be saved to disk but never reach the
-                    // running engine.
-                    appServices.transport?.setTransportEnabled(
-                        newValue, identity: appServices.identity)
+                    let outcome = await appServices.restartPythonBackend()
+                    switch outcome {
+                    case .applied: break
+                    case .requiresRelaunch:
+                        transportChangeNotice = "Transport Mode is saved. AutoInterface requires a fresh node process. Fully close and reopen Columba; in Background mode, stop and start Reticulum Network too."
+                    case .skipped:
+                        transportChangeNotice = "Transport Mode is saved and will apply when Reticulum starts."
+                    case .failed:
+                        transportChangeNotice = "Transport Mode is saved, but Reticulum could not restart. Close and reopen Columba to retry."
+                    }
                 }
             })
         ) {

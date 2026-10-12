@@ -410,7 +410,8 @@ public final class PropagationNodeManager {
         stopPeriodicSync()
         guard periodicSyncEnabled else { return }
         #if os(iOS)
-        // iOS schedules refresh through the existing BGAppRefreshTask coordinator.
+        // The shared Python node schedules retrieval in its owning process.
+        // Avoid a duplicate UI timer; the extension continues while iOS suspends us.
         return
         #else
         periodicSyncTask = Task { [weak self] in
@@ -514,10 +515,9 @@ public final class PropagationNodeManager {
         publishPropagationSeam()
     }
 
-    /// Model B: cross the App-Group seam to the NE's in-NE `LXMRouter`. The NE wires
-    /// the PN + sync settings onto its router and runs the periodic sync there (the
-    /// app can't call it directly). The Python build owns the router in-process and
-    /// does not compile this helper.
+    /// Publish relay and retrieval preferences to the shared Python node.
+    /// Its scheduler reads this in either process host, including while the UI
+    /// is suspended and the extension continues running.
     private func publishPropagationSeam() {
         if let hash = selectedNodeHash {
             PropagationSeamConfig(

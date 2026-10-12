@@ -241,7 +241,7 @@ struct InterfaceManagementScreen: View {
     /// full list lives in DiscoveredInterfacesScreen, not here.
     private var discoveryEntryCard: some View {
         Button {
-            // Model B has no app-side discovery — the tap is a no-op.
+            onOpenDiscoveredInterfaces()
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
@@ -315,13 +315,9 @@ struct InterfaceManagementScreen: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    /// One-shot lightweight read of the discovery snapshot for the entry
-    /// card. `pythonBackend` is compiled only into the shipping (Python)
-    /// build — Model B has no app-side discovery, so the card renders the
-    /// "tap to configure" state (tap is a no-op there, see the destination).
+    /// Read discovery through the same backend seam in either hosting mode.
     private func refreshDiscoverySummary() async {
-        let snapshot: RNSAPI.DiscoverySnapshot?
-        snapshot = nil
+        let snapshot = await appServices.backend?.core.discovery()
 
         guard let snapshot else {
             discoverySummary = nil

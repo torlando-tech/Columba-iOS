@@ -2886,7 +2886,7 @@ public final class AppServices {
         // the current discovery settings (writePythonConfig reads discovery
         // settings — T-C) before tearing down, so the re-init reads fresh values.
         let fresh = InterfaceRepository().getEnabledInterfaces()
-        _ = await writePythonConfig(interfaces: fresh)
+        guard await writePythonConfig(interfaces: fresh) else { return .failed }
         // AutoInterface guard: its teardown does not release the multicast
         // sockets / daemon threads (see doc comment), so a same-process
         // re-init would hit the multicast-bind collision and take the backend
