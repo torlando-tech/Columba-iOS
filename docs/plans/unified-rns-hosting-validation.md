@@ -31,3 +31,13 @@ Build and artifact validation do not replace an end-to-end messaging soak. Exerc
 All four reported regressions were valid. Periodic retrieval now belongs to the shared Python node: it reads the saved relay/interval/enable settings in either host, runs bounded syncs, cancels on stop, and rejects cancelled workers after restart. Foreground retrieval pauses when iOS suspends the app; extension retrieval does not depend on a UI timer or opportunistic BGTask delivery. Discovery navigation/summaries use the common backend. Transport changes rewrite the config and restart through the shared lifecycle, with a notice when AutoInterface requires a fresh process. The screenshot install command no longer receives an artifact-verifier flag.
 
 Follow-up validation: signed Debug app/extension/test build passes; all 42 focused scheduling, host, and drain tests pass on the iPhone; all 255 tests in the configured static CI lane pass. Four new wiring checks fail against the pre-fix commit and pass with the fixes. The schedule policy test covers deadlines, repeated checks, interval/relay changes, disabling/re-enabling, and clearing selection. An actual relay retrieval while the UI is suspended remains part of manual regression.
+
+### Relay-selection race and completion history
+
+Scheduled retrieval no longer reapplies its saved relay snapshot. Python's live selection remains owned by selection commands, so a timer cannot undo a clear or replacement while its preference save is pending. Startup still restores the saved relay once when bringing the node up.
+
+Both manual and scheduled sync now publish confirmed success through the shared completion snapshot and existing last-sync preference. Failed or missing replies leave history unchanged. Settings refreshes on completion notification, appearance, and app activation; app activation also refreshes the manager before deciding whether to retrieve again. Preference saves no longer write a potentially stale cached completion time.
+
+The signed Debug app, extension, and hosted tests build successfully. All 256 static CI tests pass; the updated wiring checks fail against the pre-fix commit. Added device regressions exercise persisted completion times/counts, fresh-manager catch-up, unsuccessful replies preserving history, successful zero-message retrieval, and legacy snapshot decoding.
+
+All 44 focused scheduling/history, host, and drain tests pass on the physical iPhone after this follow-up. End-to-end relay retrieval with the UI suspended remains on the manual checklist.

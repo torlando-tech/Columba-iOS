@@ -20,7 +20,7 @@ enum NodeCommandDispatcher {
         case .setPropagationNode(let hash, let cost):
             return bridgeResponse(engine.call("set_propagation_node", kwargs: ["dest_hash_hex": hash, "stamp_cost": cost]))
         case .propagationSync(let timeout):
-            return bridgeResponse(engine.call("propagation_sync", kwargs: ["timeout": timeout]))
+            return bridgeResponse(engine.propagationSync(timeout: timeout))
         case .cancelPropagationSync:
             return bridgeResponse(engine.call("cancel_propagation_sync", kwargs: [:]))
         case .incomingMessageLimit(let limit):

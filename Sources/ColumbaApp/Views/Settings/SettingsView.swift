@@ -41,6 +41,7 @@ struct SettingsView: View {
 
     // MARK: - State
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel: SettingsViewModel?
     @State private var showMyIdentity = false
     @State private var transportChangeNotice: String?
@@ -228,6 +229,14 @@ struct SettingsView: View {
         }
         #endif
         .onAppear {
+            viewModel?.refreshSyncState()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { viewModel?.refreshSyncState() }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NotificationObserver.propagationSyncStateChangedInApp
+        ).receive(on: RunLoop.main)) { _ in
             viewModel?.refreshSyncState()
         }
         .alert("Transport Mode", isPresented: Binding(

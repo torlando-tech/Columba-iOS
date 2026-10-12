@@ -936,6 +936,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             let phaseValue = newPhase
             if phaseValue == .active {
+                appServices.propagationManager?.refreshLastSyncTime()
                 if let repository = messageRepository {
                     Task {
                         await NotificationService.shared

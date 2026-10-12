@@ -800,6 +800,7 @@ public final class SettingsViewModel {
     @MainActor
     public func refreshSyncState() {
         if let propManager = appServices.propagationManager {
+            propManager.refreshLastSyncTime()
             lastSyncTime = propManager.lastSyncTime
             selectedRelayName = propManager.selectedNodeName
         }

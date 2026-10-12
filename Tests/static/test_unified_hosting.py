@@ -47,7 +47,11 @@ class UnifiedHostingContracts(unittest.TestCase):
         self.assertIn('guard !Task.isCancelled, isRunning', worker)
         self.assertIn('PropagationSeamConfig.loadFromAppGroup()', worker)
         self.assertIn('schedule.shouldSync(config: config, now: Date())', worker)
-        self.assertIn('call("propagation_sync", kwargs: ["timeout": 20.0])', worker)
+        self.assertIn('propagationSync(timeout: 20.0)', worker)
+        self.assertNotIn('call("set_propagation_node"', worker)
+        self.assertIn('publishSuccessfulResult(Self.dict(from: result))', source)
+        dispatcher = (ROOT / 'Sources/RNSHost/NodeCommandDispatcher.swift').read_text()
+        self.assertIn('engine.propagationSync(timeout: timeout)', dispatcher)
 
     def test_simulator_install_has_only_simctl_arguments(self):
         workflow = (ROOT / '.github/workflows/tests.yml').read_text()
@@ -56,3 +60,14 @@ class UnifiedHostingContracts(unittest.TestCase):
         for line in installs:
             self.assertNotIn('--allow-empty-simulator-entitlements', line)
         self.assertIn('"$SHIPPING_APP" --allow-empty-simulator-entitlements', workflow)
+
+    def test_sync_history_refreshes_visible_and_resumed_settings(self):
+        manager = (ROOT / 'Sources/ColumbaApp/Services/PropagationNodeManager.swift').read_text()
+        preferences = manager.split('public func savePreferences()')[1].split('private func publishPropagationSeam')[0]
+        self.assertNotIn('setLastSyncTimestamp', preferences)
+        view = (ROOT / 'Sources/ColumbaApp/Views/Settings/SettingsView.swift').read_text()
+        self.assertIn('NotificationObserver.propagationSyncStateChangedInApp', view)
+        self.assertIn('if phase == .active { viewModel?.refreshSyncState() }', view)
+        model = (ROOT / 'Sources/ColumbaApp/ViewModels/SettingsViewModel.swift').read_text()
+        refresh = model.split('public func refreshSyncState()')[1].split('/// Copy identity')[0]
+        self.assertIn('propManager.refreshLastSyncTime()', refresh)

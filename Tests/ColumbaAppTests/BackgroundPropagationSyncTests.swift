@@ -70,6 +70,45 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertFalse(schedule.shouldSync(config: config, now: start.addingTimeInterval(500)))
     }
 
+    func testScheduledSuccessPublishesHistoryAndManagerCatchesUp() async {
+        let group = "ScheduledSyncTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: group)!
+        defer { defaults.removePersistentDomain(forName: group) }
+        let completion = Date(timeIntervalSince1970: 1234567)
+        XCTAssertTrue(PropagationSyncStateSnapshot.publishSuccessfulResult(
+            ["ok": true, "received_messages": 3], at: completion, group: group))
+        XCTAssertEqual(defaults.double(forKey: "lastSyncTimestamp"), completion.timeIntervalSince1970)
+        let snapshot = PropagationSyncStateSnapshot.loadFromAppGroup(group)
+        XCTAssertEqual(snapshot?.phase, .complete)
+        XCTAssertEqual(snapshot?.received, 3)
+        XCTAssertEqual(snapshot?.lastSuccessfulSync, completion)
+
+        // A fresh manager catches up even if it missed the Darwin notification.
+        let manager = PropagationNodeManager(appServices: AppServices())
+        manager.refreshLastSyncTime(group: group)
+        XCTAssertEqual(manager.lastSyncTime, completion)
+        XCTAssertEqual(manager.syncState.lastSync, completion)
+
+        let failures: [[String: Any]?] = [nil, [:], ["ok": false, "reason": "no-node"]]
+        for result in failures {
+            XCTAssertFalse(PropagationSyncStateSnapshot.publishSuccessfulResult(
+                result, at: completion.addingTimeInterval(60), group: group))
+            XCTAssertEqual(PropagationSyncStateSnapshot.lastSuccessfulSync(in: group), completion)
+            XCTAssertEqual(PropagationSyncStateSnapshot.loadFromAppGroup(group), snapshot)
+        }
+        XCTAssertTrue(PropagationSyncStateSnapshot.publishSuccessfulResult(
+            ["ok": true, "received_messages": 0], at: completion.addingTimeInterval(120), group: group))
+        manager.refreshLastSyncTime(group: group)
+        XCTAssertEqual(manager.lastSyncTime, completion.addingTimeInterval(120))
+    }
+
+    func testLegacySyncSnapshotDecodesWithoutCompletionTime() throws {
+        let data = Data(#"{"phase":"complete","progress":1,"received":2,"total":2}"#.utf8)
+        let snapshot = try JSONDecoder().decode(PropagationSyncStateSnapshot.self, from: data)
+        XCTAssertEqual(snapshot.received, 2)
+        XCTAssertNil(snapshot.lastSuccessfulSync)
+    }
+
     func testNormalNotificationPolicyHonorsEnabledAndFavoritesOnlySettings() {
         let suiteName = "BackgroundPropagationSyncTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

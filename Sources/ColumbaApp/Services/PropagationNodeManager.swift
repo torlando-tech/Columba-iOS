@@ -101,8 +101,7 @@ public final class PropagationNodeManager {
     /// Task for periodic sync.
     private var periodicSyncTask: Task<Void, Never>?
 
-    /// Test seam proving that iOS does not run a second timer beside
-    /// BGAppRefreshTask. Other platforms still use the in-process timer.
+    /// Test seam proving that iOS does not duplicate the node-owned timer.
     var hasInProcessPeriodicSyncTaskForTesting: Bool {
         periodicSyncTask != nil
     }
@@ -344,7 +343,8 @@ public final class PropagationNodeManager {
             syncState.receivedMessages = result.receivedMessages
             syncState.errorDescription = result.ok ? nil : result.reason
             if result.ok {
-                syncState.lastSync = Date()
+                refreshLastSyncTime()
+                syncState.lastSync = lastSyncTime ?? Date()
                 lastSyncTime = syncState.lastSync
             }
             return result.ok
@@ -482,6 +482,14 @@ public final class PropagationNodeManager {
         _ = await reapplySelectedNodeToPythonBackend()
     }
 
+    /// Catch up after a completion notification or a suspended UI. Preference
+    /// saves never write this value: that would overwrite newer node history.
+    func refreshLastSyncTime(group: String = appGroupIdentifier) {
+        guard let time = PropagationSyncStateSnapshot.lastSuccessfulSync(in: group) else { return }
+        lastSyncTime = time
+        syncState.lastSync = time
+    }
+
     /// Save preferences to SettingsRepository.
     public func savePreferences() async {
         await settingsRepository.setAutoSelectRelay(autoSelectEnabled)
@@ -506,12 +514,7 @@ public final class PropagationNodeManager {
             await settingsRepository.setManualRelayStampCost(nil)
         }
 
-        if let time = lastSyncTime {
-            await settingsRepository.setLastSyncTimestamp(time.timeIntervalSince1970)
-        }
-
-        // Model B: republish the seam so PN selection / sync-setting edits reach the
-        // NE's router. The Python build owns the router and has no seam declarations.
+        // Republish selection and scheduling preferences to either node host.
         publishPropagationSeam()
     }
 

@@ -52,7 +52,7 @@ public actor SettingsRepository {
         static let manualRelayStampCost = "manualRelayStampCost"
         static let periodicSyncEnabled = "periodicSyncEnabled"
         static let syncIntervalSeconds = "syncIntervalSeconds"
-        static let lastSyncTimestamp = "lastSyncTimestamp"
+        static let lastSyncTimestamp = PropagationSyncStateSnapshot.lastSyncTimestampKey
         static let incomingMessageSizeLimitKB = "incoming_message_size_limit_kb"
         static let messageTextScale = "message_text_scale"
         static let iconName = "profileIconName"

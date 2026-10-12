@@ -305,13 +305,18 @@ final class PythonNodeEngine: @unchecked Sendable {
         defer { lifecycleLock.unlock() }
         guard !Task.isCancelled, isRunning else { return }
         let config = PropagationSeamConfig.loadFromAppGroup()
-        guard schedule.shouldSync(config: config, now: Date()),
-              let config, let hash = config.propagationNodeHash else { return }
-        guard Self.dict(from: call("set_propagation_node", kwargs: [
-            "dest_hash_hex": hash.map { String(format: "%02x", $0) }.joined(),
-            "stamp_cost": config.stampCost
-        ]))?["ok"] as? Bool == true else { return }
-        _ = call("propagation_sync", kwargs: ["timeout": 20.0])
+        guard schedule.shouldSync(config: config, now: Date()) else { return }
+        // Selection commands own the live relay. Reapplying the persisted
+        // snapshot here can undo a clear/change whose persistence is pending.
+        _ = propagationSync(timeout: 20.0)
+    }
+
+    /// Manual and scheduled retrieval share success publication. The history
+    /// lives in the App Group so a suspended or cold-started UI can catch up.
+    func propagationSync(timeout: TimeInterval) -> String? {
+        let result = call("propagation_sync", kwargs: ["timeout": timeout])
+        PropagationSyncStateSnapshot.publishSuccessfulResult(Self.dict(from: result))
+        return result
     }
 
     @discardableResult

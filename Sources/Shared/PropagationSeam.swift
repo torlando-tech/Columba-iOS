@@ -116,19 +116,24 @@ public struct PropagationSyncStateSnapshot: Codable, Equatable, Sendable {
     public var received: Int
     public var total: Int
     public var errorDescription: String?
+    /// Optional for compatibility with snapshots written by older builds.
+    public var lastSuccessfulSync: Date?
+    public static let lastSyncTimestampKey = "lastSyncTimestamp"
 
     public init(
         phase: Phase,
         progress: Double = 0,
         received: Int = 0,
         total: Int = 0,
-        errorDescription: String? = nil
+        errorDescription: String? = nil,
+        lastSuccessfulSync: Date? = nil
     ) {
         self.phase = phase
         self.progress = progress
         self.received = received
         self.total = total
         self.errorDescription = errorDescription
+        self.lastSuccessfulSync = lastSuccessfulSync
     }
 
     // MARK: App-Group persistence
@@ -148,6 +153,29 @@ public struct PropagationSyncStateSnapshot: Codable, Equatable, Sendable {
               let data = try? JSONEncoder().encode(self) else { return }
         defaults.set(data, forKey: SharedDefaultsConstants.propagationSyncStateKey)
         Self.postChangedNotification()
+    }
+
+    /// Publish only confirmed successes; failed/ambiguous replies must not
+    /// advance history. The node is the sole writer for manual and automatic runs.
+    @discardableResult
+    static func publishSuccessfulResult(
+        _ result: [String: Any]?, at date: Date = Date(),
+        group: String = appGroupIdentifier
+    ) -> Bool {
+        guard result?["ok"] as? Bool == true,
+              let defaults = UserDefaults(suiteName: group) else { return false }
+        let received = result?["received_messages"] as? Int ?? 0
+        defaults.set(date.timeIntervalSince1970, forKey: lastSyncTimestampKey)
+        PropagationSyncStateSnapshot(
+            phase: .complete, progress: 1, received: received, total: received,
+            lastSuccessfulSync: date
+        ).saveToAppGroup(group)
+        return true
+    }
+
+    static func lastSuccessfulSync(in group: String = appGroupIdentifier) -> Date? {
+        let value = UserDefaults(suiteName: group)?.double(forKey: lastSyncTimestampKey) ?? 0
+        return value > 0 ? Date(timeIntervalSince1970: value) : nil
     }
 
     public static func clearFromAppGroup(_ group: String = appGroupIdentifier) {
