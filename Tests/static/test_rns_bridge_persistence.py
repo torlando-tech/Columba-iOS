@@ -40,7 +40,14 @@ _INBOX_TABLE = """CREATE TABLE IF NOT EXISTS ne_inbox (
 def _extract(names):
     tree = ast.parse(BRIDGE.read_text())
     wanted = set(names)
-    return [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
+    # Extract the real bounded-read dependencies as well as the functions.
+    # Omitting these makes drain_inbox catch NameError and return an empty page.
+    if "drain_inbox" in wanted:
+        wanted.update({"_quarantine_inbox_event", "_INBOX_BATCH_ROWS", "_INBOX_BATCH_BYTES"})
+    return [n for n in tree.body if
+            isinstance(n, ast.FunctionDef) and n.name in wanted or
+            isinstance(n, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id in wanted for t in n.targets)]
 
 
 class RnsBridgePersistenceTest(unittest.TestCase):
@@ -61,6 +68,7 @@ class RnsBridgePersistenceTest(unittest.TestCase):
             "RNS": types.SimpleNamespace(
                 log=lambda *a, **k: None,
                 LOG_ERROR=0,
+                LOG_WARNING=0,
             ),
             "_inbox_path": None,
             "_inbox_conn": None,
@@ -277,6 +285,7 @@ class RnsBridgeStartPersistenceModeTest(unittest.TestCase):
             "RNS": types.SimpleNamespace(
                 log=lambda *a, **k: None,
                 LOG_ERROR=0,
+                LOG_WARNING=0,
                 Reticulum=lambda *a, **k: (_ for _ in ()).throw(
                     self._StopAfterPersistence()
                 ),
@@ -580,6 +589,7 @@ class RnsBridgeInboxDrainTest(unittest.TestCase):
             "RNS": types.SimpleNamespace(
                 log=lambda *a, **k: None,
                 LOG_ERROR=0,
+                LOG_WARNING=0,
             ),
             "_inbox_path": None,
             "_inbox_conn": None,

@@ -586,46 +586,87 @@ def _publish_durable(kind: str, payload: dict) -> None:
         _coalesced_events_ping()
 
 
-def drain_inbox() -> list:
-    """Read the durable inbox, oldest-first, WITHOUT deleting. Returns the raw
-    event dicts (kind + t + the original payload fields) PLUS a `_seq` field so
-    the consumer can ack precisely. The app maps each onto a BackendEvent and
-    feeds its `backend.events` consumer, then advances the cursor via
-    `ack_inbox(max_seq)` once it has processed the batch.
+# Bound both Python objects and the JSON copied/decoded across the NE/app seam.
+_INBOX_BATCH_ROWS = 128
+_INBOX_BATCH_BYTES = 256 * 1024
 
-    Contract §5: the read is bounded and NON-destructive. Deleting on read (the
-    prior behavior) meant a lost IPC reply or an app termination before the
-    consumer processed the batch lost delivery-state updates and announces
-    permanently. With the cursor, unacked rows survive and are re-returned on
-    the next drain; `ack_inbox` advances past them only after the consumer has
-    handled them (at-least-once delivery)."""
+
+def _quarantine_inbox_event(seq: int, reason: str) -> dict:
+    """Preserve an unreadable/oversized row on disk, without loading its payload.
+
+    Return a small cursor-bearing marker. Normal ack removes the inbox copy;
+    the original remains in ne_inbox_quarantine for recovery/inspection.
+    """
+    _inbox_conn.execute(
+        "CREATE TABLE IF NOT EXISTS ne_inbox_quarantine ("
+        "seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, "
+        "reason TEXT NOT NULL)"
+    )
+    _inbox_conn.execute(
+        "INSERT OR IGNORE INTO ne_inbox_quarantine(seq,kind,payload,reason) "
+        "SELECT seq,kind,payload,? FROM ne_inbox WHERE seq=?", (reason, seq)
+    )
+    _inbox_conn.commit()
+    RNS.log(f"rns_bridge: inbox row {seq} quarantined: {reason}", RNS.LOG_WARNING)
+    return {"kind": "inbox_error", "t": 0, "seq": seq, "reason": reason}
+
+
+def drain_inbox() -> list:
+    """Read an ordered, bounded page WITHOUT advancing the durable cursor.
+
+    The app acknowledges the highest seq after yielding the page, then requests
+    another page until empty. Lost replies and app death leave rows replayable.
+    Count default json.dumps wire bytes, including ASCII escaping, array brackets
+    and separators. Inspect sizes in SQLite before fetching payloads so a single
+    oversized row cannot recreate the startup memory spike. Poison rows are
+    preserved in quarantine and represented by small ackable error markers.
+    """
     with _inbox_lock:
         _open_inbox()
         if _inbox_conn is None:
             return []
         try:
-            cur = _inbox_conn.execute(
-                "SELECT seq, kind, payload FROM ne_inbox ORDER BY seq ASC"
-            )
-            rows = cur.fetchall()
-            if not rows:
-                return []
+            rows = _inbox_conn.execute(
+                "SELECT seq, length(CAST(payload AS BLOB)) FROM ne_inbox "
+                "ORDER BY seq ASC LIMIT ?", (_INBOX_BATCH_ROWS,)
+            ).fetchall()
             out = []
-            for seq, kind, payload in rows:
+            wire_bytes = 2  # JSON array brackets
+            for seq, size in rows:
+                if size is None or size > _INBOX_BATCH_BYTES:
+                    event = _quarantine_inbox_event(seq, "payload exceeds replay byte limit")
+                else:
+                    payload = _inbox_conn.execute(
+                        "SELECT payload FROM ne_inbox WHERE seq=?", (seq,)
+                    ).fetchone()[0]
+                    try:
+                        event = json.loads(payload)
+                        if not isinstance(event, dict):
+                            raise ValueError("event must be an object")
+                        event["seq"] = seq
+                    except (ValueError, TypeError, RecursionError):
+                        event = _quarantine_inbox_event(seq, "invalid event JSON")
                 try:
-                    event = json.loads(payload)
-                except Exception:  # noqa: BLE001
-                    continue
-                event["seq"] = seq
+                    event_bytes = len(json.dumps(event, allow_nan=False).encode("utf-8"))
+                except (ValueError, TypeError, RecursionError):
+                    event = _quarantine_inbox_event(seq, "event cannot be encoded")
+                    event_bytes = len(json.dumps(event, allow_nan=False).encode("utf-8"))
+                if event_bytes + 2 > _INBOX_BATCH_BYTES:
+                    event = _quarantine_inbox_event(seq, "encoded event exceeds replay byte limit")
+                    event_bytes = len(json.dumps(event, allow_nan=False).encode("utf-8"))
+                added_bytes = event_bytes + (2 if out else 0)
+                if wire_bytes + added_bytes > _INBOX_BATCH_BYTES:
+                    break
                 out.append(event)
+                wire_bytes += added_bytes
             return out
         except Exception as e:  # noqa: BLE001
             RNS.log(f"rns_bridge: inbox drain failed: {e}", RNS.LOG_ERROR)
             return []
 
 
-def ack_inbox(max_seq: int) -> None:
-    """Advance the inbox consumer cursor: delete rows at or below `max_seq`.
+def ack_inbox(max_seq: int) -> bool:
+    """Advance the inbox cursor; return True only after a successful commit.
 
     Called by the app over IPC AFTER it has processed a drained batch (the
     highest `_seq` in that batch is the cursor). Rows above the cursor - i.e.
@@ -636,14 +677,17 @@ def ack_inbox(max_seq: int) -> None:
     with _inbox_lock:
         _open_inbox()
         if _inbox_conn is None:
-            return
+            return False
         try:
             _inbox_conn.execute(
                 "DELETE FROM ne_inbox WHERE seq <= ?", (int(max_seq),)
             )
             _inbox_conn.commit()
+            return True
         except Exception as e:  # noqa: BLE001
+            _inbox_conn.rollback()
             RNS.log(f"rns_bridge: inbox ack failed: {e}", RNS.LOG_ERROR)
+            return False
 
 
 # ── Shared GRDB message store (NE → app, Model B) ──

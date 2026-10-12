@@ -511,7 +511,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return .ok(try? JSONEncoder().encode(announces))
 
         case .drainEvents:
-            // The Model B event bridge: drain the FULL queue (inbound, delivery,
+            // The Model B event bridge: read a bounded page of the queue (inbound, delivery,
             // state, link, announce) and map every event onto ProxyEvent so the
             // app's proxy poller can re-emit each as a BackendEvent. (The legacy
             // .heardAnnounces op above only maps announces and discards the rest;
@@ -527,8 +527,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // Unacked rows survive a lost drain reply / app death and are
             // re-returned on the next drain (at-least-once; announce dedup in the
             // app makes re-delivery idempotent).
-            engine.ackInbox(maxSeq: maxSeq)
-            return .ok(try? JSONEncoder().encode(true))
+            let acknowledged = engine.ackInbox(maxSeq: maxSeq)
+            return .ok(try? JSONEncoder().encode(acknowledged))
 
         case .bleConnections:
             // Phase 2: the mesh CoreBluetooth radio now runs IN-PROCESS in the

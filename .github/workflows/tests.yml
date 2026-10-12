@@ -88,6 +88,7 @@ jobs:
             Tests.static.test_discovered_interfaces_contract \
             Tests.static.test_ios_rnode_driver \
             Tests.static.test_rns_bridge_persistence \
+            Tests.static.test_rns_bridge_inbox \
             Tests.static.test_ios_rnode_stale_bond_contract \
             Tests.static.test_network_card_interface_list \
             Tests.static.test_tag_version_stamp
