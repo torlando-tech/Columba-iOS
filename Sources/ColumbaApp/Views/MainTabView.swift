@@ -119,9 +119,20 @@ struct MainTabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // The shipping runtime owns the aggregate TCP/Auto/RNode/BLE state.
-            // Model B's relay lives in the Network Extension and is not represented
-            // by AppServices.isConnected, so do not present a false offline banner there.
+            // Disconnected-interface banner. `appServices.isConnected` is driven by
+            // the periodic `backend.statusSnapshot()` poll, which reads the shared
+            // proxy backend in BOTH hosting modes (foreground and Network Extension),
+            // so the aggregate TCP/Auto/RNode/BLE connectivity state is accurate
+            // regardless of which host owns the node. Tapping routes to the
+            // interface-management sheet via the consumed `shouldOpenInterfaceManagement` flag.
+            if let content = InterfaceConnectivityBannerContent.forConnectionState(
+                isConnected: appServices.isConnected
+            ) {
+                InterfaceConnectivityBanner(content: content) {
+                    selectedTab = .settings
+                    shouldOpenInterfaceManagement = true
+                }
+            }
 
             TabView(selection: $selectedTab) {
             // Chats Tab
