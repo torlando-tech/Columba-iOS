@@ -36,7 +36,17 @@ struct ColumbaApp: App {
     /// Pending lxma:// deep link URL to process.
     @State private var pendingDeepLink: String?
 
-    private static let launchHostingMode = NodeHostingMode.activateSelection()
+    private static let launchHostingMode: NodeHostingMode = {
+        #if DEBUG && targetEnvironment(simulator)
+        // Screenshot flows exercise the real local node. The simulator cannot
+        // run the packet tunnel and must not stop at its consent gate.
+        if ProcessInfo.processInfo.arguments.contains("ui-screenshotter") {
+            SharedDefaults.suite.set(NodeHostingMode.foreground.rawValue,
+                                     forKey: NodeHostingMode.preferenceKey)
+        }
+        #endif
+        return NodeHostingMode.activateSelection()
+    }()
 
     // MARK: - Init
 

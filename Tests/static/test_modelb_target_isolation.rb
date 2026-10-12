@@ -23,6 +23,13 @@ class UnifiedHostingProjectTest < Minitest::Test
       end
     end
   end
+  def test_python_hosts_use_the_same_single_simulator_architecture
+    %w[ColumbaApp ColumbaNetworkExtension].each do |name|
+      @project.targets.find { |t| t.name == name }.build_configurations.each do |c|
+        assert_equal 'x86_64', c.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'], "#{name} #{c.name}"
+      end
+    end
+  end
   def test_shared_engine_and_adapter_boundary
     app = @project.targets.find { |t| t.name == 'ColumbaApp' }
     ne = @project.targets.find { |t| t.name == 'ColumbaNetworkExtension' }

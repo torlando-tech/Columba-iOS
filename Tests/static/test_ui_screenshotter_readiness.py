@@ -96,6 +96,14 @@ class UIScreenshotterReadinessContractTests(unittest.TestCase):
         self.assertIn("!isScreenshotterLaunch", app)
         self.assertIn("creating disposable screenshotter identity", app)
 
+    def test_simulator_screenshot_launch_selects_foreground_before_host_activation(self):
+        app = (ROOT / "Sources/ColumbaApp/App/ColumbaApp.swift").read_text()
+        launch = app.split("private static let launchHostingMode")[1].split("// MARK: - Init")[0]
+        self.assertIn("#if DEBUG && targetEnvironment(simulator)", launch)
+        self.assertIn('arguments.contains("ui-screenshotter")', launch)
+        self.assertLess(launch.index("NodeHostingMode.foreground.rawValue"),
+                        launch.index("NodeHostingMode.activateSelection()"))
+
 
 if __name__ == "__main__":
     unittest.main()

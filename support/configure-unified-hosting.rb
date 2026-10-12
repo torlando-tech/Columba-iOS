@@ -76,7 +76,12 @@ add_source(app, project.files.find { |f| f.real_path.to_s.end_with?(path) })
   end
 end
 [app, ne].each do |target|
-  target.build_configurations.each { |c| c.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = 'Sources/RNSHost/PythonNode-Bridging-Header.h' }
+  target.build_configurations.each do |c|
+    c.build_settings['SWIFT_OBJC_BRIDGING_HEADER'] = 'Sources/RNSHost/PythonNode-Bridging-Header.h'
+    # Python's resource installer expects one lib-<arch> directory. Both hosts
+    # must match the arm64 simulator wheels shipped by this project.
+    c.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+  end
 end
 project.targets.flat_map { |t| t.source_build_phase.files_references }.uniq.each do |ref|
   absolute = ref.real_path.to_s
