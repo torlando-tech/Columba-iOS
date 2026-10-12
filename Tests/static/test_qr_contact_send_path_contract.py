@@ -198,7 +198,7 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertIn("Verify whether it arrived before retrying", view_model)
         self.assertIn("repository.hasUncertainRetry(for: conversationHash)", view_model)
         self.assertIn("public func recoverInterruptedRetries", repository)
-        self.assertIn("LXMFSwift.LXMessageState.sending.rawValue", repository)
+        self.assertIn("GRDBState.sending.rawValue", repository)
         self.assertIn("receiving_interface = ?", repository)
         self.assertIn("Self.stagedRetryMarker", repository)
         self.assertIn("Self.uncertainRetryMarker", repository)
