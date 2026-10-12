@@ -94,7 +94,7 @@ public struct OutboxReplayCoordinator: @unchecked Sendable {
     /// Returns whether the id is now durably recorded. `true` for a nil id (nothing
     /// to persist) and when the append succeeds; `false` when a real id could not be
     /// persisted (file open/write failure). The send path uses this to surface a
-    /// lost-dedup (see `NEPythonRNS.lxmfSend`) instead of silently claiming the
+    /// lost-dedup (see `PythonNodeEngine.lxmfSend`) instead of silently claiming the
     /// send is safe from a lost-reply re-enqueue.
     @discardableResult
     public func markSent(_ sendId: String?) -> Bool {

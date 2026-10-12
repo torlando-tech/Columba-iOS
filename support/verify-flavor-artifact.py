@@ -62,6 +62,7 @@ NETWORK_EXTENSION_ENTITLEMENT = (
 )
 PACKET_TUNNEL_ENTITLEMENT = ["packet-tunnel-provider"]
 HOST_BUNDLE_IDENTIFIERS = {
+    "unified": "network.columba.Columba",
     "shipping": "network.columba.Columba",
     "modelb": "network.columba.Columba",
 }
@@ -373,18 +374,20 @@ def _verify_shipping(
     libraries: bytes,
     run: Callable,
     allow_unsigned_simulator: bool,
+    unified: bool = False,
+    allow_empty_simulator_entitlements: bool = False,
 ) -> None:
     forbidden = next(iter(_shipping_forbidden_paths(app)), None)
-    if forbidden is not None:
+    if not unified and forbidden is not None:
         raise VerificationError("shipping artifact contains forbidden path or PlugIns: {}".format(forbidden))
-    if NETWORK_EXTENSION_LOAD in libraries:
+    if not unified and NETWORK_EXTENSION_LOAD in libraries:
         raise VerificationError("shipping executable links NetworkExtension.framework")
     symbols = b"\n".join(
         _defined_symbols(image, "shipping app code image", run)
         for image in code_images
     )
     marker = next((name for name in MODEL_B_SYMBOLS if name in symbols), None)
-    if marker is not None:
+    if not unified and marker is not None:
         raise VerificationError(
             "shipping executable contains active Model B symbol {}".format(
                 marker.decode("ascii")
@@ -440,11 +443,12 @@ def _verify_shipping(
             )
     _verify_entitlements_if_signed(
         app,
-        "shipping",
+        "modelb" if unified else "shipping",
         "host",
         app_root,
         run,
         app_metadata.get("DTPlatformName"),
+        allow_empty_simulator_entitlements=allow_empty_simulator_entitlements if unified else False,
         allow_unsigned_simulator=allow_unsigned_simulator,
     )
 
@@ -457,6 +461,7 @@ def _verify_modelb(
     run: Callable,
     allow_empty_simulator_entitlements: bool,
     allow_unsigned_simulator: bool,
+    unified: bool = False,
 ) -> None:
     extension = app / "PlugIns/ColumbaNetworkExtension.appex"
     plugins = app / "PlugIns"
@@ -513,7 +518,7 @@ def _verify_modelb(
     # Python RNS runtime. So the host app must NOT link Python.framework (it
     # would mean the Python stack leaked into the UI process), while the
     # extension MUST link it (that is how the in-NE runtime is wired up).
-    if PYTHON_LOAD in libraries:
+    if not unified and PYTHON_LOAD in libraries:
         raise VerificationError("Model B host app links forbidden Python.framework")
     if PYTHON_LOAD not in extension_libraries:
         raise VerificationError("Model B extension does not link the embedded Python.framework")
@@ -565,7 +570,7 @@ def _verify_modelb(
         ),
         None,
     )
-    if leaked is not None:
+    if not unified and leaked is not None:
         raise VerificationError("Model B host app contains Python packaging output: {}".format(leaked))
     host_platform = app_metadata.get("DTPlatformName")
     extension_platform = extension_metadata.get("DTPlatformName")
@@ -608,7 +613,7 @@ def verify_artifact(
     allow_unsigned_simulator: bool = False,
 ) -> None:
     """Verify *app_path* as ``shipping`` or ``modelb``; raise on uncertainty."""
-    if flavor not in ("shipping", "modelb"):
+    if flavor not in ("unified", "shipping", "modelb"):
         raise VerificationError("unsupported flavor: {}".format(flavor))
     app = Path(app_path)
     if app.is_symlink():
@@ -645,7 +650,7 @@ def verify_artifact(
         app_root,
         run,
     )
-    if flavor == "shipping":
+    if flavor in ("shipping", "unified"):
         _verify_shipping(
             app,
             app_root,
@@ -654,8 +659,10 @@ def verify_artifact(
             libraries,
             run,
             allow_unsigned_simulator,
+            unified=flavor == "unified",
+            allow_empty_simulator_entitlements=allow_empty_simulator_entitlements,
         )
-    else:
+    if flavor in ("modelb", "unified"):
         _verify_modelb(
             app,
             app_root,
@@ -664,12 +671,13 @@ def verify_artifact(
             run,
             allow_empty_simulator_entitlements,
             allow_unsigned_simulator,
+            unified=flavor == "unified",
         )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("flavor", choices=("shipping", "modelb"))
+    parser.add_argument("flavor", choices=("unified", "shipping", "modelb"))
     parser.add_argument("app", type=Path)
     parser.add_argument(
         "--allow-empty-simulator-entitlements",

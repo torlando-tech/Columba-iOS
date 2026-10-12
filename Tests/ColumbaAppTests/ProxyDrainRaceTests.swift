@@ -2,7 +2,7 @@ import XCTest
 import Foundation
 import CoreFoundation
 import RNSAPI
-@testable import ColumbaModelBApp
+@testable import ColumbaApp
 
 /// P2 #1 (ne-python-architecture-review): event-drain shutdown race.
 ///
@@ -151,8 +151,32 @@ final class ProxyDrainRaceTests: XCTestCase {
         _ = try await backend.start(startParams())
         let got = await waitForEvents({ lock.lock(); let c = events; lock.unlock(); return c }, atLeast: 1)
         consumer.cancel()
+        await backend.stop()
         XCTAssertTrue(got, "a live drain should yield the announce")
         XCTAssertTrue(events.contains(where: isAnnounce), "expected an announce event, got \(events)")
+    }
+
+    func testReleasingStartedFacadeRemovesDarwinObserver() async throws {
+        var backend: ProxyRnsBackend? = ProxyRnsBackend(send: { wire in
+            guard let request = try? ProxyIPC.decodeRequest(wire) else { return nil }
+            if case .start = request {
+                return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode(
+                    ProxyLocalInfo(identityHash: "11", destinationHash: "22"))))
+            }
+            return ProxyIPC.encodeResponse(.ok(try? JSONEncoder().encode([ProxyEvent]())))
+        })
+        _ = try await backend?.start(startParams())
+        weak var released = backend
+        backend = nil
+        let deadline = Date().addingTimeInterval(5)
+        while released != nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertNil(released)
+        // A dangling unretained registration would dereference the old facade.
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName("network.columba.events" as CFString), nil, nil, true)
+        try await Task.sleep(nanoseconds: 50_000_000)
     }
 
     /// THE regression: a drain suspended across the `.drainEvents` IPC, then a

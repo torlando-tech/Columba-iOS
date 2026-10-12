@@ -39,7 +39,7 @@ class HostEntitlementsContractTests(unittest.TestCase):
             cls.app_info_plist = plistlib.load(plist_file)
 
     def test_shipping_host_entitlements_match_complete_contract(self) -> None:
-        self.assertEqual(self.shipping, SHIPPING_ENTITLEMENTS_EXPECTED)
+        self.assertEqual(self.shipping, MODEL_B_ENTITLEMENTS_EXPECTED)
 
     def test_model_b_host_entitlements_match_complete_contract(self) -> None:
         self.assertEqual(self.model_b, MODEL_B_ENTITLEMENTS_EXPECTED)
@@ -61,9 +61,6 @@ class HostEntitlementsContractTests(unittest.TestCase):
 
         target_contracts = {
             "ColumbaApp": "Sources/ColumbaApp/Resources/ColumbaApp.entitlements",
-            "ColumbaModelBApp": (
-                "Sources/ColumbaApp/Resources/ColumbaModelBApp.entitlements"
-            ),
         }
         for target_name, expected_path in target_contracts.items():
             with self.subTest(target=target_name):

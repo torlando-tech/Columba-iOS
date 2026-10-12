@@ -95,7 +95,6 @@ struct PermissionsPage: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 12)
 
-            #if COLUMBA_RUNTIME_MODEL_B
             // Bluetooth permission card — Model B runs the CoreBluetooth host in the
             // app. Permission remains optional and is requested only when Enable is tapped.
             HStack(spacing: 14) {
@@ -145,7 +144,6 @@ struct PermissionsPage: View {
             )
             .padding(.horizontal, 24)
             .padding(.bottom, 12)
-            #endif
 
             Text("Notification permission does not keep Columba connected in the background. You can change access anytime in iOS Settings.")
                 .font(.footnote)

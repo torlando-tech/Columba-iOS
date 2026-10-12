@@ -17,7 +17,6 @@
 //  starts the tunnel and, once it connects, resumes app initialization.
 //
 
-#if COLUMBA_RUNTIME_MODEL_B
 import SwiftUI
 
 struct BackgroundDeliveryGateView: View {
@@ -87,6 +86,13 @@ struct BackgroundDeliveryGateView: View {
                 .disabled(isWorking)
                 .padding(.horizontal, 24)
 
+                Button("Use Foreground Only") {
+                    appServices.useForegroundHostingFromGate()
+                }
+                .disabled(isWorking)
+                Text("Foreground mode disconnects while iOS suspends Columba. Background delivery is recommended for stable connections and listeners.")
+                    .font(.footnote)
+                    .padding(.horizontal, 24)
                 Text("iOS will ask you to allow the configuration and will show a VPN indicator while Background Delivery is enabled. Delivery still depends on available Reticulum connections.")
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
@@ -112,4 +118,3 @@ struct BackgroundDeliveryGateView: View {
         }
     }
 }
-#endif

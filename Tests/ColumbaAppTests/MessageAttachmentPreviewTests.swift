@@ -96,6 +96,9 @@ final class FailedMessageDetailsRoutingTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: repositoryRoot.appendingPathComponent("Sources").path) else {
+            throw XCTSkip("Source wiring inspection requires the repository checkout; run on the simulator host")
+        }
         func source(_ path: String) throws -> String {
             try String(contentsOf: repositoryRoot.appendingPathComponent(path))
         }

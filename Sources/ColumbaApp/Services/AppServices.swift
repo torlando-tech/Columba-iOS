@@ -218,7 +218,6 @@ enum DiagLog {
         try? FileManager.default.moveItem(at: fileURL, to: rotatedFileURL)
     }
 
-    #if COLUMBA_RUNTIME_MODEL_B
     /// Copy the Network Extension's App-Group diagnostic log
     /// (`ExtensionDiagLog`'s `ext-diag.log`) into the app's Documents directory
     /// as `ext-diag.log` so it's retrievable alongside `diag.log` via
@@ -251,7 +250,6 @@ enum DiagLog {
             startExtDiagLiveCopy()
         }
     }
-    #endif
     #endif
 }
 
@@ -788,9 +786,6 @@ public final class AppServices {
     /// The bound backend downcast to the Python impl — for Python-only wiring
     /// (BLE callback bridge and diagnose_* deep links). This API is compiled
     /// only into shipping because Model B does not own the concrete Python source.
-    #if COLUMBA_RUNTIME_PYTHON
-    public var pythonBackend: PythonRNSBackend? { backend as? PythonRNSBackend }
-    #endif
 
     /// What the active backend supports — drives UI capability gating. `.unknown`
     /// (everything unsupported) until a backend is bound; re-evaluated via
@@ -858,35 +853,6 @@ public final class AppServices {
     //
     // Both are Python-backend-only: the Model B node runs in the NE, which
     // already owns its socket lifecycle and does not use this path.
-    #if COLUMBA_RUNTIME_PYTHON
-    /// Task that runs the one-shot Local Network permission probe for this
-    /// backend start (cancelled on shutdown). Kept so a backend restart can
-    /// cancel a stale probe mid-flight.
-    private var localNetworkProbeTask: Task<Void, Never>?
-    /// Monotonic generation for the probe task. Bumped on every start and on
-    /// shutdown so a stale (superseded or cancelled) probe that finally
-    /// returns from `await probe()` can detect it is no longer current and
-    /// drop its result instead of overwriting the live health state.
-    private var localNetworkProbeGeneration = 0
-    /// Set once the probe has run for this backend start. We probe at most
-    /// once per backend start: re-probing a denial re-shows nothing (the user's
-    /// Open-Settings action is the recovery), and a prior grant makes a second
-    /// probe redundant.
-    private var localNetworkProbeRan = false
-    /// Guards the re-adopt against concurrent evaluation (the status poll and a
-    /// re-adopt can both fire). A re-adopt is a hot-remove + hot-add, so it must
-    /// never run twice for the same dead interface.
-    private var autoReadoptInFlight = false
-    private var lastReadoptAttempt = Date.distantPast
-    private let reAdoptCooldown: TimeInterval = 30
-    /// Public Local Network health state for the UI warning. nil = not yet
-    /// evaluated (no AutoInterface, or the coordinator has not run).
-    public private(set) var localNetworkState: LocalNetworkHealthState?
-    /// Live adopted-interface count for the enabled AutoInterface (from the
-    /// Python `adopted_count`); -1 until the first snapshot. The UI warning
-    /// keys off this (0 = dead), not `online` (which is True either way).
-    public private(set) var autoAdoptedCount: Int = -1
-    #endif
 
     /// Last interface snapshot key we logged, so the poll only logs
     /// changes (not every 2s tick).
@@ -926,8 +892,9 @@ public final class AppServices {
     /// happen on the main actor, no extra lock needed.
     private var destinationLinkCallbacks: [Data: @Sendable (Link) async -> Void] = [:]
 
-    #if COLUMBA_RUNTIME_MODEL_B
     /// Network Extension tunnel manager.
+    var replayInboundSideEffects: (@MainActor () async -> Void)?
+    public private(set) var hostingMode = NodeHostingMode.current
     public private(set) var tunnelManager: TunnelManager?
 
     /// Extension frame reader for processing queued frames from the extension.
@@ -945,7 +912,6 @@ public final class AppServices {
     private var backgroundDeliveryApprovalContinuation: CheckedContinuation<Void, Never>?
 
     private static let backgroundDeliveryEnabledKey = "background_delivery_enabled"
-    #endif
 
     /// Darwin notification name used by on-device test instrumentation to
     /// trigger a manual announce. Posted from the host via
@@ -1283,7 +1249,6 @@ public final class AppServices {
     /// reliably probe while locked), and persist the identity into that shared group
     /// so the NE can load it (`...AfterFirstUnlockThisDeviceOnly`, NE-readable while
     /// locked after first unlock). No-op on unsigned/simulator builds (group == nil).
-    #if COLUMBA_RUNTIME_MODEL_B
     private static func shareIdentityForModelB(_ identity: Identity) {
         guard let group = sharedKeychainAccessGroup() else {
             DiagLog.log("[IDENTITY] Model B share: shared keychain group unresolved")
@@ -1297,7 +1262,6 @@ public final class AppServices {
             DiagLog.log("[IDENTITY] Model B share: keychain save failed: \(error.localizedDescription)")
         }
     }
-    #endif
 
     /// - Returns: The loaded or newly created identity
     private static func loadOrCreateIdentity() -> Identity {
@@ -1658,7 +1622,6 @@ public final class AppServices {
     /// `InterfaceEntity` records from `InterfaceRepository`). No host/port
     /// is hardcoded — if `interfaces` is empty the app starts offline and
     /// the user adds an interface in Settings → Manage Interfaces.
-    #if COLUMBA_RUNTIME_MODEL_B
     /// Create + wire the tunnel manager exactly once (idempotent). Called by
     /// `initialize()` and by the onboarding background-delivery step, which may bring
     /// the tunnel up before `initialize()` runs.
@@ -1692,6 +1655,8 @@ public final class AppServices {
     /// won't truly connect there).
     @discardableResult
     public func enableBackgroundDeliveryForOnboarding(identity: Identity) async -> Bool {
+        SharedDefaults.suite.set(NodeHostingMode.networkExtension.rawValue, forKey: NodeHostingMode.preferenceKey)
+        NodeHostingMode.activateSelection()
         Self.shareIdentityForModelB(identity)
         await ensureTunnelManager()
         guard let tunnel = tunnelManager else { return false }
@@ -1741,6 +1706,14 @@ public final class AppServices {
             needsBackgroundDeliveryApproval = true
         }
         DiagLog.log("[TUNNEL-GATE] approval received — resuming init")
+    }
+
+    func useForegroundHostingFromGate() {
+        SharedDefaults.suite.set(NodeHostingMode.foreground.rawValue, forKey: NodeHostingMode.preferenceKey)
+        NodeHostingMode.activateSelection()
+        needsBackgroundDeliveryApproval = false
+        backgroundDeliveryApprovalContinuation?.resume()
+        backgroundDeliveryApprovalContinuation = nil
     }
 
     /// Gate-flow entry point ONLY (called by `BackgroundDeliveryGateView`'s Enable
@@ -1802,7 +1775,6 @@ public final class AppServices {
         DiagLog.log("[TEST-START-TUNNEL] tunnel connected + approval persisted")
         return true
     }
-    #endif
 
     /// Start the embedded Python RNS backend.
     ///
@@ -1836,17 +1808,8 @@ public final class AppServices {
         // missing/empty preference can never produce a nameless startup announce.
         let displayName = await SettingsRepository().resolveDisplayName()
 
-        // Model B (Track C3): `BackendFactory.make` returns the thin-client
-        // `ProxyRnsBackend`, which needs a live IPC transport to the NE's Python
-        // node (`NEPythonRNS`). Inject `TunnelManager.proxySend` (wraps
-        // `sendProviderMessage`). Resolved LAZILY
-        // (read `self.tunnelManager` at send-time, not make-time) so it works even
-        // though one of the two init paths creates the tunnel after this call. The
-        // closure is `@Sendable`; it hops to the @MainActor `AppServices` to read
-        // the tunnel, then calls the non-isolated async `proxySend`. When Model B
-        // is off (the default) `make` ignores `proxySend` and returns the
-        // Swift/Python backend, so this wiring is inert until the flag is flipped.
-        #if COLUMBA_RUNTIME_MODEL_B
+        // Resolve the extension transport lazily; foreground hosting selects a
+        // local adapter while keeping the same backend facade and command path.
         let proxySend: @Sendable (Data) async -> Data? = { [weak self] data in
             // Read the @MainActor-isolated `tunnelManager` via `MainActor.run`
             // (the established pattern in this file for crossing into MainActor
@@ -1858,23 +1821,17 @@ public final class AppServices {
             }
             return await tunnel.proxySend(data)
         }
-        let backend = BackendFactory.make(proxySend: proxySend)
-        #else
-        let backend = BackendFactory.make()
-        #endif
-        self.backend = backend
-        backendGeneration &+= 1
-
-        #if COLUMBA_RUNTIME_MODEL_B
-        // Model B: CoreBluetooth lives in the app process, but it is optional. Do not
-        // construct the driver (and trigger iOS authorization) unless a BLE interface
-        // is configured and enabled (created by onboarding / Manage Interfaces).
-        syncModelBBLEService()
-        #endif
-
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let pyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
+        let legacyDir = appSupport.appendingPathComponent("Columba/python-\(identityHashHex)", isDirectory: true)
+        guard let pyDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) else {
+            throw RNSError.generic(message: "Shared Reticulum storage is unavailable", stackTraceText: nil)
+        }
+        let migrationKey = "rns_shared_state_migrated_\(identityHashHex)"
+        if !SharedDefaults.suite.bool(forKey: migrationKey) {
+            try NodeStateMigration.copyMissingState(from: legacyDir, to: pyDir)
+            SharedDefaults.suite.set(true, forKey: migrationKey)
+        }
+        try FileManager.default.createDirectory(at: pyDir, withIntermediateDirectories: true)
         let configDir = pyDir.path
         let identityFile = pyDir.appendingPathComponent("identity.bin").path
         DiagLog.log("[RNS] configDir=\(configDir)")
@@ -1885,17 +1842,7 @@ public final class AppServices {
         // current config) so a later restart with BLE-enabled config finds
         // them without an extra deployment step.
         //
-        // Model B: the NE's Python engine reads the App-Group SHARED dir, so
-        // deploy there too (the app-local pyDir above is process-private and the
-        // NE can't see it). Without the shared-dir copy the NE can't `exec()`
-        // IOSBLEInterface.py and the BLE interface never comes up.
-        var deployDirs: [URL] = [pyDir]
-        #if COLUMBA_RUNTIME_MODEL_B
-        if let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
-            deployDirs.append(sharedDir)
-        }
-        #endif
-        deployIOSBLEPythonFilesIfPossible(configDirs: deployDirs)
+        deployIOSBLEPythonFilesIfPossible(configDirs: [pyDir])
 
         // Generate the RNS config from user-saved interface entities. The
         // file lands at `<configDir>/config` where Python's
@@ -1915,67 +1862,37 @@ public final class AppServices {
             DiagLog.log("[RNS] wrote config (\(configText.count) bytes, \(interfaces.count) interfaces)")
         } catch {
             DiagLog.log("[RNS] config write FAILED: \(error)")
+            throw error
         }
 
         let identityBytes = try? identity.exportPrivateKeys()
         DiagLog.log("[RNS] identityBytes=\(identityBytes?.count ?? -1)")
 
-        #if COLUMBA_RUNTIME_MODEL_B
-        // Model B: the Reticulum runtime lives in the Network Extension, so the
-        // RNS config (+ identity blob) MUST be written to the SHARED App-Group
-        // container - the app's private Application Support dir (above) is
-        // process-local and the NE cannot see it. The NE's in-NE Python RNS
-        // engine (NEPythonRNS) reads <shared dir>/config + the shared-keychain
-        // identity when it brings the node up. Mirror the private write here so
-        // both the (removed) in-process path and the NE Python path stay valid.
-        if let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
-            try? FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
-            try? configText.write(to: sharedDir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
-            // The NE keys its config dir by the raw identity hash hex; persist it
-            // (Foundation-only, no PII beyond the hash) so NEPythonRNS resolves
-            // the same <shared dir>/config without re-deriving the RNS hash.
-            SharedDefaults.suite.set(identityHashHex, forKey: "rnsConfigIdentityHashHex")
-            // Mirror the `block_unknown_senders` privacy toggle into the AppGroup
-            // suite so the NE can read it (the app's standard UserDefaults is
-            // unreachable from the extension). The NE passes it to Python so inbound
-            // from unknown senders is dropped BEFORE the NE persists the row.
-            SharedDefaults.suite.set(
-                UserDefaults.standard.bool(forKey: "block_unknown_senders"),
-                forKey: "block_unknown_senders"
-            )
-            // The identity blob co-locates with the config (rns_bridge.start also
-            // accepts identity_bytes, but the file path is the app's canonical
-            // source; the NE reads the shared keychain, so this is belt-and-braces).
-            if let identityBytes {
-                try? identityBytes.write(to: sharedDir.appendingPathComponent("identity.bin"), options: .atomic)
-            }
-            DiagLog.log("[RNS] Model B: shared config written to \(sharedDir.path) (\(interfaces.count) interfaces)")
-        }
-        #endif
+        SharedDefaults.suite.set(identityHashHex, forKey: "rnsConfigIdentityHashHex")
+        SharedDefaults.suite.set(UserDefaults.standard.bool(forKey: "block_unknown_senders"), forKey: "block_unknown_senders")
 
-        #if COLUMBA_RUNTIME_PYTHON
-        // IOSBLEInterface starts synchronously inside backend.start(). Install
-        // the native callback sink first so discoveries and handshakes that
-        // arrive during Python startup are not lost before the later UI
-        // interface pass runs.
-        if let pythonBackend {
-            columbaBLEForceLinkNativeBindings()
-            SwiftBLEBridge.shared.setCallbackInvoker(
-                PythonBLECallbackBridge(pythonBridge: pythonBackend.pythonBridge)
-            )
-            SwiftBLEBridge.shared.setIdentity(identity.hash)
-        }
-        #endif
 
-        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: `backend` is the thin-client proxy; `backend.start()` round-trips to
         // the NE node over the VPN tunnel session, so the tunnel MUST be connected first.
         // A fresh install has no VPN config at all — without this, start() would spin
         // ~30×8s on a dead session (the "stuck on Connecting to network… for minutes"
         // bug). Bring the tunnel up, gating first-run on the background-delivery approval
         // gate so the iOS VPN prompt is a deliberate user step, not a silent hang.
-        await ensureBackgroundDeliveryTunnel()
-        #endif
+        if NodeHostingMode.current == .networkExtension {
+            await ensureBackgroundDeliveryTunnel()
+        }
+        if NodeHostingMode.current == .foreground {
+            await ensureTunnelManager()
+            try await tunnelManager?.disable()
+            for _ in 0..<100 {
+                if tunnelManager?.status == .disconnected || tunnelManager?.status == .invalid { break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        hostingMode = NodeHostingMode.current
+        let backend = BackendFactory.make(mode: NodeHostingMode.current, proxySend: proxySend)
+        self.backend = backend
+        backendGeneration &+= 1
 
         do {
             DiagLog.log("[RNS] calling backend.start()")
@@ -1998,21 +1915,8 @@ public final class AppServices {
         }
 
         await applyIncomingMessageSizeLimitFromSettings()
+        _ = await propagationManager?.reapplySelectedNodeToPythonBackend()
 
-        #if COLUMBA_RUNTIME_PYTHON
-        if propagationManager?.selectedNodeHash != nil {
-            let reapplied = await propagationManager?.reapplySelectedNodeToPythonBackend() ?? false
-            DiagLog.log("[RNS] reapplied persisted propagation node to Python: \(reapplied)")
-            try await PropagationNodeRestoreReadiness.validate(
-                reapplied: reapplied,
-                rollback: { [weak self] in
-                    await backend.stop()
-                    self?.backend = nil
-                    self?.backendGeneration &+= 1
-                }
-            )
-        }
-        #endif
 
         // Outbound LXMF now goes directly through `backend.lxmf.sendLxmfMessage`
         // (MessagingViewModel + RnsLxmf) with TYPED fields, so the old Compat
@@ -2084,13 +1988,6 @@ public final class AppServices {
             DiagLog.log("[RNS-POLL] task exiting (cancelled)")
         }
 
-        #if COLUMBA_RUNTIME_PYTHON
-        // Local Network coordination (Option C): probe the Local Network
-        // permission (triggering the prompt if undetermined) and arm the
-        // carrier re-adopt. Python backend only - the Model B node owns its
-        // own sockets in the NE and never uses this path.
-        startLocalNetworkProbe()
-        #endif
 
         #if DEBUG
         // Test-only deep-link observers (the `lxma://test-*` surface used by the
@@ -2188,7 +2085,7 @@ public final class AppServices {
         // (called from this observer AND at the end of startPythonBackend)
         // consumes it exactly once, covering both warm and cold launches.
         addPythonObserver("ColumbaTestNodeSend") { [weak self] _ in
-            #if DEBUG && COLUMBA_RUNTIME_MODEL_B
+            #if DEBUG
             Task { @MainActor in
                 await self?.drainNodeSendProbe()
             }
@@ -2253,7 +2150,7 @@ public final class AppServices {
         // be booted + exercised via `devicectl ... --payload-url`. DEBUG only, and
         // Model B only (the tunnel + startTunnelForTest/tunnelManager symbols are
         // MODEL_B-compile-guarded, so the shipping build cannot reference them).
-        #if DEBUG && COLUMBA_RUNTIME_MODEL_B
+        #if DEBUG
         addPythonObserver("ColumbaTestStartTunnel") { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
@@ -2284,67 +2181,6 @@ public final class AppServices {
             #endif
         }
 
-        #if COLUMBA_RUNTIME_PYTHON
-        // Diagnose IOSBLEInterface load: exec the file in the same fresh
-        // namespace RNS uses, surface any exception to DiagLog. Helps when
-        // panic_on_interface_error=no silently swallows external-iface
-        // load errors so the row shows "disconnected" with no signal.
-        addPythonObserver("ColumbaTestBLEDiagnose") { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                guard let backend = self.pythonBackend else {
-                    DiagLog.log("[TEST-BLE-DIAG] no backend")
-                    return
-                }
-                let result = await backend.pythonBridge.callModuleFunctionReturningString(
-                    name: "diagnose_ios_ble_interface"
-                ) ?? "(call returned nil)"
-                // Multi-line tracebacks would get truncated by NSLog
-                // formatting if logged as a single line; split and log
-                // each line for readability.
-                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
-                    DiagLog.log("[TEST-BLE-DIAG] \(line)")
-                }
-            }
-        }
-
-        // Dump path-table entries so we can see what the Node Details
-        // "Interface Heard" card would render without taking a screenshot.
-        addPythonObserver("ColumbaTestPathTable") { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                guard let backend = self.pythonBackend else {
-                    DiagLog.log("[TEST-PATH-TABLE] no backend")
-                    return
-                }
-                let result = await backend.pythonBridge.callModuleFunctionReturningString(
-                    name: "diagnose_path_table"
-                ) ?? "(call returned nil)"
-                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
-                    DiagLog.log("[TEST-PATH-TABLE] \(line)")
-                }
-            }
-        }
-
-        // Diagnose AutoInterface peer discovery: introspect the live
-        // AutoInterface Python object so we can see whether multicast
-        // join succeeded, what interfaces are bound, peer count, etc.
-        addPythonObserver("ColumbaTestAutoDiagnose") { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                guard let backend = self.pythonBackend else {
-                    DiagLog.log("[TEST-AUTO-DIAG] no backend")
-                    return
-                }
-                let result = await backend.pythonBridge.callModuleFunctionReturningString(
-                    name: "diagnose_auto_interface"
-                ) ?? "(call returned nil)"
-                for line in result.split(separator: "\n", omittingEmptySubsequences: false) {
-                    DiagLog.log("[TEST-AUTO-DIAG] \(line)")
-                }
-            }
-        }
-        #endif
 
         // Phase 6 smoke test: dump current connection details (Android parity).
         addPythonObserver("ColumbaTestBLEPeerList") { _ in
@@ -2414,34 +2250,6 @@ public final class AppServices {
             #endif
         }
 
-        #if COLUMBA_RUNTIME_PYTHON
-        // Phase 2 smoke test: Swift→Python BLE callback round-trip.
-        // Installs `_test_roundtrip` Python callback that returns
-        // True iff its int arg is even, then invokes it through the
-        // synchronous bool-return BLE callback path. PASS iff Swift
-        // gets back the expected bool for both even and odd inputs.
-        addPythonObserver("ColumbaTestBLECallback") { [weak self] note in
-            guard let self else { return }
-            let value = (note.userInfo?["value"] as? Int) ?? 4
-            Task { @MainActor in
-                guard let backend = self.pythonBackend else {
-                    DiagLog.log("[TEST-BLE-CB] FAIL: no backend")
-                    return
-                }
-                let installed = await backend.installBLETestRoundtripCallback()
-                guard installed else {
-                    DiagLog.log("[TEST-BLE-CB] FAIL: callback install failed")
-                    return
-                }
-                let evenResult = backend.invokeBLETestRoundtrip(value: value)
-                let oddResult = backend.invokeBLETestRoundtrip(value: value + 1)
-                let evenExpected = value % 2 == 0
-                let oddExpected = (value + 1) % 2 == 0
-                let pass = evenResult == evenExpected && oddResult == oddExpected
-                DiagLog.log("[TEST-BLE-CB] value=\(value) even=\(evenResult) odd=\(oddResult) \(pass ? "PASS" : "FAIL")")
-            }
-        }
-        #endif
 
         // lxma://test-answer — accept the currently-ringing call.
         addPythonObserver("ColumbaTestAnswer") { [weak self] _ in
@@ -2601,34 +2409,15 @@ public final class AppServices {
             guard let self else { return }
             let node = (note.userInfo?["node"] as? String) ?? ""
             Task { @MainActor in
-                // Model B: the LXMF router lives in the NE — `backend.propagationSync`
-                // is a no-op proxy stub. Route through the propagation manager so the
-                // PN crosses the App-Group seam and the NE runs the sync (this mirrors
-                // the production Sync Now path).
-                if BackendPreference.modelB {
-                    guard let propManager = self.propagationManager else {
-                        DiagLog.log("[TEST-PROP-SYNC] modelB: no propagation manager")
-                        return
-                    }
-                    if !node.isEmpty, let hash = Data(hexString: node) {
-                        await propManager.selectNode(hash: hash)
-                    }
-                    await propManager.syncNow()
-                    DiagLog.log("[TEST-PROP-SYNC] modelB sync-now posted to NE, state=\(propManager.syncState.state)")
+                guard let propManager = self.propagationManager else {
+                    DiagLog.log("[TEST-PROP-SYNC] no propagation manager")
                     return
                 }
-                guard let backend = self.backend else {
-                    DiagLog.log("[TEST-PROP-SYNC] no backend")
-                    return
+                if !node.isEmpty, let hash = Data(hexString: node) {
+                    await propManager.selectNode(hash: hash)
                 }
-                do {
-                    _ = try await backend.setPropagationNode(destHashHex: node, stampCost: 0)
-                    DiagLog.log("[TEST-PROP-SYNC] set node, starting sync")
-                    let r = try await backend.propagationSync(timeout: 30.0)
-                    DiagLog.log("[TEST-PROP-SYNC] result ok=\(r.ok) state=\(r.state.rawValue) received=\(r.receivedMessages) reason=\(r.reason)")
-                } catch {
-                    DiagLog.log("[TEST-PROP-SYNC] error=\(error)")
-                }
+                await propManager.syncNow()
+                DiagLog.log("[TEST-PROP-SYNC] state=\(propManager.syncState.state)")
             }
         }
 
@@ -2668,18 +2457,18 @@ public final class AppServices {
                 }
             }
         }
-        #endif // DEBUG — test-only deep-link observers
+        #endif
 
         // Consume a cold-launch test-node-send deep link that arrived before the
         // observer above was registered (startPythonBackend runs at init-complete,
         // after the OS delivers a launch-time --payload-url). Consume-once.
         // Model B + DEBUG only: drainNodeSendProbe drives the MODEL_B tunnel seam.
-        #if DEBUG && COLUMBA_RUNTIME_MODEL_B
+        #if DEBUG
         await drainNodeSendProbe()
         #endif
     }
 
-    #if DEBUG && COLUMBA_RUNTIME_MODEL_B
+    #if DEBUG
     /// Drive the node-contract control channel once (stage in the shared store,
     /// hello + admit over the app->NE transport) and log the committed
     /// disposition. DEBUG-only test seam, Model B only (uses the MODEL_B
@@ -2749,19 +2538,10 @@ public final class AppServices {
 
     @MainActor
     public func applyIncomingMessageSizeLimitFromSettings() async {
-        #if COLUMBA_RUNTIME_PYTHON
-        let limitKB = await settingsRepository.getIncomingMessageSizeLimitKB()
-        guard let pythonBackend = backend as? PythonRNSBackend else {
-            DiagLog.log("[LXMF_CAP] skipping inbound cap apply: shipping Python backend unavailable")
-            return
-        }
-        do {
-            let applied = try await pythonBackend.setIncomingMessageSizeLimitKB(limitKB)
-            DiagLog.log("[LXMF_CAP] applied inbound cap=\(limitKB)KB applied=\(applied)")
-        } catch {
-            DiagLog.log("[LXMF_CAP] failed to apply inbound cap=\(limitKB)KB error=\(error.localizedDescription)")
-        }
-        #endif
+        let limit = await settingsRepository.getIncomingMessageSizeLimitKB()
+        do { _ = try await backend?.core.setIncomingMessageSizeLimitKB(limit) }
+        catch { DiagLog.log("[LXMF_CAP] apply failed: \(error)") }
+
     }
 
     /// Parse the endpoint + peer name out of a Python friendly `str(iface)`
@@ -2814,9 +2594,9 @@ public final class AppServices {
             // drives its badges straight off the Compat stubs / native registry this same
             // call updates, and adding a push there would recreate the ~10/s app<->NE IPC
             // flood the event-driven design removed.
-            if BackendPreference.modelB {
+
                 NotificationObserver.postNetworkStateChanged()
-            }
+
         }
         // The config section name PythonConfigWriter wrote is the matching
         // key — it's stable across the bridge and unique per entity.
@@ -2972,14 +2752,6 @@ public final class AppServices {
                     auto.state = newState
                     auto.online = status.online
                 }
-                #if COLUMBA_RUNTIME_PYTHON
-                // The real liveness signal for the AutoInterface is the adopted
-                // count (0 = cold-start dead, RNS will never re-scan on its own).
-                // `online` alone is useless here: final_init() sets it True even
-                // with zero adopted interfaces. Drive Local Network health + the
-                // carrier re-adopt from it.
-                updateLocalNetworkHealth(adoptedCount: status.adoptedCount)
-                #endif
             case .ble:
                 if let ble = self.bleInterface, ble.state != newState {
                     DiagLog.log("[RNS] iface \(status.sectionName) -> \(newState) (BLE, rx=\(status.rxBytes) tx=\(status.txBytes))")
@@ -3218,14 +2990,12 @@ public final class AppServices {
             // Model B: the NE reads config from the shared App-Group dir, not the
             // private app dir. Without this write the NE would re-read the stale
             // shared config on .start and ignore the new interfaces.
-            #if COLUMBA_RUNTIME_MODEL_B
             if let identityHashHex = SharedDefaults.suite.string(forKey: "rnsConfigIdentityHashHex"),
                let sharedDir = AppGroupPaths.rnsConfigDirectoryURL(identityHashHex: identityHashHex) {
                 try? FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
                 try configText.write(to: sharedDir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
                 DiagLog.log("[RNS] Model B: shared config updated (\(interfaces.count) interfaces)")
             }
-            #endif
 
             return true
         } catch {
@@ -3296,16 +3066,12 @@ public final class AppServices {
             return .persistedRequiresRelaunch
         }
 
-        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: bring the app-side CoreBluetooth radio + seam up (or down) to
         // match the new interface set BEFORE the hot ops: the NE's reticulum-swift
         // BLEInterface drives the radio over that seam, so the seam must be
         // listening first. A runtime BLE-interface enable would otherwise leave the
         // NE with a BLEInterface but no radio behind it, so peers could never connect.
-        if BackendPreference.modelB {
-            syncModelBBLEService()
-        }
-        #endif
+
 
         let live = pythonInterfaceEntities
         let removed = live.values.filter { freshById[$0.id] == nil }
@@ -3368,8 +3134,7 @@ public final class AppServices {
         // op stays out of `newLive` so the next save re-diffs it and retries.
         pythonInterfaceEntities = newLive
 
-        #if COLUMBA_RUNTIME_MODEL_B
-        if BackendPreference.modelB {
+
             // Newly hot-added interfaces are created in normal (local-socket) mode.
             // The tunnel-mode coordinator (`applyTunnelModeToInterfaces`) only fires
             // on VPN *status* changes, not interface changes - so if background
@@ -3384,9 +3149,9 @@ public final class AppServices {
             // rejected, etc.), fall back to a full NE restart - the pre-1.5.5
             // behavior - so the change still lands.
             if !allOk {
-                DiagLog.log("[RNS-HOT] modelB: one or more hot ops missed; falling back to NE restart")
+                DiagLog.log("[RNS-HOT] one or more hot ops missed; falling back to NE restart")
                 let outcome = await restartPythonBackendUnlocked()
-                DiagLog.log("[RNS-HOT] modelB: restart outcome=\(outcome)")
+                DiagLog.log("[RNS-HOT] restart outcome=\(outcome)")
                 switch outcome {
                 case .applied:
                     // A successful in-process restart re-ran initializeUnlocked,
@@ -3404,8 +3169,7 @@ public final class AppServices {
                     return .restartFailed
                 }
             }
-        }
-        #endif
+
 
         return .applied
     }
@@ -3430,12 +3194,6 @@ public final class AppServices {
         } catch {
             DiagLog.log("[RNS-HOT] add \(section) error: \(error)")
         }
-        #if COLUMBA_RUNTIME_PYTHON
-        await seedSwiftStub(for: entity)
-        if entity.type == .autoInterface {
-            noteAutoInterfaceAvailability(changed: false)
-        }
-        #endif
         return ok
     }
 
@@ -3454,12 +3212,6 @@ public final class AppServices {
         } catch {
             DiagLog.log("[RNS-HOT] remove \(section) error: \(error)")
         }
-        #if COLUMBA_RUNTIME_PYTHON
-        await teardownSwiftStub(for: entity)
-        if entity.type == .autoInterface {
-            noteAutoInterfaceAvailability(changed: true)
-        }
-        #endif
         return ok
     }
 
@@ -3994,9 +3746,7 @@ public final class AppServices {
         // Model B: make this identity reachable by the in-NE node. This overload
         // receives the identity pre-loaded (multi-identity path) and never calls
         // loadOrCreateIdentity, so do the NE-sharing here.
-        #if COLUMBA_RUNTIME_MODEL_B
         Self.shareIdentityForModelB(identity)
-        #endif
 
         // 2. Create path table for routing with persistence
         let pathDbPath = Self.pathTableFilePath
@@ -4080,13 +3830,9 @@ public final class AppServices {
         // live `RnsTelephony` facet at call time (it also survives
         // restartPythonBackend reassigning `self.backend`). Model A builds its
         // in-process transport from `transport` and ignores this.
-        #if COLUMBA_RUNTIME_MODEL_B
         let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
             await MainActor.run { self?.backend?.telephony }
         }
-        #else
-        let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = nil
-        #endif
         await cm.initialize(identity: identity, transport: newTransport, pathTable: newPathTable, database: newDatabase, backendProvider: mbProvider)
         cm.callHistoryRepository = self.callHistoryRepository
         self.callManager = cm
@@ -4151,7 +3897,6 @@ public final class AppServices {
             DiagLog.log("[INIT2] Transport mode enabled")
         }
 
-        #if COLUMBA_RUNTIME_MODEL_B
         // 12. Set up extension frame reader for background transport
         let reader = ExtensionFrameReader()
         self.extensionFrameReader = reader
@@ -4175,7 +3920,6 @@ public final class AppServices {
         // 13. Tunnel manager (idempotent — the onboarding background-delivery step may
         //     have already created it and brought the tunnel up).
         await ensureTunnelManager()
-        #endif
 
         // Start the backend, then activate initialization-owned manager tasks.
         // startPythonBackend resolves the configured display name itself so the
@@ -4203,7 +3947,6 @@ public final class AppServices {
         DiagLog.log("[INIT2] Initialization complete (identity: \(identityHash))")
     }
 
-    #if COLUMBA_RUNTIME_MODEL_B
     /// Re-assert tunnel mode over the app-side TCP interfaces after a VPN
     /// status change.
     ///
@@ -4257,7 +4000,6 @@ public final class AppServices {
         guard tunnelModeActive else { return }
         await applyTunnelModeToInterfaces(active: true)
     }
-    #endif
 
     /// Switch to a different identity, tearing down and re-initializing the full stack.
     ///
@@ -4526,11 +4268,9 @@ public final class AppServices {
         try await transport.addAutoInterface(newAutoInterface)
         logger.info("AutoInterface started with group: \(groupId)")
 
-        #if COLUMBA_RUNTIME_MODEL_B
         // Same launch-race fix as connectTCPInterface: if the tunnel is already up,
         // bring this freshly-registered interface into tunnel mode.
         await reapplyTunnelModeIfActive()
-        #endif
     }
 
     /// Stop the AutoInterface.
@@ -4550,189 +4290,6 @@ public final class AppServices {
         logger.info("AutoInterface stopped")
     }
 
-    #if COLUMBA_RUNTIME_PYTHON
-    // MARK: - Local Network coordination (Option C)
-
-    /// Run the Local Network permission probe for this backend start and keep
-    /// `localNetworkState` current. Started from `startPythonBackend()`, reset
-    /// (so a backend restart re-probes) and cancelled on shutdown.
-    ///
-    /// The probe triggers the system prompt (if undetermined) via a declared
-    /// Bonjour browse + publish. We run it at most once per backend start: a
-    /// prior grant makes it redundant, and a prior denial re-shows nothing
-    /// (the Open-Settings action is the recovery).
-    func startLocalNetworkProbe() {
-        guard !BackendPreference.modelB else { return }
-        localNetworkProbeTask?.cancel()
-        localNetworkProbeGeneration &+= 1
-        let generation = localNetworkProbeGeneration
-        localNetworkProbeRan = false
-        autoReadoptInFlight = false
-        lastReadoptAttempt = .distantPast
-        autoAdoptedCount = -1
-
-        let hasAuto = InterfaceRepository().getEnabledInterfaces().contains { $0.type == .autoInterface }
-        guard hasAuto else {
-            localNetworkState = .notConfigured
-            return
-        }
-        localNetworkState = .noCarrier
-
-        localNetworkProbeTask = Task { @MainActor [weak self] in
-            // Give the backend a beat so its first status snapshot has landed
-            // (the probe result is combined with the adopted count below).
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard let self, !Task.isCancelled, !self.localNetworkProbeRan else { return }
-            let result = await LocalNetworkProbe().probe()
-            // The probe is NOT cancellation-aware (its continuation outlives a
-            // task.cancel()). If a backend shutdown/restart superseded this
-            // task while we were awaiting, the result is stale: drop it instead
-            // of overwriting the current health state or marking the (new)
-            // backend start as "probed".
-            guard self.localNetworkProbeGeneration == generation else {
-                DiagLog.log("[LN] probe result dropped (stale generation after backend churn)")
-                return
-            }
-            self.localNetworkProbeRan = true
-            DiagLog.log("[LN] probe result: \(result.rawValue) (adopted=\(self.autoAdoptedCount))")
-            switch result {
-            case .denied:
-                self.localNetworkState = .denied
-            case .granted, .unknown:
-                // Granted (or undetermined - fail-open): the adopted count is
-                // the live signal; the poll hook refines it each snapshot.
-                self.localNetworkState = (self.autoAdoptedCount > 0) ? .healthy : .noCarrier
-            }
-        }
-    }
-
-    /// Update Local Network health from a fresh status snapshot and arm the
-    /// carrier re-adopt when the AutoInterface has adopted zero interfaces.
-    /// Called from the status poll (every snapshot).
-    func updateLocalNetworkHealth(adoptedCount: Int?) {
-        guard let adopted = adoptedCount else { return }
-        if adopted != autoAdoptedCount {
-            DiagLog.log("[LN] auto adopted_count: \(autoAdoptedCount) -> \(adopted)")
-        }
-        autoAdoptedCount = adopted
-        if localNetworkState == .denied || localNetworkState == .notConfigured {
-            return // denial is sticky; nothing to re-adopt with no interface
-        }
-        localNetworkState = (adopted > 0) ? .healthy : .noCarrier
-        if adopted == 0 {
-            scheduleAutoReadopt()
-        }
-    }
-
-    /// Re-adopt an AutoInterface that adopted zero system interfaces.
-    ///
-    /// SAFE ONLY when `adopted_count == 0`: that instance holds no discovery
-    /// sockets (they are created per adopted interface in the constructor), so
-    /// the hot-remove + hot-add cannot leak any. Upstream `AutoInterface
-    /// .detach()` does not release sockets, so re-adopting a LIVE interface
-    /// (one or more adopted) would leak the multicast sockets and split
-    /// incoming announcements between the dead and new instances - the same
-    /// reason `restartPythonBackend` refuses to run with an AutoInterface. A
-    /// live interface never needs re-adopting anyway: its `peer_jobs` loop
-    /// tracks address changes on the interfaces it already holds.
-    ///
-    /// The hot-remove + hot-add re-runs the AutoInterface constructor
-    /// (`_synthesize_interface` -> fresh `AutoInterface(...)`), which re-scans
-    /// `list_interfaces()` - now with the link up - and re-adopts en0.
-    private func scheduleAutoReadopt() {
-        guard !autoReadoptInFlight else { return }
-        let now = Date()
-        guard now.timeIntervalSince(lastReadoptAttempt) >= reAdoptCooldown else { return }
-        lastReadoptAttempt = now
-        autoReadoptInFlight = true
-        Task { @MainActor [weak self] in
-            defer { self?.autoReadoptInFlight = false }
-            guard let self, !BackendPreference.modelB else { return }
-            // Capture the backend generation at scheduling time. It is re-checked
-            // inside the gated operation (after any suspension) so a
-            // shutdown/restart that owns the gate and swaps the backend cannot be
-            // applied through a stale handle.
-            let sourceGen = self.backendGeneration
-            // Re-read fresh state (user may have disabled the interface in the
-            // meantime - a MainActor read sees the repository's current value).
-            guard let entity = InterfaceRepository().getEnabledInterfaces().first(where: { $0.type == .autoInterface }) else {
-                self.localNetworkState = .notConfigured
-                return
-            }
-            // Serialize with every user-driven interface Apply and with
-            // lifecycle operations (initialize/shutdown/reconnect) via the
-            // same FIFO gate they use. The remove below suspends, and without
-            // the gate a concurrent Apply could disable/delete the interface
-            // mid-flight; the revalidation after the removal catches that.
-            DiagLog.log("[LN] re-adopting AutoInterface (adopted=0, retry after \(Int(self.reAdoptCooldown))s cooldown)")
-            await self.withLifecycleOperation {
-                // 1. Re-resolve the backend INSIDE the gate (not a reference
-                //    captured before we awaited it) and verify the backend has
-                //    not churned. If shutdown/restart owns the gate and stops or
-                //    replaces the backend, applying the re-adopt through the
-                //    stale handle would leave the live replacement backend
-                //    unrepaired and seed stale Swift-side interface state.
-                guard let backend = self.backend, self.backendGeneration == sourceGen else {
-                    DiagLog.log("[LN] re-adopt aborted: backend torn down or replaced before re-adopt")
-                    return
-                }
-                // 2. Hot-remove (re-synthesize on re-add).
-                await self.hotRemoveInterface(entity, backend: backend)
-                // 3. Revalidate: if an Apply disabled or deleted the interface
-                //    while the removal was in flight, do NOT restore it - the
-                //    user's saved configuration wins. The removal above already
-                //    tore down the Python instance; the re-add would resurrect
-                //    the interface against the user's explicit choice and keep
-                //    its multicast resources alive.
-                let stillEnabled = InterfaceRepository().getEnabledInterfaces().contains { $0.type == .autoInterface }
-                guard stillEnabled else {
-                    DiagLog.log("[LN] re-adopt aborted: AutoInterface disabled or removed during removal")
-                    self.localNetworkState = .notConfigured
-                    return
-                }
-                // 4. Re-check the backend has not churned while we removed, so
-                //    the re-add also hits the current backend, not a stale one.
-                guard self.backendGeneration == sourceGen else {
-                    DiagLog.log("[LN] re-adopt aborted: backend changed during removal, not re-adding through a stale handle")
-                    return
-                }
-                // 5. Hot-add (fresh AutoInterface constructor re-scans
-                //    list_interfaces(), now with the link up).
-                await self.hotAddInterface(entity, backend: backend)
-            }
-        }
-    }
-
-    /// Tear down the probe on shutdown / backend teardown.
-    func stopLocalNetworkProbe() {
-        localNetworkProbeTask?.cancel()
-        // Invalidate the generation so a probe that is still awaiting when we
-        // tear down drops its result on return (it must not repopulate the
-        // state we are clearing below).
-        localNetworkProbeGeneration &+= 1
-        localNetworkProbeTask = nil
-        localNetworkState = nil
-        autoAdoptedCount = -1
-    }
-
-    /// Called when the AutoInterface is hot-added or hot-removed by the user
-    /// (the UI's Apply path), so Local Network state tracks the interface
-    /// rather than going stale.
-    func noteAutoInterfaceAvailability(changed: Bool) {
-        guard !BackendPreference.modelB else { return }
-        if changed {
-            localNetworkState = .notConfigured
-            autoAdoptedCount = -1
-        } else {
-            // Auto interface enabled. If this backend start never probed (the
-            // interface was added after launch), run the probe now so the
-            // prompt is raised and denial is surfaced.
-            if !localNetworkProbeRan {
-                startLocalNetworkProbe()
-            }
-        }
-    }
-    #endif
 
     #if canImport(CoreBluetooth)
     /// Start the BLE interface for Bluetooth peer-to-peer networking.
@@ -4779,17 +4336,6 @@ public final class AppServices {
         // 1. Files deployed eagerly during startPythonBackend — see
         //    deployIOSBLEPythonFilesIfPossible. No-op here.
 
-        #if COLUMBA_RUNTIME_PYTHON
-        // 2. Wire Swift→Python callback bridge.
-        if let backend = pythonBackend {
-            let invoker = PythonBLECallbackBridge(pythonBridge: backend.pythonBridge)
-            SwiftBLEBridge.shared.setCallbackInvoker(invoker)
-            SwiftBLEBridge.shared.setIdentity(identityHash)
-            DiagLog.log("[BLE_DIAG] PythonBLECallbackBridge installed; identity set (\(identityHash.prefix(8).map { String(format: "%02x", $0) }.joined()))")
-        } else {
-            DiagLog.log("[BLE_DIAG] WARNING: no pythonBackend yet — bridge invoker not installed")
-        }
-        #endif
 
         // 3. Update the Compat BLEInterface stub so UI binding has a target.
         let config = InterfaceConfig(
@@ -4903,11 +4449,8 @@ public final class AppServices {
         if let transport = transport {
             await transport.removeInterface(id: ble.id)
         }
-        // Tear down the Swift bridge so a subsequent start gets a clean
-        // CBCentralManager / CBPeripheralManager pair. stop() now clears the
-        // callbackInvoker inside its serialized queue block (to drop post-stop
-        // disconnect callbacks), so no separate setCallbackInvoker(nil) here.
-        SwiftBLEBridge.shared.stop()
+        // This is only a UI mirror. The shared node engine owns radio teardown
+        // through its Python interface, including when the host is this process.
         bleInterface = nil
         logger.info("BLEInterface stopped")
     }
@@ -4990,7 +4533,6 @@ public final class AppServices {
     }
 
     private func startRNodeInterfaceUnlocked(config rnodeConfig: RNodeConfig, name: String) async throws {
-        #if COLUMBA_RUNTIME_MODEL_B
         // Model B: the RNode protocol stack AND the CoreBluetooth NUS radio both run in
         // the Network Extension's embedded Python RNS node (the radio is compiled into
         // the NE target and resolves the `columba_rnode_session_*` C-ABI in-process).
@@ -5039,34 +4581,6 @@ public final class AppServices {
         seamConfig.saveToAppGroup()
 
         logger.info("RNodeInterface (Model B, NE-owned radio) started: \(name)")
-        #elseif COLUMBA_RUNTIME_PYTHON
-        // Python owns the RNS interface + KISS/RNode protocol. The custom
-        // IOSRNodeInterface loaded during backend startup drives the native
-        // PythonRNodeBLEBridge, which owns only the CoreBluetooth NUS stream.
-        let uiInterface = RNodeInterface(config: rnodeConfig, name: name)
-        uiInterface.state = .connecting
-        self.rnodeInterface = uiInterface
-        PythonRNodeBLEBridge.shared.setStateHandler { [weak self] state, reason in
-            DispatchQueue.main.async {
-                guard let self, self.rnodeInterface === uiInterface else { return }
-                switch state {
-                case .disconnected:
-                    self.rnodeInterface?.state = .disconnected
-                case .connecting:
-                    self.rnodeInterface?.state = .connecting
-                case .connected:
-                    self.rnodeInterface?.state = .connected
-                case .failed:
-                    self.rnodeInterface?.state = .connectionFailed(
-                        underlying: reason ?? "RNode BLE link failed"
-                    )
-                }
-                NotificationObserver.postNetworkStateChanged()
-            }
-        }
-        NotificationObserver.postNetworkStateChanged()
-        logger.info("RNodeInterface (Python + native BLE bridge) started: \(name)")
-        #endif
     }
 
     /// Stop or clear the runtime's RNode interface state.
@@ -5077,7 +4591,6 @@ public final class AppServices {
     }
 
     private func stopRNodeInterfaceUnlocked(closeAllPythonSessions: Bool = false) async {
-        #if COLUMBA_RUNTIME_MODEL_B
         rnodeConnectWatchdog?.cancel()
         rnodeConnectWatchdog = nil
         // Clear the NE's RNode config (the NE owns the CoreBluetooth radio, so it
@@ -5086,21 +4599,6 @@ public final class AppServices {
         rnodeInterface = nil
         NotificationObserver.postNetworkStateChanged()
         logger.info("RNodeInterface (Model B, NE-owned radio) stopped")
-        #elseif COLUMBA_RUNTIME_PYTHON
-        PythonRNodeBLEBridge.shared.setStateHandler(nil)
-        if closeAllPythonSessions {
-            // Full runtime shutdown happens after backend.stop() has detached
-            // each Python driver. Sweep only orphaned sessions here; an
-            // individual interface removal must never invalidate peers.
-            PythonRNodeBLESessionRegistry.shared.closeAll()
-        }
-        // Also clear the legacy singleton in case an older deployed Python
-        // payload opened it before the session-handle ABI was installed.
-        PythonRNodeBLEBridge.shared.disconnect()
-        rnodeInterface = nil
-        NotificationObserver.postNetworkStateChanged()
-        logger.info("RNodeInterface (Python + native BLE bridge) stopped")
-        #endif
     }
 
     /// Initialize the base stack (identity, transport, router) without a TCP interface.
@@ -5211,13 +4709,9 @@ public final class AppServices {
             // (it may not be assigned until startPythonBackend, and
             // restartPythonBackend reassigns it). Model A ignores the provider
             // and builds its in-process transport from `transport`.
-            #if COLUMBA_RUNTIME_MODEL_B
             let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = { [weak self] in
                 await MainActor.run { self?.backend?.telephony }
             }
-            #else
-            let mbProvider: (@Sendable () async -> (any RnsTelephony)?)? = nil
-            #endif
             await cm.initialize(identity: identity, transport: transport, pathTable: pt, database: db, backendProvider: mbProvider)
             cm.callHistoryRepository = self.callHistoryRepository
             self.callManager = cm
@@ -5234,136 +4728,20 @@ public final class AppServices {
 
     // MARK: - BLE Connection Info
 
-    #if canImport(CoreBluetooth)
-    /// Get snapshot of all BLE peer connection info for UI display.
-    ///
-    /// Model B: the mesh CoreBluetooth radio runs in the Network Extension
-    /// (SwiftBLEBridge, linked into the NE target), so the app's own
-    /// `SwiftBLEBridge.shared` is a dormant singleton that never sees peers.
-    /// Round-trip the live peer list to the NE via the proxy backend, which
-    /// reads them from the in-extension radio. Model A: the in-app radio is
-    /// the source of truth, so read `SwiftBLEBridge.shared` directly.
+    /// Both hosts expose the owning radio through the same backend facade.
     public func getBLEConnectionInfos() async -> [BLEConnectionInfo] {
-        #if COLUMBA_RUNTIME_MODEL_B
-        if BackendPreference.modelB, let backend = backend {
-            return await backend.bleConnections()
-        }
-        #endif
-        // Model A (and any non-Model-B path that falls through here): the
-        // in-app radio is the source of truth. Read the peer connection
-        // details directly from SwiftBLEBridge.shared. (In Model B the early
-        // return above handles the query, so this branch only runs for the
-        // in-app radio.)
-        let details = SwiftBLEBridge.shared.getConnectionDetails()
-        // Group by identity. When a peer is connected via BOTH central
-        // and peripheral roles (each direction opens its own GATT link),
-        // we get two entries with the same identity hash. Pick the
-        // peripheral entry when present (typically the established path
-        // with higher MTU), but BORROW the RSSI from the central entry
-        // since CB doesn't expose central-side RSSI to a peripheral.
-        var rep: [String: BleConnectionDetails] = [:]
-        var rssiByIdentity: [String: Int] = [:]
-        var earliestConnectedAt: [String: Date] = [:]
-        for d in details {
-            guard let id = d.identityHashHex else { continue }
-            if let r = d.rssi { rssiByIdentity[id] = r }
-            // Earliest connectedAt of all the GATT paths to this peer —
-            // closer to "when we first established with them".
-            if let existing = earliestConnectedAt[id] {
-                earliestConnectedAt[id] = min(existing, d.connectedAt)
-            } else {
-                earliestConnectedAt[id] = d.connectedAt
-            }
-            if let existing = rep[id] {
-                if d.role == .peripheral && existing.role != .peripheral {
-                    rep[id] = d
-                } else if d.mtu > existing.mtu {
-                    rep[id] = d
-                }
-            } else {
-                rep[id] = d
-            }
-        }
-        let now = Date()
-        return rep.values.map { d in
-            let idHex = d.identityHashHex ?? d.address
-            let displayName = d.identityHashHex.map { String($0.prefix(8)) }
-            // Merge: prefer the picked entry's RSSI, else the borrowed
-            // central-side value, else nil.
-            let rssi = d.rssi ?? d.identityHashHex.flatMap { rssiByIdentity[$0] }
-            let startedAt = d.identityHashHex.flatMap { earliestConnectedAt[$0] } ?? d.connectedAt
-            return BLEConnectionInfo(
-                identityHex: idHex,
-                identityHash: idHex,
-                displayName: displayName,
-                rssi: rssi,
-                connected: true,
-                lastSeen: d.lastActivity,
-                lastActivity: d.lastActivity,
-                connectionType: d.role.rawValue,
-                connectionDuration: max(0, now.timeIntervalSince(startedAt)),
-                isOutgoing: d.role == .central,
-                mtu: d.mtu,
-                bytesSent: 0,
-                bytesReceived: 0,
-                packetsSent: 0,
-                packetsReceived: 0,
-                signalQuality: SignalQuality.quality(forRssi: rssi)
-            )
-        }
+        await backend?.core.bleConnections() ?? []
     }
 
-    /// Disconnect a specific BLE peer.
     public func disconnectBLEPeer(identityHex: String) async {
         await withLifecycleOperation {
-            await disconnectBLEPeerUnlocked(identityHex: identityHex)
+            _ = await backend?.core.disconnectBLEPeer(identityHashHex: identityHex)
         }
     }
 
-    private func disconnectBLEPeerUnlocked(identityHex: String) async {
-        #if COLUMBA_RUNTIME_MODEL_B
-        // Model B: the radio is in the NE, so the link is dropped there.
-        if BackendPreference.modelB, let backend = backend {
-            await backend.disconnectBLEPeer(identityHashHex: identityHex)
-            return
-        }
-        #endif
-        // Model A: resolve identity → address via the in-app bridge and drop
-        // the GATT connection directly.
-        if let address = SwiftBLEBridge.shared.getPeerAddress(identityHashHex: identityHex) {
-            SwiftBLEBridge.shared.disconnect(address: address)
-        }
-    }
-
-    /// Whether BLE interface is currently active.
-    /// Model A: the app's Compat `BLEInterface` is non-nil. Model B: the
-    /// radio lives in the Network Extension (the app no longer runs a
-    /// CoreBluetooth host), so the app's notion of "active" is that a BLE
-    /// interface is enabled in the config; the NE drives the radio and the
-    /// connections screen shows the live peer list via the proxy query.
     public var isBLEActive: Bool {
-        #if COLUMBA_RUNTIME_MODEL_B
         InterfaceRepository().getEnabledInterfaces().contains { $0.type == .ble }
-        #else
-        bleInterface != nil
-        #endif
     }
-    #endif
-
-    #if COLUMBA_RUNTIME_MODEL_B
-    /// Phase 2: the mesh CoreBluetooth radio now runs in the Network Extension
-    /// (SwiftBLEBridge is linked into the NE target and driven in-process by the
-    /// NE's Python driver). The app no longer runs a CoreBluetooth host, so this
-    /// used-to-start-the-app-radio hook is now a no-op: the NE owns the radio,
-    /// and a second app-side `SwiftBLEBridge` instance would fight the NE's over
-    /// the same GATT service (the "second central drops the first" failure mode).
-    /// Kept as a no-op rather than deleted because its call sites (backend
-    /// start + interface Apply) still run, and the app-side seam files it
-    /// started are removed in a follow-up commit after on-device verify.
-    func syncModelBBLEService() {
-        DiagLog.log("[BLE] Model B: mesh radio runs in the NE; no app-side host (Phase 2)")
-    }
-    #endif
 
     // MARK: - Shutdown
 
@@ -5382,12 +4760,9 @@ public final class AppServices {
         stateObserverTask?.cancel()
         stateObserverTask = nil
 
-        #if COLUMBA_RUNTIME_MODEL_B
         // The BLE driver's identity hash is fixed at construction. Tear it down on every
         // backend shutdown so identity switching cannot keep advertising the old identity;
         // the subsequent initialize() starts a fresh driver with the new identity hash.
-        ModelBBLEService.shared.stop()
-        #endif
 
         #if os(iOS)
         // Stop call manager: ends any active CallKit call and tears down the
@@ -5405,9 +4780,6 @@ public final class AppServices {
         pythonEventTask = nil
         pythonStatusPollTask?.cancel()
         pythonStatusPollTask = nil
-        #if COLUMBA_RUNTIME_PYTHON
-        stopLocalNetworkProbe()
-        #endif
         // Remove the test-deeplink NotificationCenter observers registered in
         // startPythonBackend(); without this they'd accumulate across restart
         // cycles and fire each handler once per past start.
@@ -5563,7 +4935,6 @@ public final class AppServices {
 
         startStateObserver()
 
-        #if COLUMBA_RUNTIME_MODEL_B
         // Launch-race fix: the persistent background-transport tunnel can already be
         // `.connected` when the app cold-starts, so `onStatusChange` fires (and tunnel
         // mode is applied) BEFORE this interface is registered — leaving it in
@@ -5571,7 +4942,6 @@ public final class AppServices {
         // rx=0 tx=0, no announces). Re-assert tunnel mode now that this interface
         // exists so it's bridged through the extension.
         await reapplyTunnelModeIfActive()
-        #endif
     }
 
     /// Stop a specific TCP interface by entity ID.
@@ -5779,7 +5149,7 @@ public final class AppServices {
     /// interface back to its entity id (the suffix), with online + last error so the
     /// card can show connected / unreachable / connecting per relay.
     public func neTcpRelayStatuses() async -> [(entityId: String, online: Bool, lastError: String?)] {
-        guard BackendPreference.modelB, let backend = backend else { return [] }
+        guard let backend = backend else { return [] }
         let snap = await backend.statusSnapshot()
         let ifaces = snap?.interfaces ?? []
         // Match NE interfaces to app entities by the config section name the writer
@@ -5813,7 +5183,7 @@ public final class AppServices {
     /// interface is configured or not yet in the snapshot. Consumed (gated on
     /// `rnodeBadgeFromNE`) by `InterfaceManagementViewModel.refreshNEBackedStatus`.
     public func neRNodeStatus() async -> (online: Bool, lastError: String?, statusReason: String?)? {
-        guard BackendPreference.modelB, let backend = backend else { return nil }
+        guard let backend = backend else { return nil }
         let entity = InterfaceRepository().getEnabledInterfaces().first(where: { $0.type == .rnode })
         guard let entity else { return nil }
         let expected = PythonConfigWriter.sectionName(for: entity)

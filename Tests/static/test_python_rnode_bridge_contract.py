@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 CONFIG_WRITER = ROOT / "Sources/ColumbaApp/Services/PythonConfigWriter.swift"
-NATIVE_BRIDGE = ROOT / "Sources/PythonBridge/PythonRNodeBLEBridge.swift"
+NATIVE_BRIDGE = ROOT / "Sources/RNSHost/PythonRNodeBLEBridge.swift"
 PY_INTERFACE = ROOT / "app/rnode/IOSRNodeInterface.py"
 PY_DRIVER = ROOT / "app/rnode/IOSRNodeDriver.py"
 RECONCILER = ROOT / "support/isolate-modelb-targets.rb"

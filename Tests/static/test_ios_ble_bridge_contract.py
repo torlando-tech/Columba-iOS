@@ -22,10 +22,10 @@ RECONCILER = ROOT / "support/isolate-modelb-targets.rb"
 
 class IOSBLEBridgeContracts(unittest.TestCase):
     def test_callback_sink_is_installed_before_python_starts(self) -> None:
-        source = APP.read_text()
-        install = source.index("PythonBLECallbackBridge(pythonBridge:")
-        start = source.index("let info = try await backend.start(")
-        self.assertLess(install, start)
+        local = (ROOT / "Sources/RNSHost/LocalNodeAdapter.swift").read_text()
+        provider = (ROOT / "Sources/ColumbaNetworkExtension/PacketTunnelProvider.swift").read_text()
+        self.assertLess(local.index("PythonNodeBLECallbackInvoker.install()"), local.index("NodeCommandDispatcher.dispatch"))
+        self.assertIn("PythonNodeBLECallbackInvoker.install()", provider)
 
     def test_advertising_waits_for_confirmed_service_registration(self) -> None:
         source = BRIDGE.read_text()
@@ -273,7 +273,7 @@ class IOSBLEBridgeContracts(unittest.TestCase):
             bindings.count("@_used\n@_cdecl(\"columba_ble_"),
         )
         self.assertIn("public func columbaBLEForceLinkNativeBindings()", bindings)
-        self.assertIn("columbaBLEForceLinkNativeBindings()", app)
+        self.assertIn("columbaBLEForceLinkNativeBindings()", (ROOT / "Sources/RNSHost/PythonNodeBLEBridge.swift").read_text())
 
     def test_debug_build_keeps_ctypes_exports_in_main_executable(self) -> None:
         project = PROJECT.read_text()
@@ -293,7 +293,7 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         )
         self.assertNotIn(setting, shipping_debug)
         self.assertIn(setting, shipping_release)
-        self.assertIn("STRIP_STYLE = non-global;", shipping_release)
+        self.assertRegex(shipping_release, r'STRIP_STYLE = "?non-global"?;')
 
         declared = set()
         for source in (ROOT / "Sources").rglob("*.swift"):
@@ -305,25 +305,11 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         }
         self.assertEqual(declared, exported)
 
-    def test_reconciler_keeps_native_exports_shipping_only(self) -> None:
-        source = RECONCILER.read_text()
-        self.assertIn(
-            "PYTHON_NATIVE_EXPORTS_FILE = "
-            "'Sources/ColumbaApp/Resources/ColumbaApp.exports'",
-            source,
-        )
-        self.assertIn(
-            "PYTHON_NATIVE_BUILD_SETTINGS.each { |setting| "
-            "configuration.build_settings.delete(setting) }",
-            source,
-        )
-        self.assertIn(
-            "configuration.build_settings['EXPORTED_SYMBOLS_FILE'] = "
-            "PYTHON_NATIVE_EXPORTS_FILE",
-            source,
-        )
-        self.assertIn("if configuration.name == 'Release'", source)
-        self.assertIn("configuration.build_settings['STRIP_STYLE'] = 'non-global'", source)
+    def test_unified_app_preserves_native_exports(self) -> None:
+        project = (ROOT / "Columba.xcodeproj/project.pbxproj").read_text()
+        self.assertIn('EXPORTED_SYMBOLS_FILE = Sources/ColumbaApp/Resources/ColumbaApp.exports;', project)
+        self.assertIn('STRIP_STYLE = "non-global";', project)
+        self.assertIn('ENABLE_DEBUG_DYLIB = NO;', project)
 
     def test_central_payload_capacity_refreshes_after_handshake(self) -> None:
         source = BRIDGE.read_text()

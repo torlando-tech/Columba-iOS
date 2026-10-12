@@ -94,11 +94,13 @@ public protocol RnsLxmf: AnyObject, Sendable {
     func setPropagationNode(destHashHex: String, stampCost: Int) async throws -> Bool
 
     /// Blocking sync from the configured propagation node.
+    func cancelPropagationSync() async
     func propagationSync(timeout: TimeInterval) async throws -> PropagationSyncResult
 }
 
 // Ergonomic overloads (protocol requirements can't carry default arguments).
 public extension RnsLxmf {
+    func cancelPropagationSync() async {}
     @discardableResult
     func sendLxmfMessage(
         destHashHex: String,

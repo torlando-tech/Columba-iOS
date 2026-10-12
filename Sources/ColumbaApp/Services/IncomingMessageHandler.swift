@@ -226,7 +226,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
     public func router(_ router: LXMRouter, didReceiveMessage message: LXMessage) {
         // Live (non-Model-B) inbound: the in-process LXMRouter delegate fires once
         // per message. Model B has NO live delegate (the NE owns delivery), so
-        // `ModelBInboundReplay` calls `handleInbound(_:)` directly over messages the
+        // `NodeInboundReplay` calls `handleInbound(_:)` directly over messages the
         // NE persisted to the shared store — identical side-channel processing.
         handleInbound(message)
     }
@@ -598,7 +598,7 @@ public final class IncomingMessageHandler: LXMRouterDelegate {
             }
         } catch {
             logger.error("Failed to merge reaction: \(error.localizedDescription)")
-            // Keep the control message durable so ModelBInboundReplay can retry
+            // Keep the control message durable so NodeInboundReplay can retry
             // the merge by hash. Deleting after a failed merge would lose it.
             return false
         }

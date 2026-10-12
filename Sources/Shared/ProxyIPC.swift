@@ -5,7 +5,7 @@
 //  Track A5b — the app↔NE IPC envelope for the Model B send path.
 //
 //  In Model B the Network Extension owns the canonical `lxmf.delivery`
-//  destination + node (the in-NE Python RNS engine, `NEPythonRNS`); the app
+//  destination + node (the in-NE Python RNS engine, `PythonNodeEngine`); the app
 //  becomes a thin client that marshals node-owning operations (start / stop /
 //  announce / status / persist / lxmf-send / …) to the NE over
 //  `NETunnelProviderSession.sendProviderMessage`. This file defines the
@@ -13,7 +13,7 @@
 //    • app side  → `ProxyRnsBackend` encodes a `ProxyRequest`, sends it, decodes
 //      the `ProxyResponse`;
 //    • NE side   → `PacketTunnelProvider.handleAppMessage` try-decodes a
-//      `ProxyRequest`, dispatches to `NEPythonRNS` (via `dispatchPython`),
+//      `ProxyRequest`, dispatches to `PythonNodeEngine` (via `dispatchPython`),
 //      encodes a `ProxyResponse`.
 //
 //  ── COLLISION RULE (HARD) ────────────────────────────────────────────────────
@@ -156,7 +156,14 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     case statusSnapshot
 
     /// Flush pending router state to disk (mirrors `RnsCore.persist`).
+    case resolvePath(destHashHex: String, timeout: Double)
+    case discovery
     case persist
+    case setPropagationNode(destHashHex: String, stampCost: Int)
+    case propagationSync(timeout: Double)
+    case cancelPropagationSync
+    case incomingMessageLimit(limitKB: Int)
+    case rememberPeer(destHashHex: String, publicKeyHex: String)
 
     /// Lowercase-hex destination hashes the NE node has registered
     /// (mirrors `RnsCore.registeredDestinationHashes`). Response payload:
@@ -208,7 +215,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// P1 #6): the NE dedups on it so a lost live reply + outbox replay cannot
     /// double-send. Optional and `encodeIfPresent` so an absent id (a non-Model-B
     /// caller) is a no-op on the wire.
-    case lxmfSend(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String? = nil)
+    case lxmfSend(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String? = nil, failureFallbackMethod: String? = nil)
 
     /// Native Model B BLE peer snapshot. The NE owns reticulum-swift's
     /// `BLEInterface` in Model B (the app can't enumerate BLE peers itself), so
@@ -283,13 +290,17 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case op, displayName, destHashHex, content, method, fieldsData, sendId
         case path, timeoutSeconds, formFields
         case aspect, identityPublicKeyHex, linkId, dataHex
+        case failureFallbackMethod
+        case stampCost, limitKB, publicKeyHex
         case maxSeq, interfaceName
     }
 
     /// Stable discriminator strings (decoupled from the Swift case names so a
     /// rename can't silently break the wire).
     private enum Op: String, Codable {
+        case setPropagationNode, propagationSync, cancelPropagationSync, incomingMessageLimit, rememberPeer
         case start, stop, announce, announceTelephony, statusSnapshot
+        case resolvePath, discovery
         case persist, registeredDestinationHashes, lxmfSend, heardAnnounces
         case drainEvents, bleConnections, bleDisconnect, nomadnetFetch
         case openLink, linkSend, linkIdentify, linkTeardown
@@ -300,6 +311,22 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .setPropagationNode(let hash, let cost):
+            try c.encode(Op.setPropagationNode, forKey: .op)
+            try c.encode(hash, forKey: .destHashHex)
+            try c.encode(cost, forKey: .stampCost)
+        case .propagationSync(let timeout):
+            try c.encode(Op.propagationSync, forKey: .op)
+            try c.encode(timeout, forKey: .timeoutSeconds)
+        case .cancelPropagationSync:
+            try c.encode(Op.cancelPropagationSync, forKey: .op)
+        case .incomingMessageLimit(let limit):
+            try c.encode(Op.incomingMessageLimit, forKey: .op)
+            try c.encode(limit, forKey: .limitKB)
+        case .rememberPeer(let hash, let key):
+            try c.encode(Op.rememberPeer, forKey: .op)
+            try c.encode(hash, forKey: .destHashHex)
+            try c.encode(key, forKey: .publicKeyHex)
         case .start(let displayName):
             try c.encode(Op.start, forKey: .op)
             try c.encode(displayName, forKey: .displayName)
@@ -313,6 +340,12 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(displayName, forKey: .displayName)
         case .statusSnapshot:
             try c.encode(Op.statusSnapshot, forKey: .op)
+        case .resolvePath(let hash, let timeout):
+            try c.encode(Op.resolvePath, forKey: .op)
+            try c.encode(hash, forKey: .destHashHex)
+            try c.encode(timeout, forKey: .timeoutSeconds)
+        case .discovery:
+            try c.encode(Op.discovery, forKey: .op)
         case .persist:
             try c.encode(Op.persist, forKey: .op)
         case .registeredDestinationHashes:
@@ -321,13 +354,14 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             try c.encode(Op.heardAnnounces, forKey: .op)
         case .drainEvents:
             try c.encode(Op.drainEvents, forKey: .op)
-        case .lxmfSend(let destHashHex, let content, let method, let fieldsData, let sendId):
+        case .lxmfSend(let destHashHex, let content, let method, let fieldsData, let sendId, let fallback):
             try c.encode(Op.lxmfSend, forKey: .op)
             try c.encode(destHashHex, forKey: .destHashHex)
             try c.encode(content, forKey: .content)
             try c.encode(method, forKey: .method)
             try c.encode(fieldsData, forKey: .fieldsData)
             try c.encodeIfPresent(sendId, forKey: .sendId)
+            try c.encodeIfPresent(fallback, forKey: .failureFallbackMethod)
         case .bleConnections:
             try c.encode(Op.bleConnections, forKey: .op)
         case .bleDisconnect(let identityHashHex):
@@ -370,6 +404,15 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let op = try c.decode(Op.self, forKey: .op)
         switch op {
+        case .setPropagationNode:
+            self = .setPropagationNode(destHashHex: try c.decode(String.self, forKey: .destHashHex), stampCost: try c.decode(Int.self, forKey: .stampCost))
+        case .propagationSync:
+            self = .propagationSync(timeout: try c.decode(Double.self, forKey: .timeoutSeconds))
+        case .cancelPropagationSync: self = .cancelPropagationSync
+        case .incomingMessageLimit:
+            self = .incomingMessageLimit(limitKB: try c.decode(Int.self, forKey: .limitKB))
+        case .rememberPeer:
+            self = .rememberPeer(destHashHex: try c.decode(String.self, forKey: .destHashHex), publicKeyHex: try c.decode(String.self, forKey: .publicKeyHex))
         case .start:
             self = .start(displayName: try c.decode(String.self, forKey: .displayName))
         case .stop:
@@ -380,6 +423,9 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .announceTelephony(displayName: try c.decode(String.self, forKey: .displayName))
         case .statusSnapshot:
             self = .statusSnapshot
+        case .resolvePath:
+            self = .resolvePath(destHashHex: try c.decode(String.self, forKey: .destHashHex), timeout: try c.decode(Double.self, forKey: .timeoutSeconds))
+        case .discovery: self = .discovery
         case .persist:
             self = .persist
         case .registeredDestinationHashes:
@@ -394,7 +440,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
                 content: try c.decode(String.self, forKey: .content),
                 method: try c.decode(String.self, forKey: .method),
                 fieldsData: try c.decode(Data.self, forKey: .fieldsData),
-                sendId: try c.decodeIfPresent(String.self, forKey: .sendId)
+                sendId: try c.decodeIfPresent(String.self, forKey: .sendId),
+                failureFallbackMethod: try c.decodeIfPresent(String.self, forKey: .failureFallbackMethod)
             )
         case .bleConnections:
             self = .bleConnections

@@ -1,4 +1,4 @@
-#if COLUMBA_ONBOARDING_ENABLED && COLUMBA_RUNTIME_MODEL_B
+#if COLUMBA_ONBOARDING_ENABLED
 //
 //  BackgroundDeliveryPage.swift
 //  ColumbaApp
@@ -30,6 +30,7 @@ struct BackgroundDeliveryPage: View {
     /// `true`.
     let onEnable: () async -> Bool
     let onBack: () -> Void
+    var onForeground: (() -> Void)? = nil
 
     @State private var isWorking = false
     @State private var errorMessage: String?
@@ -84,6 +85,13 @@ struct BackgroundDeliveryPage: View {
                 }
             }
 
+            if !isReadOnly, let onForeground {
+                Button("Use Foreground Only", action: onForeground)
+                    .padding(.vertical, 12)
+                Text("Background delivery is recommended. Foreground connections stop working while iOS suspends Columba.")
+                    .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 24)
+            }
             // Navigation buttons
             HStack(spacing: 16) {
                 Button(action: onBack) {

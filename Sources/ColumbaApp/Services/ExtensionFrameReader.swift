@@ -8,7 +8,6 @@
 //  Listens for Darwin notifications from the extension to wake and process frames.
 //
 
-#if COLUMBA_RUNTIME_MODEL_B
 
 import Foundation
 import RNSAPI
@@ -105,5 +104,3 @@ public final class ExtensionFrameReader: @unchecked Sendable {
         stopListening()
     }
 }
-
-#endif

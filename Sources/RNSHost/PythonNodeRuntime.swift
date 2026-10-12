@@ -1,38 +1,13 @@
-//
-//  NEPythonRuntime.swift
-//  ColumbaNetworkExtension
-//
-//  Embedded CPython interpreter lifecycle for the NE process.
-//
-//  This is the FOUNDATION for running the real Python RNS runtime in the NE
-//  (moving the entire Reticulum runtime out of the app into the extension).
-//  It mirrors the app's Sources/PythonBridge/PythonRuntime.swift but:
-//    • targets the NE (Bundle.main = the appex, resourcePath = appex root),
-//    • logs through ExtensionDiagLog (the NE's PII-free channel), never NSLog,
-//    • is deliberately minimal in this first slice: it proves the CPython C
-//      API initializes in the NE sandbox, by reading sys.version back.
-//
-//  The Python framework is embedded in the appex (Frameworks/Python.framework)
-//  and resolves at runtime via the appex's @executable_path/Frameworks rpath
-//  (the framework's install name is @rpath/Python.framework/Python). The
-//  standard library is installed into <appex>/python by the "Install Python
-//  stdlib (NE)" build phase; PYTHONHOME = <appex>/python.
-//
-//  After init, the calling thread releases the GIL via PyEval_SaveThread() so
-//  RNS/LXMF background threads can run; all later Python work wraps in
-//  withGIL { } (PyGILState_Ensure/Release is reentrant, safe from any thread).
-//
-//  COLLISION RULE (hard): this file imports ONLY Foundation + the CPython C API
-//  (via the NE bridging header). It must NOT import RNSAPI / ReticulumSwift /
-//  LXMFSwift. The RNS engine that will use this interpreter lives behind the
-//  NodeEngine seam as a sibling conformance, not in this file.
-//
+// Embedded CPython lifecycle shared by the foreground and extension hosts.
+// Bundle.main supplies the selected process's Python payload. Initialization
+// is serialized once per process; later calls acquire the GIL independently.
+// This module deliberately has no dependency on RNSAPI or native RNS types.
 
 import Foundation
 
 /// Owns the embedded Python interpreter in the NE process.
-final class NEPythonRuntime: @unchecked Sendable {
-    static let shared = NEPythonRuntime()
+final class PythonNodeRuntime: @unchecked Sendable {
+    static let shared = PythonNodeRuntime()
 
     enum State: Equatable { case uninitialized, running, failed(String), finalized }
     private(set) var state: State = .uninitialized
@@ -303,9 +278,9 @@ final class NEPythonRuntime: @unchecked Sendable {
 
     /// Call `rns_bridge.<fn>(...)` and return its result as a JSON string.
     ///
-    /// This is the generic seam the in-NE Python RNS engine (`NEPythonRNS`)
+    /// This is the generic seam the in-NE Python RNS engine (`PythonNodeEngine`)
     /// uses to drive the live node: it keeps ALL the CPython C-API detail here
-    /// (NEPythonRuntime's file) and exposes one plain-string-in / string-out
+    /// (PythonNodeRuntime's file) and exposes one plain-string-in / string-out
     /// method so the engine never touches the C API directly.
     ///
     /// `payload` is JSON of the form `{"args":[...], "kwargs":{...}}`. A Python

@@ -112,28 +112,11 @@ public final class PropagationNodeManager {
     private var syncInFlight = false
     private var activeSyncOperationID: UUID?
 
-    /// Observer token for the NE's propagation sync-state channel (Model B). The NE
-    /// owns the router/sync, so live progress arrives as App-Group snapshots bridged
-    /// to `propagationSyncStateChangedInApp`; we mirror them into `syncState`.
-    #if COLUMBA_RUNTIME_MODEL_B
-    private var syncStateObserverToken: NSObjectProtocol?
-    #endif
-
     // MARK: - Initialization
 
     public init(appServices: AppServices) {
         self.appServices = appServices
-        #if COLUMBA_RUNTIME_PYTHON
-        self.propagationNodeSetter = { [weak appServices] hash, stampCost in
-            guard let backend = appServices?.pythonBackend else { return false }
-            return try await backend.setPropagationNode(
-                destHashHex: hash,
-                stampCost: stampCost
-            )
-        }
-        #else
         self.propagationNodeSetter = nil
-        #endif
     }
 
     init(
@@ -148,21 +131,6 @@ public final class PropagationNodeManager {
 
     /// Start listening for propagation node announces on the path table.
     public func startListening() {
-        #if COLUMBA_RUNTIME_MODEL_B
-        // Model B: mirror the NE's sync-state snapshots into `syncState` so the in-app
-        // sync sheet reflects live progress (the NE owns the router; the app can't read
-        // its transfer state directly).
-        if syncStateObserverToken == nil {
-            syncStateObserverToken = NotificationCenter.default.addObserver(
-                forName: NotificationObserver.propagationSyncStateChangedInApp,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.applySyncStateSnapshot() }
-            }
-        }
-        #endif
-
         guard let pathTable = appServices?.pathTable else {
             return
         }
@@ -187,41 +155,7 @@ public final class PropagationNodeManager {
     public func stopListening() {
         listenTask?.cancel()
         listenTask = nil
-        #if COLUMBA_RUNTIME_MODEL_B
-        if let token = syncStateObserverToken {
-            NotificationCenter.default.removeObserver(token)
-            syncStateObserverToken = nil
-        }
-        #endif
     }
-
-    #if COLUMBA_RUNTIME_MODEL_B
-    /// Read the NE's latest sync-state snapshot (Model B) and mirror it into
-    /// `syncState`, which the in-app sync sheet observes.
-    private func applySyncStateSnapshot() {
-        guard let snap = PropagationSyncStateSnapshot.loadFromAppGroup() else { return }
-        syncState.state = Self.mapSnapshotPhase(snap.phase)
-        syncState.receivedMessages = snap.received
-        syncState.progress = snap.progress
-        syncState.errorDescription = snap.errorDescription
-        if snap.phase == .complete {
-            syncState.lastSync = Date()
-            lastSyncTime = syncState.lastSync
-        }
-    }
-
-    /// Map the NE snapshot's coarse phase to the app's Compat sync state.
-    private static func mapSnapshotPhase(_ phase: PropagationSyncStateSnapshot.Phase) -> PropagationTransferState.State {
-        switch phase {
-        case .idle: return .idle
-        case .linking: return .linking
-        case .linked: return .linked
-        case .requesting, .receiving: return .transferring
-        case .complete: return .complete
-        case .failed: return .transferFailed
-        }
-    }
-    #endif
 
     /// Process a path entry to check if it's a propagation node.
     private func processPathEntry(_ entry: PathEntry) async {
@@ -313,21 +247,7 @@ public final class PropagationNodeManager {
         }
 
         let stampCost = info.stampCost
-        #if COLUMBA_RUNTIME_PYTHON
-        guard let propagationNodeSetter else {
-            logger.error("setPropagationNode unavailable: shipping backend is not ready")
-            return false
-        }
-        do {
-            guard try await propagationNodeSetter(hash.toHex(), stampCost) else {
-                logger.error("setPropagationNode was rejected by backend")
-                return false
-            }
-        } catch {
-            logger.error("setPropagationNode failed: \(error.localizedDescription)")
-            return false
-        }
-        #endif
+        guard await applyNode(hash: hash.toHex(), stampCost: stampCost) else { return false }
 
         selectedNodeHash = hash
         selectedNodeName = candidateName
@@ -348,21 +268,8 @@ public final class PropagationNodeManager {
     /// from saying "None" while Python continues using a stale relay.
     @discardableResult
     public func clearSelection() async -> Bool {
-        #if COLUMBA_RUNTIME_PYTHON
-        guard let propagationNodeSetter else {
-            logger.error("clear propagation node unavailable: shipping backend is not ready")
-            return false
-        }
-        do {
-            guard try await propagationNodeSetter("", 0) else {
-                logger.error("clear propagation node was rejected by backend")
-                return false
-            }
-        } catch {
-            logger.error("clear propagation node failed: \(error.localizedDescription)")
-            return false
-        }
-        #endif
+        guard await applyNode(hash: "", stampCost: 0) else { return false }
+
 
         await appServices?.router?.setOutboundPropagationNode(nil)
         await appServices?.router?.setPropagationStampCost(0)
@@ -420,70 +327,19 @@ public final class PropagationNodeManager {
             syncState = PropagationTransferState(state: .linking)
         }
 
-        // Model B: the LXMF router lives in the NE — the app can't sync in-process.
-        // Ensure a PN is selected + its config is in the seam, then fire the sync-now
-        // Darwin trigger. Real progress arrives back via the sync-state channel
-        // (PropagationSyncStateSnapshot → syncState); the NE's overlap guard makes
-        // repeated taps safe.
-        #if COLUMBA_RUNTIME_MODEL_B
-        do {
-            if selectedNodeHash == nil && autoSelectEnabled,
-               let best = knownNodes.first(where: { $0.isOnline }) ?? knownNodes.first {
-                await selectNode(hash: best.hash)
-            }
-            guard selectedNodeHash != nil else {
-                syncState.state = .noPath
-                syncState.errorDescription = "No propagation node available"
-                logger.warning("[SYNC] Model B: no propagation node, sync skipped")
-                return false
-            }
-            publishPropagationSeam() // ensure the NE has the latest PN + stamp cost
-            syncState.state = .linking
-            syncState.errorDescription = nil
-            PropagationSeamConfig.postSyncNowNotification()
-            logger.info("[SYNC] Model B: posted sync-now to NE")
-            return true
+        guard let backend = appServices?.backend else { return false }
+        if selectedNodeHash == nil && autoSelectEnabled,
+           let best = knownNodes.first(where: { $0.isOnline }) ?? knownNodes.first {
+            _ = await selectNode(hash: best.hash)
         }
-        #elseif COLUMBA_RUNTIME_PYTHON
-
-        guard let backend = appServices?.pythonBackend else {
-            logger.error("[SYNC] Python backend not available")
-            DiagLog.log("[SYNC] failed: Python backend unavailable")
-            syncState.state = .linkFailed
-            syncState.errorDescription = "Backend not available"
-            return false
-        }
-
-        logger.info("[SYNC] syncNow called. knownNodes=\(self.knownNodes.count), selectedNodeHash=\(self.selectedNodeHash != nil ? "set" : "nil")")
-
-        // Auto-select a propagation node if none is set and auto-select is enabled
-        if selectedNodeHash == nil && autoSelectEnabled {
-            if let best = knownNodes.first(where: { $0.isOnline }) {
-                await selectNode(hash: best.hash)
-                logger.info("[SYNC] Auto-selected online node: \(best.resolvedDisplayName) hops=\(best.hopCount)")
-            } else if let best = knownNodes.first {
-                await selectNode(hash: best.hash)
-                logger.info("[SYNC] Auto-selected node (may be offline): \(best.resolvedDisplayName) hops=\(best.hopCount)")
-            }
-        }
-
-        guard let nodeHash = selectedNodeHash else {
+        guard selectedNodeHash != nil else {
             syncState.state = .noPath
             syncState.errorDescription = "No propagation node available"
-            logger.warning("[SYNC] No propagation nodes discovered, sync skipped")
-            DiagLog.log("[SYNC] failed: no propagation node selected")
             return false
         }
-
-        let nodeHex = nodeHash.prefix(8).map { String(format: "%02x", $0) }.joined()
-        logger.info("[SYNC] Starting sync from propagation node \(nodeHex)")
-        syncState.state = .linking
-        syncState.errorDescription = nil
-
         do {
-            let transaction = try await backend.propagationSyncAndDrain(timeout: timeout)
-            await appServices?.processPythonEventsSynchronously(transaction.events)
-            let result = transaction.result
+            let result = try await backend.lxmf.propagationSync(timeout: timeout)
+            await appServices?.replayInboundSideEffects?()
             syncState.state = Self.mapPythonState(result.state)
             syncState.receivedMessages = result.receivedMessages
             syncState.errorDescription = result.ok ? nil : result.reason
@@ -491,20 +347,12 @@ public final class PropagationNodeManager {
                 syncState.lastSync = Date()
                 lastSyncTime = syncState.lastSync
             }
-            logger.info("[SYNC] Sync \(result.ok ? "complete" : "failed"). state=\(result.state.rawValue) newMessages=\(result.receivedMessages)")
-            DiagLog.log(
-                "[SYNC] completed ok=\(result.ok) state=\(result.state.rawValue) "
-                    + "received=\(result.receivedMessages) reason=\(result.reason)"
-            )
             return result.ok
         } catch {
             syncState.state = .transferFailed
             syncState.errorDescription = error.localizedDescription
-            logger.error("[SYNC] Sync failed: \(error.localizedDescription)")
-            DiagLog.log("[SYNC] failed with error: \(error.localizedDescription)")
             return false
         }
-        #endif
     }
 
     /// Interrupt an active shipping Python propagation sync. This is used by
@@ -515,9 +363,7 @@ public final class PropagationNodeManager {
             logger.info("[SYNC] ignored cancellation for inactive propagation sync")
             return
         }
-        #if COLUMBA_RUNTIME_PYTHON
-        await appServices?.pythonBackend?.cancelPropagationSync()
-        #endif
+        await appServices?.backend?.lxmf.cancelPropagationSync()
     }
 
     /// Reapply the persisted relay after the embedded Python backend starts.
@@ -525,22 +371,18 @@ public final class PropagationNodeManager {
     /// so wiring only the Compat router leaves Python with no outbound node.
     @discardableResult
     public func reapplySelectedNodeToPythonBackend() async -> Bool {
-        #if COLUMBA_RUNTIME_PYTHON
-        guard let hash = selectedNodeHash,
-              let backend = appServices?.pythonBackend else { return false }
-        let hex = hash.map { String(format: "%02x", $0) }.joined()
+        await applyNode(hash: selectedNodeHash?.toHex() ?? "", stampCost: selectedNodeStampCost)
+    }
+
+    private func applyNode(hash: String, stampCost: Int) async -> Bool {
         do {
-            return try await backend.setPropagationNode(
-                destHashHex: hex,
-                stampCost: selectedNodeStampCost
-            )
+            if let propagationNodeSetter { return try await propagationNodeSetter(hash, stampCost) }
+            guard let backend = appServices?.backend else { return false }
+            return try await backend.lxmf.setPropagationNode(destHashHex: hash, stampCost: stampCost)
         } catch {
-            logger.error("[SYNC] Failed to reapply persisted propagation node: \(error.localizedDescription)")
+            logger.error("Relay configuration failed: \(error.localizedDescription)")
             return false
         }
-        #else
-        return false
-        #endif
     }
 
     /// Translate Python LXMRouter PR_* state names to Compat
@@ -565,34 +407,20 @@ public final class PropagationNodeManager {
 
     /// Start periodic sync on the configured interval.
     public func startPeriodicSync() {
-        #if COLUMBA_RUNTIME_MODEL_B
-        // Model B: the NE owns the sync cadence (it owns the router). Publish the
-        // current interval/enabled to the seam; the NE's scheduler honors
-        // `periodicSyncEnabled` and re-kicks on the config-changed notification.
-        publishPropagationSeam()
-        return
-        #elseif COLUMBA_RUNTIME_PYTHON
-
+        stopPeriodicSync()
+        guard periodicSyncEnabled else { return }
         #if os(iOS)
-        // BGAppRefreshTask is the only periodic scheduler on iOS. Keeping this
-        // sleeping task as well causes both operations to resume on the same
-        // system wake, and the shared single-flight guard rejects one of them.
-        periodicSyncTask?.cancel()
-        periodicSyncTask = nil
-        logger.info("[SYNC] in-process periodic timer disabled; BGAppRefreshTask owns iOS cadence")
+        // iOS schedules refresh through the existing BGAppRefreshTask coordinator.
         return
         #else
-        guard periodicSyncEnabled else { return }
-
-        periodicSyncTask?.cancel()
-        periodicSyncTask = Task {
+        periodicSyncTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(syncInterval))
-                guard !Task.isCancelled else { break }
-                await syncNow()
+                guard let self else { return }
+                try? await Task.sleep(for: .seconds(self.syncInterval))
+                guard !Task.isCancelled else { return }
+                _ = await self.syncNow()
             }
         }
-        #endif
         #endif
     }
 
@@ -649,10 +477,8 @@ public final class PropagationNodeManager {
 
         _ = defaultMethod // Used by SettingsViewModel
 
-        // Model B: hand the restored PN + sync settings to the NE's router.
-        #if COLUMBA_RUNTIME_MODEL_B
         publishPropagationSeam()
-        #endif
+        _ = await reapplySelectedNodeToPythonBackend()
     }
 
     /// Save preferences to SettingsRepository.
@@ -685,12 +511,9 @@ public final class PropagationNodeManager {
 
         // Model B: republish the seam so PN selection / sync-setting edits reach the
         // NE's router. The Python build owns the router and has no seam declarations.
-        #if COLUMBA_RUNTIME_MODEL_B
         publishPropagationSeam()
-        #endif
     }
 
-    #if COLUMBA_RUNTIME_MODEL_B
     /// Model B: cross the App-Group seam to the NE's in-NE `LXMRouter`. The NE wires
     /// the PN + sync settings onto its router and runs the periodic sync there (the
     /// app can't call it directly). The Python build owns the router in-process and
@@ -707,7 +530,6 @@ public final class PropagationNodeManager {
             PropagationSeamConfig.clearFromAppGroup()
         }
     }
-    #endif
 }
 
 // MARK: - LXMRouter Helper

@@ -1,6 +1,6 @@
 import XCTest
 import Foundation
-@testable import ColumbaModelBApp
+@testable import ColumbaApp
 
 /// P1 #3 (stranded sends) + P1 #6 (send-response ambiguity) - the pure,
 /// unit-testable seam: `OutboxReplayCoordinator.pendingReplays()` must drain the

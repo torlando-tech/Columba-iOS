@@ -104,92 +104,11 @@ final class NetworkStatusViewModel {
     }
 
     func refresh() async {
-        // Model B: the app's local transport is a Compat stub — the real interfaces
-        // (relay, BLE mesh + peers) live in the NE. Read them over the proxy
-        // `statusSnapshot` IPC instead of the empty/stale app transport.
-        if BackendPreference.modelB {
-            await refreshFromNE()
-            return
-        }
-
-        // Read transport reference on MainActor
-        let transport = await MainActor.run { appServices.transport }
-
-        guard let transport = transport else {
-            await MainActor.run {
-                isInitialized = false
-                networkStatus = "Transport not initialized"
-                interfaces = []
-            }
-            return
-        }
-
-        // Await actor-isolated snapshots OFF main thread
-        let snapshots = await transport.getInterfaceSnapshots()
-
-        var infos: [InterfaceInfo] = []
-        for snap in snapshots {
-            let typeName: String
-            if snap.isAutoInterfacePeer {
-                typeName = "AutoInterfacePeer"
-            } else if snap.isBLEPeerInterface {
-                typeName = "BLEPeer"
-            } else {
-                switch snap.type {
-                case .tcp: typeName = "TCPClient"
-                case .udp: typeName = "UDP"
-                case .i2p: typeName = "I2P"
-                case .autoInterface: typeName = "AutoInterface"
-                case .rnode: typeName = "RNode"
-                case .ble: typeName = "BLE"
-                case .multipeerConnectivity: typeName = "Multipeer"
-                }
-            }
-
-            let isOnline: Bool
-            switch snap.state {
-            case .connected:
-                isOnline = true
-            default:
-                isOnline = false
-            }
-
-            infos.append(InterfaceInfo(
-                id: snap.id,
-                name: snap.name,
-                type: typeName,
-                online: isOnline,
-                state: snap.state,
-                isAutoInterfacePeer: snap.isAutoInterfacePeer,
-                peerAddress: snap.peerAddress,
-                lastErrorDescription: snap.lastErrorDescription,
-                endpoint: snap.endpoint,
-                isAutoconnect: snap.isAutoconnect
-            ))
-        }
-
-        // Batch all UI mutations into single MainActor.run
-        let onlineCount = infos.filter(\.online).count
-        await MainActor.run {
-            isInitialized = true
-            interfaces = infos
-
-            if infos.isEmpty {
-                networkStatus = "No interfaces"
-            } else if onlineCount == infos.count {
-                networkStatus = "All interfaces online"
-            } else if onlineCount > 0 {
-                networkStatus = "\(onlineCount)/\(infos.count) interfaces online"
-            } else {
-                networkStatus = "All interfaces offline"
-            }
-        }
+        await refreshFromNode()
     }
 
-    /// Model B: read the NE's interfaces over the proxy `statusSnapshot` IPC and
-    /// reconstruct the rows (the app's local transport is a Compat stub and never
-    /// holds the relay / BLE mesh / BLE peers the NE actually runs).
-    private func refreshFromNE() async {
+    /// Read interfaces from the selected node host through the common facade.
+    private func refreshFromNode() async {
         let backend = await MainActor.run { appServices.backend }
         guard let backend else {
             await MainActor.run {
@@ -202,7 +121,7 @@ final class NetworkStatusViewModel {
         guard let snap = await backend.statusSnapshot() else {
             await MainActor.run {
                 isInitialized = false
-                networkStatus = "Network Extension not running"
+                networkStatus = "Reticulum not running"
                 interfaces = []
             }
             return

@@ -26,29 +26,13 @@ def source(path: Path) -> str:
 
 
 class OnboardingInterfaceSelectionContracts(unittest.TestCase):
-    def test_connectivity_page_is_flavor_specific(self) -> None:
+    def test_connectivity_choices_are_shared_by_both_hosts(self) -> None:
         text = source(CONNECTIVITY_PAGE)
         self.assertIn("@Binding var selectedInterfaces: Set<OnboardingInterfaceType>", text)
-        conditional = re.search(
-            r"(?ms)#if COLUMBA_RUNTIME_MODEL_B\s+(?P<model_b>.*?)"
-            r"#else\s+(?P<shipping>.*?)#endif",
-            text,
-        )
-        self.assertIsNotNone(conditional, "connectivity UI must branch by runtime flavor")
-        assert conditional is not None
-        model_b = conditional.group("model_b")
-        shipping = conditional.group("shipping")
-        self.assertIn('Text("Choose a relay")', model_b)
-        self.assertNotIn("OnboardingInterfaceType.allCases", model_b)
-        self.assertIn('Text("How will you connect?")', shipping)
-        self.assertIn("OnboardingInterfaceType.allCases.filter { $0 != .nearby }", shipping)
-        self.assertNotIn("ForEach(OnboardingInterfaceType.allCases,", shipping)
-        self.assertIn("interfaceCard(type)", shipping)
-        self.assertIn("if selectedInterfaces.contains(.tcp)", shipping)
+        self.assertNotIn("COLUMBA_RUNTIME_", text)
+        self.assertIn("OnboardingInterfaceType.allCases.filter { $0 != .nearby }", text)
         self.assertIn("selectedInterfaces.insert(type)", text)
         self.assertIn("selectedInterfaces.remove(type)", text)
-        self.assertIn("if type == .ble", text)
-        self.assertNotIn("if type == .rnode", text)
 
     def test_shipping_selection_is_bound_into_the_flow(self) -> None:
         text = source(ONBOARDING_VIEW)
@@ -188,7 +172,7 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertEqual(catalog["sourceLanguage"], "en")
 
         project = source(ROOT / "Columba.xcodeproj/project.pbxproj")
-        self.assertEqual(project.count("Localizable.xcstrings in Resources"), 4)
+        self.assertEqual(project.count("Localizable.xcstrings in Resources"), 2)
         self.assertIn("Localizable.xcstrings */ = {isa = PBXFileReference", project)
 
         welcome = source(ROOT / "Sources/ColumbaApp/Views/Onboarding/WelcomePage.swift")
@@ -197,7 +181,8 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         view_model = source(VIEW_MODEL)
         self.assertIn("LocalizedStringKey, icon: String", welcome)
         self.assertIn("notificationRow(_ text: LocalizedStringKey)", permissions)
-        self.assertIn("text: LocalizedStringKey", explainer)
+        self.assertIn("text: String", explainer)
+        self.assertIn("String(localized:", explainer)
         self.assertIn('String(localized: "Internet Relay")', view_model)
 
         migration_view_model = source(MIGRATION_VIEW_MODEL)
@@ -282,88 +267,32 @@ class OnboardingInterfaceSelectionContracts(unittest.TestCase):
         self.assertIn("let mode: String?", migration_data)
         self.assertIn("mode: String? = nil", migration_data)
 
-    def test_shipping_interfaces_are_persisted_but_model_b_only_seeds_relay(self) -> None:
+    def test_selected_interfaces_are_persisted_for_both_hosts(self) -> None:
         text = source(VIEW_MODEL)
-        self.assertIn("var selectedInterfaces: Set<OnboardingInterfaceType> = [.tcp]", text)
         method = text.split("private func createInterfaces(in repo: InterfaceRepository) {", 1)[1]
-        conditional = re.search(
-            r"(?ms)#if COLUMBA_RUNTIME_MODEL_B\s+(?P<model_b>.*?)"
-            r"#else\s+(?P<shipping>.*?)#endif",
-            method,
-        )
-        self.assertIsNotNone(conditional, "interface persistence must branch by runtime flavor")
-        assert conditional is not None
-        model_b = conditional.group("model_b")
-        shipping = conditional.group("shipping")
-        self.assertIn("selectedTcpServer ?? TcpCommunityServer.defaultServer", model_b)
-        self.assertNotIn("for interfaceType in selectedInterfaces", model_b)
-        self.assertIn("for interfaceType in selectedInterfaces", shipping)
+        self.assertNotIn("COLUMBA_RUNTIME_", method)
+        self.assertIn("for interfaceType in selectedInterfaces", method)
         for case in (".auto", ".nearby", ".ble", ".tcp", ".rnode"):
-            self.assertIn(f"case {case}:", shipping)
-        nearby = shipping.split("case .nearby:", 1)[1].split("case .ble:", 1)[0]
-        self.assertIn("candidate = nil", nearby)
-        self.assertNotIn("MultipeerConfig", shipping)
+            self.assertIn(f"case {case}:", method)
+        self.assertNotIn("MultipeerConfig", method)
 
-    def test_bluetooth_permission_is_explicit_and_model_b_card_is_not_shipping_ui(self) -> None:
+    def test_bluetooth_permission_is_explicit_and_app_does_not_restore_a_second_radio(self) -> None:
         permissions = source(PERMISSIONS_PAGE)
-        self.assertRegex(
-            permissions,
-            r"(?s)#if COLUMBA_RUNTIME_MODEL_B\s+"
-            r"// Bluetooth permission card.*?Text\(\"Bluetooth\"\).*?#endif",
-        )
+        self.assertIn('Text("Bluetooth")', permissions)
+        self.assertIn("Button(action: onRequestBluetooth)", permissions)
+        self.assertNotIn("SwiftBLEBridge.shared.restoreAtLaunch()", source(APP_ENTRY))
 
-        app = source(APP_ENTRY)
-        restore = "SwiftBLEBridge.shared.restoreAtLaunch()"
-        self.assertEqual(1, app.count(restore))
-        restore_offset = app.index(restore)
-        guard_offset = app.rfind("if ", 0, restore_offset)
-        guard = app[guard_offset:restore_offset]
-        self.assertIn("getEnabledInterfaces()", guard)
-        self.assertIn(".ble", guard)
-
-    def test_model_b_ble_service_gated_on_enabled_ble_interface(self) -> None:
-        service = source(MODEL_B_BLE_SERVICE)
-        view_model = source(VIEW_MODEL)
-        app_services = source(APP_SERVICES)
-        settings = source(SETTINGS_VIEW)
-
-        # The host is gated on the configured interface list, not on a standalone
-        # consent flag: no opt-in key, no record/clear/isOptedIn API.
-        self.assertNotIn("userOptInKey", service)
-        self.assertNotIn("recordUserOptIn", service)
-        self.assertNotIn("clearUserOptIn", service)
-        self.assertNotIn("isUserOptedIn", service)
-        # shouldStart is derived from an enabled .ble interface in the repository.
-        self.assertIn("shouldStart", service)
-        self.assertIn("hasEnabledBLEInterface", service)
-        self.assertIn("getEnabledInterfaces()", service)
-        self.assertIn(".ble", service)
-        self.assertNotIn("CBCentralManager.authorization", service)
-        # Onboarding no longer records a BLE opt-in.
-        self.assertNotIn("recordUserOptIn", view_model)
-        self.assertNotIn("ModelBBLEService.isUserOptedIn", view_model)
-        # The standalone "Bluetooth Mesh" toggle is gone.
-        self.assertNotIn('Text("Bluetooth Mesh")', settings)
-        # Phase 2: the mesh CoreBluetooth radio now runs IN THE NETWORK EXTENSION
-        # (SwiftBLEBridge is linked into the NE target and driven in-process by the
-        # NE's Python driver). The app no longer starts a CoreBluetooth host, so the
-        # used-to-start-the-app-radio hook is a no-op: a second app-side
-        # SwiftBLEBridge instance would fight the NE's over the same GATT service.
-        # The app-side seam files it once started remain (removed in a follow-up
-        # after on-device verify) but are never started from AppServices.
-        self.assertEqual(0, app_services.count("ModelBBLEService.shared.start("))
-        self.assertIn("func syncModelBBLEService()", app_services)
-        self.assertIn(
-            "[BLE] Model B: mesh radio runs in the NE; no app-side host (Phase 2)",
-            app_services,
-        )
-        # The call sites (backend start + interface Apply) still run the no-op.
-        self.assertGreaterEqual(app_services.count("syncModelBBLEService()"), 1)
+    def test_radio_is_configured_in_the_selected_host(self) -> None:
+        self.assertFalse(MODEL_B_BLE_SERVICE.exists())
+        self.assertNotIn("syncModelBBLEService", source(APP_SERVICES))
+        dispatcher = source(ROOT / "Sources/RNSHost/NodeCommandDispatcher.swift")
+        self.assertIn("SwiftBLEBridge.shared", dispatcher)
+        self.assertNotIn("recordUserOptIn", source(VIEW_MODEL))
 
     def test_shipping_interface_creation_is_idempotent(self) -> None:
         view_model = source(VIEW_MODEL)
         method = view_model.split("private func createInterfaces(in repo: InterfaceRepository) {", 1)[1]
-        shipping = method.split("#else", 1)[1].split("#endif", 1)[0]
+        shipping = method
         self.assertIn("ensureInterfaceEnabled(candidate, in: repo)", shipping)
         self.assertIn("disabled.enabled = true", view_model)
         self.assertIn("repo.updateInterface(disabled)", view_model)

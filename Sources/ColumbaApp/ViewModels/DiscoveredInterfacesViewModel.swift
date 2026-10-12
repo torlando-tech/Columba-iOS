@@ -182,7 +182,7 @@ public final class DiscoveredInterfacesViewModel {
     /// persisted discovery settings, then recompute the visible list.
     ///
     /// The persisted settings are loaded EVEN WHEN the backend snapshot is
-    /// unavailable (Model B build, backend never started, or a failed
+    /// unavailable (backend never started or a failed
     /// restart): they are a local preference read, independent of the
     /// snapshot. Gating them behind the snapshot is what made the screen
     /// show default `false`/`0` values (and, worse, let a recovery edit
@@ -193,15 +193,8 @@ public final class DiscoveredInterfacesViewModel {
         isLoading = true
         errorMessage = nil
 
-        // `pythonBackend` is compiled only into the shipping (Python) build;
-        // Model B has no app-side discovery — show an honest message instead
-        // of a nil-unwrap crash.
         let snapshot: DiscoverySnapshot?
-        #if COLUMBA_RUNTIME_PYTHON
-        snapshot = await appServices.pythonBackend?.discovery()
-        #else
-        snapshot = nil
-        #endif
+        snapshot = await appServices.backend?.core.discovery()
 
         if let snapshot {
             originalInterfaces = snapshot.discovered
@@ -225,7 +218,7 @@ public final class DiscoveredInterfacesViewModel {
             let endpointCount = autoconnectedEndpoints.count
             logger.info("Loaded \(snapshot.discovered.count) discovered interfaces, \(endpointCount) auto-connected")
         } else {
-            errorMessage = String(localized: "Interface discovery is unavailable in this build.")
+            errorMessage = String(localized: "Interface discovery is unavailable while Reticulum is stopped.")
         }
     }
 

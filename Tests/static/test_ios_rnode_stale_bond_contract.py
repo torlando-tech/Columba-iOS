@@ -13,7 +13,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-NATIVE_BRIDGE = ROOT / "Sources/PythonBridge/PythonRNodeBLEBridge.swift"
+NATIVE_BRIDGE = ROOT / "Sources/RNSHost/PythonRNodeBLEBridge.swift"
 PY_DRIVER = ROOT / "app/rnode/IOSRNodeDriver.py"
 PY_INTERFACE = ROOT / "app/rnode/IOSRNodeInterface.py"
 PY_BRIDGE = ROOT / "app/rns_bridge.py"

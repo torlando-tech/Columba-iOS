@@ -119,31 +119,24 @@ class QRContactSendPathContractTests(unittest.TestCase):
         self.assertIn("pendingAnnounces.first", add_hash)
         self.assertNotIn("requestPath", add_hash)
 
-    def test_shipping_send_resolves_path_before_bridge_send(self) -> None:
-        backend = self._swift_function(
-            "Sources/RNSBackendPy/PythonRNSBackend.swift",
-            "public func sendLxmfMessage(",
-            "public func sendReaction(",
-        )
-        resolve = backend.index("bridge.resolvePath")
-        send = backend.index("bridge.sendOpportunistic")
-        self.assertLess(resolve, send)
+    def test_shared_send_resolves_path_before_submission(self) -> None:
+        source = self._read("Sources/RNSBackendProxy/ProxyRnsBackend.swift")
+        send = source[source.index("failureFallbackMethod: LXDeliveryMethod?"):source.index("private func enqueueToOutbox")]
+        self.assertLess(send.index("await resolvePath"), send.index(".lxmfSend("))
+        self.assertIn("method != .propagated", send)
 
-    def test_shipping_path_wait_uses_dedicated_bridge_queue(self) -> None:
-        body = self._swift_function(
-            "Sources/PythonBridge/PythonBridge.swift",
-            "    public func resolvePath(",
-            "    /// Send an LXMF message via the Python bridge.",
-        )
-        self.assertIn("runOnQueue(on: pathResolutionQueue)", body)
+    def test_path_wait_is_bounded_and_runs_in_the_selected_host(self) -> None:
+        source = self._read("Sources/RNSBackendProxy/ProxyRnsBackend.swift")
+        dispatcher = self._read("Sources/RNSHost/NodeCommandDispatcher.swift")
+        self.assertIn("timeout: 10", source)
+        self.assertIn("deadline: 13", source)
+        self.assertIn('engine.call("resolve_path"', dispatcher)
+        self.assertIn("Task.detached", self._read("Sources/RNSHost/LocalNodeAdapter.swift"))
 
-    def test_shipping_reaction_resolves_path_before_send(self) -> None:
-        body = self._swift_function(
-            "Sources/RNSBackendPy/PythonRNSBackend.swift",
-            "    public func sendReaction(",
-            "    /// Set / clear the outbound LXMF propagation node.",
-        )
-        self.assertLess(body.index("bridge.resolvePath"), body.index("bridge.sendOpportunistic"))
+    def test_shared_reaction_resolves_path_before_submission(self) -> None:
+        source = self._read("Sources/RNSBackendProxy/ProxyRnsBackend.swift")
+        reaction = source[source.index("public func sendReaction("):source.index("public func setPropagationNode(")]
+        self.assertLess(reaction.index("await resolvePath"), reaction.index(".lxmfSend("))
 
     def test_failed_send_is_persisted_with_actionable_reason(self) -> None:
         body = self._swift_function(
