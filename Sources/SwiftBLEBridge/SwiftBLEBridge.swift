@@ -223,7 +223,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
 
     /// Block until all in-flight work on the bridge's serial queue has
     /// completed. The NE calls this on a node (re)start, BEFORE it invalidates
-    /// queued BLE events (see `NEPythonBridgeHook.discardPendingEvents`), so
+    /// queued BLE events (see `PythonNodeBridgeHook.discardPendingEvents`), so
     /// that every delegate callback from the previous incarnation has already
     /// handed its event to the hook (capturing the old generation) and is
     /// therefore dropped by the generation check. This is what makes "old BLE

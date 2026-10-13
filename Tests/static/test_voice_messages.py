@@ -195,7 +195,7 @@ class PbxprojRegistrationContract(unittest.TestCase):
         problems = []
         for name in files:
             refs = len(re.findall(
-                r"isa = PBXFileReference; lastKnownFileType = sourcecode\.swift; path = "
+                r"isa = PBXFileReference; lastKnownFileType = sourcecode\.swift; path = (?:[^;]+/)?"
                 + re.escape(name) + r";", src))
             builds = len(re.findall(
                 r"/\* " + re.escape(name) + r" in Sources \*/ = \{isa = PBXBuildFile", src))
@@ -204,10 +204,10 @@ class PbxprojRegistrationContract(unittest.TestCase):
                 src, re.M))
             if refs != 1:
                 problems.append(f"{name}: file references = {refs} (want 1)")
-            if builds != 2:
-                problems.append(f"{name}: build files = {builds} (want 2, one per app target)")
-            if phases != 2:
-                problems.append(f"{name}: phase entries = {phases} (want 2, one per app target)")
+            if builds != 1:
+                problems.append(f"{name}: build files = {builds} (want 1, shared by both hosting modes)")
+            if phases != 1:
+                problems.append(f"{name}: phase entries = {phases} (want 1, shared by both hosting modes)")
         self.assertEqual(
             problems, [],
             "unregistered Voice/ files would compile into nothing:\n  "

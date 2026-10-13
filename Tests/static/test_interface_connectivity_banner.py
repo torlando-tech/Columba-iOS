@@ -14,9 +14,13 @@ CI_WORKFLOW = ROOT / ".github/workflows/tests.yml"
 class InterfaceConnectivityBannerContractTests(unittest.TestCase):
     def test_shipping_banner_uses_live_aggregate_connection_state(self) -> None:
         source = MAIN_TAB.read_text(encoding="utf-8")
-
-        self.assertIn("#if COLUMBA_RUNTIME_PYTHON", source)
+        # The unified build has one Python proxy backend (host-selectable
+        # foreground / Network Extension), so the banner renders whenever the
+        # aggregate connection state is offline — the per-runtime
+        # `#if COLUMBA_RUNTIME_PYTHON` guard no longer exists.
+        self.assertNotIn("#if COLUMBA_RUNTIME_PYTHON", source)
         self.assertIn("isConnected: appServices.isConnected", source)
+        self.assertIn("InterfaceConnectivityBanner(content: content)", source)
         self.assertEqual(
             source.count('accessibilityIdentifier("interface_connectivity_banner")'),
             1,

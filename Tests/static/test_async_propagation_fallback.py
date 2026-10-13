@@ -548,9 +548,9 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
         self.assertEqual("delivered", delivered[1]["state"])
         self.assertEqual("propagated", delivered[1]["method"])
 
-        python_bridge = (ROOT / "Sources/PythonBridge/PythonBridge.swift").read_text()
+        python_bridge = (ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift").read_text()
         rns_backend = (ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift").read_text()
-        python_backend = (ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift").read_text()
+        python_backend = (ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift").read_text()
         app_services = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()
         messaging_view = (ROOT / "Sources/ColumbaApp/Views/Messaging/MessagingView.swift").read_text()
         messaging_view_model = (
@@ -629,8 +629,8 @@ class AsyncPropagationFallbackTests(unittest.TestCase):
 
     def test_retry_policy_crosses_the_shipping_swift_python_seam(self):
         rns_lxmf = (ROOT / "Sources/RNSAPI/Protocols/RnsLxmf.swift").read_text()
-        backend = (ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift").read_text()
-        bridge = (ROOT / "Sources/PythonBridge/PythonBridge.swift").read_text()
+        backend = (ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift").read_text()
+        bridge = (ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift").read_text()
         messaging = (ROOT / "Sources/ColumbaApp/ViewModels/MessagingViewModel.swift").read_text()
 
         self.assertIn("failureFallbackMethod", rns_lxmf)

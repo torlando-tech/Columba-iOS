@@ -1,9 +1,5 @@
 import XCTest
-#if COLUMBA_RUNTIME_MODEL_B
-@testable import ColumbaModelBApp
-#else
 @testable import ColumbaApp
-#endif
 
 final class RuntimeActivityMonitorLeaseTests: XCTestCase {
     func testMonitorRunsUntilLastLeaseIsReleased() {

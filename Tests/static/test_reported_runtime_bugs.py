@@ -9,9 +9,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT_FILE = ROOT / "Columba.xcodeproj/project.pbxproj"
 BRIDGE_PY = ROOT / "app/rns_bridge.py"
-PYTHON_BRIDGE = ROOT / "Sources/PythonBridge/PythonBridge.swift"
+PYTHON_BRIDGE = ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift"
 RNS_BACKEND = ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift"
-PY_BACKEND = ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift"
+PY_BACKEND = ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift"
 SWIFT_BACKEND = ROOT / "Sources/RNSBackendSwift/SwiftRNSBackend.swift"
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
@@ -100,17 +100,11 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn('getattr(message, "message_id", None)', helper_source)
         self.assertIn("LXMF.LXMessage.unpack_from_bytes", helper_source)
 
-        py_bridge = PYTHON_BRIDGE.read_text()
-        self.assertRegex(
-            py_bridge,
-            r"case inbound\(sourceHash: String, messageHash: String, content:",
-        )
-        self.assertIsNotNone(re.search(
-            r'case "inbound":.*?key: "message_hash".*?key: "method".*?'
-            r'\.inbound\(sourceHash: h, messageHash:.*?method: method',
-            py_bridge,
-            re.DOTALL,
-        ))
+        proxy = PY_BACKEND.read_text()
+        self.assertIn('messageHash: e.messageHashHex ?? ""', proxy)
+        self.assertIn('case "inbound":', proxy)
+        ipc = (ROOT / "Sources/Shared/ProxyIPC.swift").read_text()
+        self.assertIn('messageHashHex = "message_hash"', ipc)
 
         backend_event = RNS_BACKEND.read_text()
         self.assertRegex(
@@ -119,14 +113,7 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
             r"method: LXDeliveryMethod\?",
         )
 
-        py_backend = PY_BACKEND.read_text()
-        self.assertIsNotNone(re.search(
-            r"case let \.inbound\(s, mh, c, ti, fh, method, rssi, snr, t\):.*?"
-            r"\.inbound\(sourceHash: s, messageHash: mh, content: c.*?"
-            r"method: deliveryMethod, rssi: rssi, snr: snr, t: t",
-            py_backend,
-            re.DOTALL,
-        ))
+        self.assertIn('method: deliveryMethod', proxy)
 
         swift_backend = SWIFT_BACKEND.read_text()
         self.assertRegex(
@@ -303,12 +290,11 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         self.assertIn("router.delivery_per_transfer_limit = bounded", bridge)
         self.assertIn('return {"ok": True, "reason": "ok", "limit_kb": bounded}', bridge)
 
-        py_bridge = PYTHON_BRIDGE.read_text()
-        self.assertIn("public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool", py_bridge)
-        self.assertIn('PyObject_GetAttrString(module, "set_incoming_message_size_limit_kb")', py_bridge)
-
-        py_backend = PY_BACKEND.read_text()
-        self.assertIn("public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool", py_backend)
+        proxy = PY_BACKEND.read_text()
+        self.assertIn("public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool", proxy)
+        self.assertIn(".incomingMessageLimit(limitKB: limitKB)", proxy)
+        dispatcher = (ROOT / "Sources/RNSHost/NodeCommandDispatcher.swift").read_text()
+        self.assertIn('engine.call("set_incoming_message_size_limit_kb"', dispatcher)
 
         settings = SETTINGS_VIEW.read_text()
         self.assertIn("Incoming Size Limit", settings)

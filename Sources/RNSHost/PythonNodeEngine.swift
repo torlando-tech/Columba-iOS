@@ -1,42 +1,20 @@
-//
-//  NEPythonRNS.swift
-//  ColumbaNetworkExtension
-//
-//  The in-NE Python RNS engine (contract 15: the first `NodeEngine`
-//  conformance that drives the reference implementation through the seam).
-//
-//  This is the heart of "the NE is the sole place Reticulum runs": it drives
-//  the live Python RNS runtime (the same `rns_bridge.py` the app's in-process
-//  backend used) through the embedded CPython (`NEPythonRuntime.callBridge`).
-//  The C++ microReticulum node (`NEReticulumNode`) is no longer the runtime -
-//  Python RNS is the single runtime in the NE.
-//
-//  It is intentionally a THIN adapter over `rns_bridge`: every operation is
-//  one JSON call into Python, and the Python side owns all RNS/LXMF state
-//  (the same module the app shipped, so behavior is byte-for-byte what the app
-//  already validated). The Swift side only maps the IPC `ProxyRequest` /
-//  `ProxyResponse` surface onto `rns_bridge` functions.
-//
-//  COLLISION RULE (hard): this file imports ONLY Foundation (+ the NE-local
-//  `NEPythonRuntime`, `ExtensionDiagLog`, `AppGroupPaths`). It must NOT import
-//  RNSAPI / ReticulumSwift / LXMFSwift.
-//
+// Shared Python RNS/LXMF engine. Exactly one process holds NodeProcessLease.
+// Both hosts use the same lifecycle, native radios, durable inbox, and outbox.
+// Keep this module independent of RNSAPI/ReticulumSwift/LXMFSwift: all command
+// data crossing the app seam is represented by Foundation types.
 
 import Foundation
 import Security
 
-/// The `NodeEngine`-style adapter over the in-NE Python RNS runtime.
-///
-/// One instance per NE boot. `PacketTunnelProvider` holds it and routes the
-/// app's `ProxyRequest` IPC to it (replacing the old `NEReticulumNode`
-/// dispatch). It is `@unchecked Sendable`: all state is either immutable or
-/// guarded by a lock, and every Python call runs on the GIL inside
-/// `NEPythonRuntime.callBridge`.
-final class NEPythonRNS: @unchecked Sendable {
+/// One interpreter and engine per process; startup obtains exclusive ownership
+/// before initializing RNS. Python calls acquire the interpreter's GIL.
+final class PythonNodeEngine: @unchecked Sendable {
 
     /// True once `start()` has brought the Python RNS node up.
     private(set) var isRunning = false
     private let stateLock = NSLock()
+    private let lifecycleLock = NSLock()
+    private let processLease = NodeProcessLease()
 
     /// Durable outbox recovery + send-response-ambiguity dedup (P1 #3 + #6). Both
     /// backings live in the shared App-Group container (the same place the app
@@ -49,6 +27,7 @@ final class NEPythonRNS: @unchecked Sendable {
     /// the retry loop is armed. Guarded by `stateLock`; the task is cancelled in
     /// `stop()` so it can never outlive the node it is retrying for.
     private var replayRetryTask: Task<Void, Never>?
+    private var propagationSyncTask: Task<Void, Never>?
 
     /// Cadence between outbox-retry passes while the node is running (P1 #4): a
     /// transient send failure (peer not connected yet, router not warm) is
@@ -63,7 +42,7 @@ final class NEPythonRNS: @unchecked Sendable {
 
     /// The engine instance owned by the running NE. Constructed lazily so the
     /// CPython interpreter is only touched from the tunnel provider's tasks.
-    static let shared = NEPythonRNS()
+    static let shared = PythonNodeEngine()
 
     // MARK: - Identity (shared keychain, Foundation-only read)
     //
@@ -167,7 +146,28 @@ final class NEPythonRNS: @unchecked Sendable {
     ///
     /// `displayName` rides in the `.start` request; it is passed to
     /// `rns_bridge.start` so the startup announce carries it.
-    func start(displayName: String) -> String? {
+    func start(displayName: String, host: NodeHostingMode = .networkExtension) -> String? {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard NodeHostingMode.current == host, let root = AppGroupPaths.containerURL() else { return nil }
+        let leaseURL = root.appendingPathComponent("rns-owner.lock")
+        guard processLease.acquire(at: leaseURL) else {
+            ExtensionDiagLog.log("[RNS-HOST] another process owns the node")
+            return nil
+        }
+        var started = false
+        var attemptedStart = false
+        defer {
+            if !started && !isRunning {
+                // A failed Python start may have allocated interfaces. Release
+                // ownership only after Python confirms its cleanup completed.
+                if !attemptedStart {
+                    processLease.release()
+                } else if let reply = PythonNodeRuntime.shared.callBridge("stop", payload: "{}"), Self.parse(reply)?.ok == true {
+                    processLease.release()
+                }
+            }
+        }
         // A NEW node incarnation is beginning (the node is not currently
         // running) - invalidate any BLE events still queued from the previous
         // incarnation so a stale event (e.g. a "peer disconnected" from the old
@@ -175,18 +175,18 @@ final class NEPythonRNS: @unchecked Sendable {
         // peer that is connected here. Only discard on a real (re)start: an
         // idempotent .start while the node is ALREADY running reuses the same
         // Python node (isRunning stays true), so its waiting BLE events are
-        // still valid and must NOT be dropped. NEPythonBridgeHook lives in the
+        // still valid and must NOT be dropped. PythonNodeBridgeHook lives in the
         // same NE target. (iter-3 finding + iter-4 refinement.)
         stateLock.lock()
         let restarting = !isRunning
         stateLock.unlock()
         if restarting {
-            NEPythonBridgeHook.shared.discardPendingEvents()
+            PythonNodeBridgeHook.shared.discardPendingEvents()
         }
-        if NEPythonRuntime.shared.state != .running {
+        if PythonNodeRuntime.shared.state != .running {
             // CPython not initialized yet (shouldn't happen - startTunnel boots
             // it) - try to init synchronously; if that fails we're not ready.
-            if case .failure(let err) = NEPythonRuntime.shared.start() {
+            if case .failure(let err) = PythonNodeRuntime.shared.start() {
                 ExtensionDiagLog.log("[NE-PY-RNS] start: python not ready (init failed: \(err.localizedDescription))")
                 return nil
             }
@@ -215,8 +215,9 @@ final class NEPythonRNS: @unchecked Sendable {
             "block_unknown_senders": blockUnknownSenders,
             "host_persistence": "ne",
         ]
+        attemptedStart = true
         guard let payload = Self.payload(kwargs: kwargs),
-              let out = NEPythonRuntime.shared.callBridge("start", payload: payload) else {
+              let out = PythonNodeRuntime.shared.callBridge("start", payload: payload) else {
             ExtensionDiagLog.log("[NE-PY-RNS] start: bridge call failed to build/dispatch")
             return nil
         }
@@ -230,6 +231,11 @@ final class NEPythonRNS: @unchecked Sendable {
         }
         stateLock.lock(); isRunning = true; stateLock.unlock()
         ExtensionDiagLog.log("[NE-PY-RNS] start OK: \(result ?? "")")
+        // Restore the saved relay before recovering sends, including when iOS
+        // relaunches the extension while the app is suspended.
+        if let config = PropagationSeamConfig.loadFromAppGroup(), let hash = config.propagationNodeHash {
+            _ = call("set_propagation_node", kwargs: ["dest_hash_hex": hash.map { String(format: "%02x", $0) }.joined(), "stamp_cost": config.stampCost])
+        }
         // P1 #3: recover stranded sends. On a fresh (re)start, once the node is
         // up, replay the durable outbox through the deduped send path (gated to a
         // real start so a transiently-failing entry is not re-attempted on every
@@ -241,6 +247,8 @@ final class NEPythonRNS: @unchecked Sendable {
             replayOutbox()
         }
         armReplayRetry()
+        if restarting { armPropagationSync() }
+        started = true
         return result
     }
 
@@ -274,15 +282,62 @@ final class NEPythonRNS: @unchecked Sendable {
         stateLock.unlock()
     }
 
-    func stop() {
-        guard NEPythonRuntime.shared.state == .running else { return }
-        _ = NEPythonRuntime.shared.callBridge("stop", payload: Self.payload(kwargs: [:]) ?? "{}")
+    /// The node owns retrieval in both hosts. In the extension this continues
+    /// while the UI is suspended; a foreground node resumes when its app does.
+    /// Re-read the seam each pass so relay/interval/enable edits need no restart.
+    private func armPropagationSync() {
+        propagationSyncTask?.cancel()
+        propagationSyncTask = Task.detached { [weak self] in
+            var schedule = NodePropagationSchedule()
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 2_000_000_000) }
+                catch { return }
+                guard let self else { return }
+                self.performScheduledPropagationSync(schedule: &schedule)
+            }
+        }
+    }
+
+    private func performScheduledPropagationSync(schedule: inout NodePropagationSchedule) {
+        // Serialize with stop/start. A cancelled old worker must never touch a
+        // new node, even if it was waiting for this lock during a restart.
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard !Task.isCancelled, isRunning else { return }
+        let config = PropagationSeamConfig.loadFromAppGroup()
+        guard schedule.shouldSync(config: config, now: Date()) else { return }
+        // Selection commands own the live relay. Reapplying the persisted
+        // snapshot here can undo a clear/change whose persistence is pending.
+        _ = propagationSync(timeout: 20.0)
+    }
+
+    /// Manual and scheduled retrieval share success publication. The history
+    /// lives in the App Group so a suspended or cold-started UI can catch up.
+    func propagationSync(timeout: TimeInterval) -> String? {
+        let result = call("propagation_sync", kwargs: ["timeout": timeout])
+        PropagationSyncStateSnapshot.publishSuccessfulResult(Self.dict(from: result))
+        return result
+    }
+
+    @discardableResult
+    func stop() -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard PythonNodeRuntime.shared.state == .running else { return !isRunning }
+        guard let reply = PythonNodeRuntime.shared.callBridge("stop", payload: Self.payload(kwargs: [:]) ?? "{}"), Self.parse(reply)?.ok == true else {
+            ExtensionDiagLog.log("[RNS-HOST] stop failed; retaining process ownership")
+            return false
+        }
         stateLock.lock()
         isRunning = false
         replayRetryTask?.cancel()
         replayRetryTask = nil
+        propagationSyncTask?.cancel()
+        propagationSyncTask = nil
         stateLock.unlock()
+        processLease.release()
         ExtensionDiagLog.log("[NE-PY-RNS] stop")
+        return true
     }
 
     // MARK: - Bridge op wrappers (used by PacketTunnelProvider.dispatchPython)
@@ -356,7 +411,7 @@ final class NEPythonRNS: @unchecked Sendable {
     /// re-queue the same id) - skip it and return a "committed" dict so the caller
     /// treats it as sent. Otherwise send and, on a committed (`ok`) result, record
     /// the id so a later drain/restart does not send it again.
-    func lxmfSend(destHashHex: String, content: String, method: String, fieldsHex: String, sendId: String? = nil) -> [String: Any]? {
+    func lxmfSend(destHashHex: String, content: String, method: String, fieldsHex: String, sendId: String? = nil, failureFallbackMethod: String? = nil) -> [String: Any]? {
         if let sendId, outboxReplay.sentIds.contains(sendId) {
             ExtensionDiagLog.log("[NE-PY-RNS] lxmfSend: sendId already sent, dedup skip")
             return ["ok": true, "deduped": true, "message_hash": ""]
@@ -366,6 +421,7 @@ final class NEPythonRNS: @unchecked Sendable {
             "content": content,
             "method": method,
             "fields_hex": fieldsHex,
+            "failure_fallback_method": failureFallbackMethod ?? "",
         ]))
         // Log every send outcome (success AND the failure reason) so the send
         // path is observable in ext-diag.log. Previously only dedup-skip and a
@@ -418,7 +474,7 @@ final class NEPythonRNS: @unchecked Sendable {
             let fieldsHex = entry.fieldsData.map { data in
                 data.map { String(format: "%02x", $0) }.joined()
             } ?? ""
-            let res = lxmfSend(destHashHex: entry.destHashHex, content: entry.content, method: entry.method, fieldsHex: fieldsHex, sendId: entry.sendId)
+            let res = lxmfSend(destHashHex: entry.destHashHex, content: entry.content, method: entry.method, fieldsHex: fieldsHex, sendId: entry.sendId, failureFallbackMethod: entry.failureFallbackMethod)
             if let res, res["ok"] as? Bool == true {
                 if entry.sendId == nil {
                     sentLegacyKeys.insert(entry.legacyKey)
@@ -503,10 +559,10 @@ final class NEPythonRNS: @unchecked Sendable {
 
     /// Call a `rns_bridge` op that returns a JSON dict, forwarding the raw JSON.
     /// Returns the Python result JSON string, or nil on a bridge-level failure.
-    private func call(_ fn: String, kwargs: [String: Any]) -> String? {
-        guard NEPythonRuntime.shared.state == .running else {
+    func call(_ fn: String, kwargs: [String: Any]) -> String? {
+        guard PythonNodeRuntime.shared.state == .running else {
             #if DEBUG
-            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): state is \(NEPythonRuntime.shared.state), not .running")
+            ExtensionDiagLog.log("[NE-PY-RNS] \(fn): state is \(PythonNodeRuntime.shared.state), not .running")
             #endif
             return nil
         }
@@ -516,7 +572,7 @@ final class NEPythonRNS: @unchecked Sendable {
             #endif
             return nil
         }
-        guard let out = NEPythonRuntime.shared.callBridge(fn, payload: payload) else {
+        guard let out = PythonNodeRuntime.shared.callBridge(fn, payload: payload) else {
             #if DEBUG
             ExtensionDiagLog.log("[NE-PY-RNS] \(fn): callBridge returned nil")
             #endif
@@ -559,12 +615,12 @@ final class NEPythonRNS: @unchecked Sendable {
     /// failures so a missing slot or a Python-side raise is visible in
     /// ext-diag without tearing down the forwarder.
     func invoke(_ fn: String, kwargs: [String: Any]) {
-        guard NEPythonRuntime.shared.state == .running else {
+        guard PythonNodeRuntime.shared.state == .running else {
             ExtensionDiagLog.log("[NE-PY-RNS] \(fn): python not running, dropping")
             return
         }
         guard let payload = Self.payload(kwargs: kwargs),
-              let out = NEPythonRuntime.shared.callBridge(fn, payload: payload) else {
+              let out = PythonNodeRuntime.shared.callBridge(fn, payload: payload) else {
             ExtensionDiagLog.log("[NE-PY-RNS] \(fn): callBridge returned nil")
             return
         }

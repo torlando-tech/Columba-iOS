@@ -96,7 +96,6 @@ struct NetworkStatusView: View {
                     .foregroundStyle(Theme.textPrimary)
             }
 
-            #if COLUMBA_RUNTIME_MODEL_B
             // Background transport status
             if let tunnel = appServices.tunnelManager {
                 HStack(spacing: 10) {
@@ -109,7 +108,6 @@ struct NetworkStatusView: View {
                         .foregroundStyle(Theme.textPrimary)
                 }
             }
-            #endif
         }
         .padding(16)
         .glassCard()

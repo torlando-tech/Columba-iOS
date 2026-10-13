@@ -3,31 +3,10 @@ import RNSAPI
 import LXSTSwift
 import os.log
 
-/// Columba's `NetworkTransport` for Model B, where the RNS node (and the live
-/// RNS.Link used by LXST voice) runs in the **Network Extension**, not the app.
-///
-/// The app is UI-only under Model B: LXSTSwift's `Telephone` (codec, RTP
-/// framing, echo cancellation, CallKit, the call state machine) still runs
-/// here, but the RNS link it drives is owned by the NE Python RNS. This actor
-/// is the transport seam:
-///
-///   * **Send side** - `openOutboundCall` / `identifySelf` / `send` /
-///     `closeCall` marshal to the four `RnsTelephony` link ops on the proxy
-///     backend (`openLink` / `linkSend` / `linkIdentify` / `linkTeardown`),
-///     which ride IPC to the NE. The NE's Python `open_link` / `link_send` /
-///     `link_identify` / `link_teardown` do the actual RNS work.
-///   * **Receive side** - the NE emits `link_state` / `link_packet` /
-///     `link_identified` events; the app drains them (ping-driven, no poll) and
-///     `AppServices.handlePythonEvent` re-posts them as the
-///     `ColumbaPythonLinkState` / `ColumbaPythonLinkPacket` /
-///     `ColumbaPythonLinkIdentified` notifications. This actor observes those
-///     and drives `Telephone` through the `NetworkTransport` handler seam.
-///
-/// It mirrors the Model A `PythonNetworkTransport` (same handler wiring, same
-/// BUSY-on-inbound-while-busy behavior, same delivery-hash contact reporting)
-/// but talks to the NE over IPC + notifications instead of an in-process
-/// `ReticulumTransport` / `Link`. Mirrors LXST-kt's cross-process transport.
-public actor ModelBNetworkTransport: ColumbaLXSTTransport {
+/// LXST voice uses the same backend telephony facet in either hosting mode.
+/// Codecs, audio, and CallKit remain in the app; opaque RNS link operations
+/// pass through the selected local or tunnel adapter.
+public actor NodeNetworkTransport: ColumbaLXSTTransport {
 
     // LXST telephony destination aspect: <identity>.lxst.telephony
     private static let appName = "lxst"
@@ -45,7 +24,7 @@ public actor ModelBNetworkTransport: ColumbaLXSTTransport {
     /// main actor; the call methods are already async so that is free.
     private let backendProvider: @Sendable () async -> (any RnsTelephony)?
     private let pathTable: PathTable?
-    private let logger = Logger(subsystem: "network.columba.Columba", category: "ModelBNetworkTransport")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "NodeNetworkTransport")
 
     /// Current telephony facet (nil until the backend is up; a call made before
     /// then fails fast with a log rather than a crash).

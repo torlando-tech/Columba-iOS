@@ -243,15 +243,11 @@ public final class CallManager {
         // RNS; Model B drives the NE Python RNS over the IPC seam (the NE is
         // the sole Reticulum runtime; the app stays UI-only).
         let networkTransport: any ColumbaLXSTTransport
-        #if COLUMBA_RUNTIME_PYTHON
-        networkTransport = PythonNetworkTransport(identity: identity, transport: transport, pathTable: pathTable)
-        #elseif COLUMBA_RUNTIME_MODEL_B
         guard let backendProvider else {
             logger.error("[CALL] Model B LXST needs the NE proxy backend provider; none provided")
             return
         }
-        networkTransport = ModelBNetworkTransport(backendProvider: backendProvider, pathTable: pathTable)
-        #endif
+        networkTransport = NodeNetworkTransport(backendProvider: backendProvider, pathTable: pathTable)
         await networkTransport.start()
         let phone = await Telephone.make(transport: networkTransport)
         self.telephone = phone

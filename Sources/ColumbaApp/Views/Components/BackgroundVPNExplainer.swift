@@ -1,4 +1,3 @@
-#if COLUMBA_RUNTIME_MODEL_B
 //
 //  BackgroundVPNExplainer.swift
 //  ColumbaApp
@@ -106,4 +105,3 @@ enum VPNExplainerUI {
         }
     }
 }
-#endif

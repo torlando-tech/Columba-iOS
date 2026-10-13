@@ -186,6 +186,21 @@ class ArtifactCheckerTests(unittest.TestCase):
         with self.assertRaisesRegex(self.checker.VerificationError, message):
             self.verify(fixture, flavor)
 
+    def test_unified_requires_both_process_host_payloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = ArtifactFixture(root, "modelb")
+            python = ArtifactFixture(root, "shipping")
+            for name in ("Frameworks", "python", "app_packages", "app"):
+                shutil.copytree(python.app / name, fixture.app / name, dirs_exist_ok=True)
+            host_nm = ("nm", str(fixture.app / fixture.executable))
+            host_otool = ("otool", str(fixture.app / fixture.executable))
+            fixture.outputs[host_nm] = python.outputs[("nm", str(python.app / python.executable))]
+            fixture.outputs[host_otool] += b"\t@rpath/Python.framework/Python\n"
+            self.verify(fixture, "unified")
+            shutil.rmtree(fixture.app / "python")
+            self.assert_rejected(fixture, "unified", "python/lib")
+
     def test_shipping_passes_with_discovered_executable_and_ignores_debug_strings(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = ArtifactFixture(Path(directory), "shipping", "NotColumbaApp")
@@ -761,74 +776,22 @@ class ArtifactCheckerTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
-    def test_workflow_uses_explicit_flavor_schemes_and_deterministic_artifacts(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertNotIn("Columba-Swift", workflow)
-        self.assertGreaterEqual(workflow.count("-scheme Columba"), 3)
-        self.assertGreaterEqual(workflow.count("-scheme Columba-ModelB"), 1)
-        self.assertIn('-derivedDataPath "$PWD/DerivedData-Python"', workflow)
-        self.assertIn('-derivedDataPath "$PWD/DerivedData-ModelB"', workflow)
-        self.assertIn(
-            'SHIPPING_APP="$PWD/DerivedData-Python/Build/Products/Debug-iphonesimulator/ColumbaApp.app"',
-            workflow,
-        )
-        self.assertIn(
-            'RELEASE_APP="$PWD/DerivedData-Python/Build/Products/Release-iphonesimulator/ColumbaApp.app"',
-            workflow,
-        )
-        self.assertIn(
-            'MODELB_APP="$PWD/DerivedData-ModelB/Build/Products/Debug-iphonesimulator/ColumbaModelBApp.app"',
-            workflow,
-        )
-        self.assertIn('verify-flavor-artifact.py shipping "$SHIPPING_APP"', workflow)
-        self.assertIn('verify-flavor-artifact.py shipping "$RELEASE_APP"', workflow)
+    def test_workflow_builds_one_artifact_with_both_host_adapters(self):
+        workflow = WORKFLOW.read_text()
+        self.assertNotIn("-scheme Columba-ModelB", workflow)
+        self.assertNotIn("ColumbaModelBAppTests", workflow)
+        self.assertIn('-only-testing:ColumbaAppTests', workflow)
+        self.assertIn('verify-flavor-artifact.py unified "$SHIPPING_APP"', workflow)
+        self.assertIn('verify-flavor-artifact.py unified "$RELEASE_APP"', workflow)
         self.assertIn("DEPLOYMENT_POSTPROCESSING=YES STRIP_INSTALLED_PRODUCT=YES", workflow)
-        self.assertIn('modelb "$MODELB_APP" --allow-empty-simulator-entitlements', workflow)
-
-    def test_workflow_runs_both_dedicated_test_targets_and_keeps_shipping_coverage(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("-only-testing:ColumbaAppTests", workflow)
-        self.assertIn("-only-testing:ColumbaModelBAppTests", workflow)
         self.assertIn("-enableCodeCoverage YES", workflow)
-        self.assertIn("-resultBundlePath TestResults.xcresult", workflow)
-        self.assertIn("rm -rf TestResults.xcresult", workflow)
-        self.assertIn("-resultBundlePath ModelBTestResults.xcresult", workflow)
-        self.assertIn("rm -rf ModelBTestResults.xcresult", workflow)
 
-    def test_workflow_runs_python_modelb_and_ui_as_independent_lanes(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+    def test_ui_lane_remains_independent(self):
+        workflow = WORKFLOW.read_text()
         self.assertIn("\n  python:\n", workflow)
-        self.assertIn("\n  modelb:\n", workflow)
         self.assertIn("\n  ui:\n", workflow)
+        self.assertNotIn("\n  modelb:\n", workflow)
         self.assertNotIn("\n    needs:", workflow)
-
-        modelb = workflow.split("\n  modelb:\n", 1)[1].split("\n  ui:\n", 1)[0]
-        # The NE hosts the embedded CPython runtime (Model B), so the modelb
-        # lane must fetch the framework + wheels to build it. (This replaced the
-        # earlier lane-isolation rule that excluded the fetch; that predated the
-        # in-NE Python migration.)
-        self.assertIn("Fetch Python framework + wheels", modelb)
-        self.assertIn("support/fetch-python.sh", modelb)
-        self.assertIn("support/fetch-wheels.sh", modelb)
-        self.assertIn("Build and run Model B tests", modelb)
-        self.assertIn("Build Model B artifact", modelb)
-        self.assertLess(
-            modelb.index("Verify Model B artifact isolation"),
-            modelb.index("Build and run Model B tests"),
-        )
-
-        python_lane = workflow.split("\n  python:\n", 1)[1].split("\n  modelb:\n", 1)[0]
-        self.assertIn("Build and run shipping tests", python_lane)
-        self.assertIn("Build shipping artifact (embedded Python)", python_lane)
-        self.assertLess(
-            python_lane.index("Verify shipping artifact isolation"),
-            python_lane.index("Build and run shipping tests"),
-        )
-        self.assertIn("Build post-processed Release artifact", python_lane)
-
-        ui = workflow.split("\n  ui:\n", 1)[1]
-        self.assertIn("if: github.event_name == 'pull_request'", ui)
-        self.assertIn("Run screenshot flows", ui)
 
     def test_every_shell_block_is_fail_fast_and_builds_use_adhoc_signing(self):
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
@@ -841,7 +804,7 @@ class WorkflowContractTests(unittest.TestCase):
             'CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" '
             'PROVISIONING_PROFILE_SPECIFIER=""'
         )
-        self.assertEqual(workflow.count(signing), 6)
+        self.assertEqual(workflow.count(signing), 4)
         self.assertIn("test_host_entitlements_contract", workflow)
         self.assertIn("test_ci_artifact_isolation", workflow)
         self.assertIn("test_ios_ble_bridge_contract", workflow)

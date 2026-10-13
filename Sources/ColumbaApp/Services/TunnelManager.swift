@@ -9,7 +9,6 @@
 //  carry the Network Extension capability and entitlement.
 //
 
-#if COLUMBA_RUNTIME_MODEL_B
 
 import Foundation
 import RNSAPI
@@ -217,10 +216,7 @@ public final class TunnelManager: @unchecked Sendable {
     /// hands back (an encoded `ProxyResponse`), or `nil` when there's no live
     /// session or the send throws — the proxy maps `nil` onto an IPC-failure.
     ///
-    /// `BackendFactory.make(proxySend:)` injects this as the proxy's `send`
-    /// closure when Model B is on (currently never — `BackendPreference.modelB`
-    /// defaults `false`), so this primitive is present + testable but inert until
-    /// A5c wires it live.
+    /// The backend factory uses this adapter when background hosting is selected.
     public func proxySend(_ data: Data) async -> Data? {
         // The NE may still be coming up when the app first sends: proxy `start`
         // (and any early announce/status) races the tunnel session reaching
@@ -291,5 +287,3 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel config removed")
     }
 }
-
-#endif

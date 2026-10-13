@@ -1,5 +1,5 @@
 import XCTest
-@testable import ColumbaModelBApp
+@testable import ColumbaApp
 
 /// Unit tests for the Model-B RNode seam: the binary wire codec and the
 /// file-backed IPC queue's failure-reporting contract. These exercise REAL

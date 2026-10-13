@@ -3115,16 +3115,6 @@
         }
       }
     },
-    "Reticulum Network": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reticulum Network"
-          }
-        }
-      }
-    },
     "Manually stop or start the background Reticulum service.": {
       "localizations": {
         "en": {
@@ -3151,16 +3141,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Stop"
-          }
-        }
-      }
-    },
-    "Learn more & set up": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Learn more & set up"
           }
         }
       }
@@ -3241,6 +3221,116 @@
           "stringUnit": {
             "state": "translated",
             "value": "Keeps you connected to the Reticulum network in the background."
+          }
+        }
+      }
+    },
+    "Background hosting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background hosting"
+          }
+        }
+      }
+    },
+    "Foreground only": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Foreground only"
+          }
+        }
+      }
+    },
+    "Runs Reticulum in the background via a local VPN configuration. Only Columba's own traffic uses it — other apps are not routed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs Reticulum in the background via a local VPN configuration. Only Columba's own traffic uses it — other apps are not routed."
+          }
+        }
+      }
+    },
+    "Reticulum runs inside Columba and stops when iOS suspends the app. Use this if you'd rather not use a local VPN.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reticulum runs inside Columba and stops when iOS suspends the app. Use this if you'd rather not use a local VPN."
+          }
+        }
+      }
+    },
+    "Learn more": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Learn more"
+          }
+        }
+      }
+    },
+    "Stay reachable in the background": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stay reachable in the background"
+          }
+        }
+      }
+    },
+    "Keep mesh delivery alive while Columba is closed or your phone is locked.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep mesh delivery alive while Columba is closed or your phone is locked."
+          }
+        }
+      }
+    },
+    "Background Hosting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background Hosting"
+          }
+        }
+      }
+    },
+    "Change hosting mode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change hosting mode"
+          }
+        }
+      }
+    },
+    "Reticulum Network Hosting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reticulum Network Hosting"
+          }
+        }
+      }
+    },
+    "Network Connectivity": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network Connectivity"
           }
         }
       }

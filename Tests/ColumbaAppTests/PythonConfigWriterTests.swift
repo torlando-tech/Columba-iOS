@@ -147,7 +147,6 @@ final class PythonConfigWriterTests: XCTestCase {
     }
 }
 
-#if COLUMBA_RUNTIME_PYTHON
 private final class FakePythonRNodeTransport: PythonRNodeTransporting {
     var onDataReceived: ((Data) -> Void)?
     var onStateChange: ((PythonRNodeLinkState, String?, PythonRNodeFailureCode) -> Void)?
@@ -449,4 +448,3 @@ extension PythonConfigWriterTests {
         )
     }
 }
-#endif

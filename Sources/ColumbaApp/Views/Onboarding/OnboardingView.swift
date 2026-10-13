@@ -135,7 +135,6 @@ struct OnboardingView: View {
                             onBack: { viewModel.previousPage() },
                             onContinue: { viewModel.nextPage() }
                         )
-                    #if COLUMBA_RUNTIME_MODEL_B
                     case 4:
                         BackgroundDeliveryPage(
                             isReadOnly: viewModel.isReviewingExistingSetup,
@@ -160,14 +159,15 @@ struct OnboardingView: View {
                                 if ok { viewModel.nextPage() }
                                 return ok
                             },
-                            onBack: { viewModel.previousPage() }
+                            onBack: { viewModel.previousPage() },
+                            onForeground: {
+                                SharedDefaults.suite.set(NodeHostingMode.foreground.rawValue, forKey: NodeHostingMode.preferenceKey)
+                                NodeHostingMode.activateSelection()
+                                viewModel.nextPage()
+                            }
                         )
                     case 5:
                         completePage
-                    #else
-                    case 4:
-                        completePage
-                    #endif
                     default:
                         EmptyView()
                     }

@@ -2,28 +2,20 @@
 
 An iOS messaging app built on [Reticulum](https://reticulum.network) for encrypted, off-grid communication. It supports text messaging, voice calls, location sharing, and file transfers over TCP, local Wi-Fi, BLE, and LoRa radio.
 
-## Build flavors
+## Reticulum hosting
 
-Columba has two compile-time app flavors. They are separate targets and schemes, not a runtime preference.
+One app target (`ColumbaApp`) and scheme (`Columba`) support two runtime hosting modes:
 
-| Flavor | App target | Scheme | Runtime flag | Purpose |
-|---|---|---|---|---|
-| Shipping | `ColumbaApp` | `Columba` | `COLUMBA_RUNTIME_PYTHON` | Embedded Python RNS/LXMF runtime; this is the standard build |
-| Experimental Model B | `ColumbaModelBApp` | `Columba-ModelB` | `COLUMBA_RUNTIME_MODEL_B` | Background-delivery experiment: the embedded-Python RNS node runs in the Network Extension, the app is a proxy/UI client; not part of the shipping artifact |
+- **Background (recommended):** Python RNS runs in `ColumbaNetworkExtension`, allowing reception while the app is suspended.
+- **Foreground only:** Python RNS runs inside the app, without a VPN configuration. Connections pause when iOS suspends the app; listeners and peers may reconnect when it returns.
 
-The shipping app owns `Python.xcframework`, the Python bridge and runtime, Python model/backend sources, the Python `app/` resources, wheels, standard-library installation, and packaging. It has no Network Extension target dependency or embed, no packet-tunnel entitlement, and no Model B lifecycle, UI, or proxy behavior. Its default Internet TCP delivery is foreground/opportunistic; the shipping artifact does not guarantee background Internet TCP delivery.
-
-`ColumbaApp` still carries a compile-time `ReticulumSwift` link because retained shared sources reference `ReticulumSwift`/`LXMFSwift` types (e.g. `MessageRepository`, `LocationSharingManager`, `CeaseTelemetry`). That linkage satisfies the compiler; it does not mean the shipping app runs a native Model B stack (its runtime is the embedded-Python RNS in `PythonRNSBackend`).
-
-The experimental app owns `ProxyRnsBackend`, the Model B host/proxy/App Group IPC sources, and the dependency and signed embed for `ColumbaNetworkExtension`. Its compile-time `ReticulumSwift` link (like the shipping app's) is for shared-source type compatibility, not a native runtime. It excludes the Python framework, Python-only sources and resources, wheels, bridging header, and Python packaging phases. See [Model B — Background LXMF Delivery](docs/MODEL_B_BACKGROUND_DELIVERY.md).
-
-Build flavor is fixed at compile time. Each app target has exactly one canonical runtime flag. The old `Columba-Swift` scheme, `Debug-Swift`/`Release-Swift` configurations, and `BackendPreference.modelB` runtime selector are retired. `COLUMBA_BACKEND_SWIFT` remains on Model B as a temporary compatibility condition for a transport-settings branch; it is not the architecture selector. A persisted `useSwiftBackend` value does not select the architecture.
+Both modes use the same backend facade, command dispatcher, Python engine, durable inbox/outbox, message store, and voice transport. Settings → Reticulum Network → Choose Hosting Mode saves the host for the next fresh app launch. Onboarding also offers foreground mode. There are no separate build flavors.
 
 ## Building
 
-Requires Xcode 15+ and iOS 17+.
+Requires Xcode 26+ and iOS 17+.
 
-The shipping Python build has generated local prerequisites that SPM cannot provide. On a fresh clone, provision the embedded CPython distribution and iOS wheels with the project setup scripts:
+The app has generated local prerequisites that SPM cannot provide. On a fresh clone, provision the embedded CPython distribution and iOS wheels with the project setup scripts:
 
 ```sh
 support/fetch-python.sh
@@ -32,7 +24,7 @@ support/fetch-wheels.sh
 
 These populate the gitignored `Frameworks/Python.xcframework/`, `wheels-iphoneos/`, and `wheels-iphonesimulator/` paths consumed by the `ColumbaApp` packaging phase. See [support/README.md](support/README.md) for pinned versions and packaging details. SPM resolves the Swift package dependencies, but it does not replace these Python prerequisites.
 
-Standard shipping simulator build:
+Simulator build:
 
 ```sh
 xcodebuild -project Columba.xcodeproj \
@@ -42,19 +34,7 @@ xcodebuild -project Columba.xcodeproj \
   build
 ```
 
-Experimental Model B simulator build:
-
-```sh
-xcodebuild -project Columba.xcodeproj \
-  -scheme Columba-ModelB \
-  -configuration Debug \
-  -destination 'generic/platform=iOS Simulator' \
-  build
-```
-
-`Columba-ModelB` is the canonical path for the experimental flavor: its Build action includes `ColumbaModelBApp` and `ColumbaNetworkExtension`, and its Test action includes `ColumbaModelBAppTests`. Use `build-for-testing` instead of `build` when the test bundle must also be compiled. Do not build the extension separately as the normal workflow. The `Columba` scheme is shipping-only.
-
-Physical-device builds require a valid signing team and provisioning for the selected app. Model B device builds must also sign the extension and provision its Network Extension and App Group capabilities.
+`ColumbaAppTests` tests the shared facade and both adapters. The app embeds the extension and the Python runtime needed by either host. Device provisioning must include the app and extension's Network Extension, App Group, and shared keychain capabilities.
 
 ### Local development against unreleased library changes
 
@@ -77,8 +57,8 @@ SPM resolves the listed URLs to local checkouts, so library changes are picked u
 
 ## Architecture
 
-- **Embedded Python RNS/LXMF** — the messaging runtime in both flavors; runs in-process in the app (shipping) or in the Network Extension (Model B)
-- **ReticulumSwift** — native Reticulum stack; not the runtime in either flavor. Carried as a compile-time link by the app targets for shared-source type compatibility
+- **Embedded Python RNS/LXMF** — one shared engine hosted in the selected process
+- **ReticulumSwift** — native Reticulum stack; not the messaging runtime. Carried as a compile-time link by the app for shared-source type compatibility
 - **LXMFSwift** — shared LXMF persistence/API surface
 - **LXSTSwift** — voice call transport
 - **MapLibre** — offline-capable map rendering

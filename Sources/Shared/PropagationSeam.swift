@@ -2,19 +2,14 @@
 //  PropagationSeam.swift
 //  Columba Shared
 //
-//  App→NE seam for LXMF propagation under Model B. The LXMF router runs in the
-//  Network Extension, so the app's selected propagation node + sync settings cross the
-//  App-Group seam here, and the NE writes sync progress back the same way. Foundation-
-//  only (compiled into BOTH the app and the NE), mirroring `RNodeSeam`.
+//  Persisted relay selection and retrieval preferences for either node host.
+//  Foundation-only: shared by the application and Network Extension.
 //
 
 import Foundation
 
-/// Snapshot of the app's selected propagation node + sync settings, persisted to the
-/// App-Group `propagationConfigKey` and read by the NE, which wires it onto its in-NE
-/// `LXMRouter` via `setOutboundPropagationNode` / `setPropagationStampCost`. Written by
-/// the app's `PropagationNodeManager` (Model B only); the python backend keeps its own
-/// in-process path.
+/// Written by the app's PropagationNodeManager and read by the shared Python
+/// node's retrieval scheduler. Changes apply without restarting the node.
 public struct PropagationSeamConfig: Codable, Equatable, Sendable {
     /// The selected propagation node's destination hash (lxmf.propagation aspect), or
     /// nil when none is selected (clear the router's PN).
@@ -25,7 +20,7 @@ public struct PropagationSeamConfig: Codable, Equatable, Sendable {
     /// scheduler — a raw 0 / near-0 value (default/corrupted App-Group entry) would
     /// otherwise busy-loop the NE sync task.
     public var syncInterval: TimeInterval
-    /// Whether the NE should run periodic sync (vs sync-on-demand only).
+    /// Whether the owning node should retrieve periodically.
     public var periodicSyncEnabled: Bool
 
     /// Hard floor for the periodic-sync cadence. The NE's `startPropagationSyncScheduler`
@@ -121,19 +116,24 @@ public struct PropagationSyncStateSnapshot: Codable, Equatable, Sendable {
     public var received: Int
     public var total: Int
     public var errorDescription: String?
+    /// Optional for compatibility with snapshots written by older builds.
+    public var lastSuccessfulSync: Date?
+    public static let lastSyncTimestampKey = "lastSyncTimestamp"
 
     public init(
         phase: Phase,
         progress: Double = 0,
         received: Int = 0,
         total: Int = 0,
-        errorDescription: String? = nil
+        errorDescription: String? = nil,
+        lastSuccessfulSync: Date? = nil
     ) {
         self.phase = phase
         self.progress = progress
         self.received = received
         self.total = total
         self.errorDescription = errorDescription
+        self.lastSuccessfulSync = lastSuccessfulSync
     }
 
     // MARK: App-Group persistence
@@ -155,6 +155,29 @@ public struct PropagationSyncStateSnapshot: Codable, Equatable, Sendable {
         Self.postChangedNotification()
     }
 
+    /// Publish only confirmed successes; failed/ambiguous replies must not
+    /// advance history. The node is the sole writer for manual and automatic runs.
+    @discardableResult
+    static func publishSuccessfulResult(
+        _ result: [String: Any]?, at date: Date = Date(),
+        group: String = appGroupIdentifier
+    ) -> Bool {
+        guard result?["ok"] as? Bool == true,
+              let defaults = UserDefaults(suiteName: group) else { return false }
+        let received = result?["received_messages"] as? Int ?? 0
+        defaults.set(date.timeIntervalSince1970, forKey: lastSyncTimestampKey)
+        PropagationSyncStateSnapshot(
+            phase: .complete, progress: 1, received: received, total: received,
+            lastSuccessfulSync: date
+        ).saveToAppGroup(group)
+        return true
+    }
+
+    static func lastSuccessfulSync(in group: String = appGroupIdentifier) -> Date? {
+        let value = UserDefaults(suiteName: group)?.double(forKey: lastSyncTimestampKey) ?? 0
+        return value > 0 ? Date(timeIntervalSince1970: value) : nil
+    }
+
     public static func clearFromAppGroup(_ group: String = appGroupIdentifier) {
         UserDefaults(suiteName: group)?.removeObject(forKey: SharedDefaultsConstants.propagationSyncStateKey)
         postChangedNotification()
@@ -166,5 +189,28 @@ public struct PropagationSyncStateSnapshot: Codable, Equatable, Sendable {
             CFNotificationName(SharedDefaultsConstants.propagationSyncStateChangedNotificationName as CFString),
             nil, nil, true
         )
+    }
+}
+
+/// Clock-driven policy shared by both node hosts; one attempt per interval.
+/// Changing or disabling the selection invalidates the previous deadline.
+struct NodePropagationSchedule {
+    private var previous: PropagationSeamConfig?
+    private var deadline: Date?
+
+    mutating func shouldSync(config: PropagationSeamConfig?, now: Date) -> Bool {
+        guard let config, config.periodicSyncEnabled,
+              config.propagationNodeHash != nil else {
+            previous = nil
+            deadline = nil
+            return false
+        }
+        if config != previous {
+            previous = config
+            deadline = now.addingTimeInterval(config.effectiveSyncInterval)
+        }
+        guard let deadline, now >= deadline else { return false }
+        self.deadline = now.addingTimeInterval(config.effectiveSyncInterval)
+        return true
     }
 }

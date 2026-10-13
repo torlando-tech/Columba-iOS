@@ -589,86 +589,33 @@ public final class SettingsViewModel {
     /// Called from loadSettings() and periodically by the view.
     @MainActor
     public func refreshConnectionState() async {
-        // In Model B the NE owns the TCP relay and the app owns no local TCP
-        // interface, so reading app interfaces would always report
-        // "disconnected". Reflect the NE relay's state (via the proxy) for TCP;
-        // app-owned radios (Auto / BLE / RNode) are read locally in both models.
-        let modelB = BackendPreference.modelB
-
-        // Build connected interface string from all active interfaces.
         var activeInterfaces: [String] = []
-
-        // Pass the complete persisted snapshot. The presenter owns enabled-state
-        // filtering and needs disabled IDs to distinguish teardown-in-progress
-        // entries from genuinely unmapped runtime-created interfaces.
+        // Keep disabled IDs so presentation can distinguish teardown from discovery.
         let configuredInterfaces = InterfaceRepository().interfaces
-
-        if modelB {
-            // Model B: the NE owns MULTIPLE relays (one `ne-tcp-relay-<entityId>` per
-            // enabled tcpClient). Label the card with every relay that is actually online.
-            let onlineStates = Dictionary(uniqueKeysWithValues: await appServices.neTcpRelayStatuses().map {
-                ($0.entityId, $0.online ? InterfaceState.connected : InterfaceState.disconnected)
-            })
-            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.tcpDescriptions(
-                configuredInterfaces: configuredInterfaces,
-                runtimeStates: onlineStates
-            ))
-        } else {
-            // Shipping Python: every configured TCP interface has its own runtime entry.
-            // Send the complete state snapshot through the same presentation seam so a
-            // disconnected dictionary-first entry cannot hide other connected entries.
-            var runtimeTCPStates: [String: InterfaceState] = [:]
-            for (entityId, tcpInterface) in appServices.tcpInterfaces {
-                runtimeTCPStates[entityId] = await tcpInterface.state
-            }
-            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.tcpDescriptions(
-                configuredInterfaces: configuredInterfaces,
-                runtimeStates: runtimeTCPStates
-            ))
-        }
-        // Discovery auto-connects + LAN peers live only in the transport's
-        // auxiliary snapshot (the Network Status screen reads the same source).
-        // The old `autoInterface.peerCount` check here was dead code — nothing
-        // ever assigned peerCount — so an interface RNS auto-connected from a
-        // discovery announce never appeared on this card (issue #193).
+        let onlineStates = Dictionary(uniqueKeysWithValues: await appServices.neTcpRelayStatuses().map {
+            ($0.entityId, $0.online ? InterfaceState.connected : InterfaceState.disconnected)
+        })
+        activeInterfaces.append(contentsOf: NetworkInterfacePresentation.tcpDescriptions(
+            configuredInterfaces: configuredInterfaces,
+            runtimeStates: onlineStates
+        ))
         if let transport = appServices.transport {
-            let aux = transport.pythonAuxiliarySnapshotList()
-            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.auxiliaryDescriptions(aux))
+            activeInterfaces.append(contentsOf: NetworkInterfacePresentation.auxiliaryDescriptions(
+                transport.pythonAuxiliarySnapshotList()
+            ))
         }
-        if modelB {
-            // Model B: the RNode radio runs in the NE. Read its state from the NE
-            // snapshot (the same NE-authoritative source the Manage Interfaces screen
-            // uses via `neRNodeStatus`), not the app-side Compat stub which never
-            // holds the live GATT link.
-            if let rnode = await appServices.neRNodeStatus(), rnode.online {
-                activeInterfaces.append("RNode")
-            }
-        } else if let rnode = appServices.rnodeInterface, await rnode.state == .connected {
+        // Both hosts report radio state through the same backend facade.
+        if let rnode = await appServices.neRNodeStatus(), rnode.online {
             activeInterfaces.append("RNode")
         }
-        if modelB {
-            // Model B: BLE runs in the NE — count its native peers (over the proxy
-            // IPC) rather than the app's Compat `bleInterface`, which never has peers.
-            let bleCount = await appServices.getBLEConnectionInfos().count
-            if bleCount > 0 {
-                activeInterfaces.append("Bluetooth LE (\(bleCount) peer\(bleCount == 1 ? "" : "s"))")
-            }
-        } else if let ble = appServices.bleInterface, await ble.state == .connected {
-            let count = await ble.peerCount
-            if count > 0 {
-                activeInterfaces.append("Bluetooth LE (\(count) peer\(count == 1 ? "" : "s"))")
-            } else {
-                activeInterfaces.append("Bluetooth LE")
-            }
+        let bleCount = await appServices.getBLEConnectionInfos().count
+        if bleCount > 0 {
+            activeInterfaces.append("Bluetooth LE (\(bleCount) peer\(bleCount == 1 ? "" : "s"))")
         }
         connectedInterface = NetworkInterfacePresentation.listText(activeInterfaces)
-
-        // Overall state: in Model B "connected" = at least one active interface
-        // (the NE relay or an app-owned radio); otherwise defer to the app's own
-        // connection tracking (which owns the interfaces in Model A).
-        isConnected = modelB ? !activeInterfaces.isEmpty : appServices.isConnected
-        isReconnecting = modelB ? false : appServices.isReconnecting
-        reconnectError = modelB ? nil : appServices.connectionError
+        isConnected = !activeInterfaces.isEmpty
+        isReconnecting = false
+        reconnectError = nil
     }
 
     /// Sync auto-announce manager state with current settings.
@@ -808,9 +755,6 @@ public final class SettingsViewModel {
         await settingsRepository.setAutoSelectRelay(autoSelectRelay)
         await settingsRepository.setPeriodicSyncEnabled(autoRetrieveEnabled)
         await settingsRepository.setSyncInterval(autoRetrieveInterval)
-        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
-        #endif
         await appServices.applyIncomingMessageSizeLimitFromSettings()
 
         // Update propagation manager
@@ -856,6 +800,7 @@ public final class SettingsViewModel {
     @MainActor
     public func refreshSyncState() {
         if let propManager = appServices.propagationManager {
+            propManager.refreshLastSyncTime()
             lastSyncTime = propManager.lastSyncTime
             selectedRelayName = propManager.selectedNodeName
         }

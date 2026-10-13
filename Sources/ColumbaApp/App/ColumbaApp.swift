@@ -19,21 +19,6 @@ private let logger = Logger(subsystem: "network.columba.Columba", category: "Col
 
 /// Main SwiftUI App entry point.
 ///
-#if os(iOS) && COLUMBA_RUNTIME_PYTHON
-@MainActor
-private final class BackgroundPropagationCancellation {
-    private var operation: Task<Void, Never>?
-
-    func request(_ cancel: @escaping @MainActor @Sendable () async -> Void) {
-        guard operation == nil else { return }
-        operation = Task { @MainActor in await cancel() }
-    }
-
-    func wait() async {
-        await operation?.value
-    }
-}
-#endif
 
 /// Creates MainTabView as the root navigation container.
 /// Handles service initialization via AppServices.
@@ -51,9 +36,22 @@ struct ColumbaApp: App {
     /// Pending lxma:// deep link URL to process.
     @State private var pendingDeepLink: String?
 
+    private static let launchHostingMode: NodeHostingMode = {
+        #if DEBUG && targetEnvironment(simulator)
+        // Screenshot flows exercise the real local node. The simulator cannot
+        // run the packet tunnel and must not stop at its consent gate.
+        if ProcessInfo.processInfo.arguments.contains("ui-screenshotter") {
+            SharedDefaults.suite.set(NodeHostingMode.foreground.rawValue,
+                                     forKey: NodeHostingMode.preferenceKey)
+        }
+        #endif
+        return NodeHostingMode.activateSelection()
+    }()
+
     // MARK: - Init
 
     init() {
+        _ = Self.launchHostingMode
         // Privacy hygiene + bounded storage: wipe diag.log (and its rotated
         // sibling) before ANY launch work so logs left by pre-#186 builds,
         // which leaked received-message plaintext on every inbound message,
@@ -64,60 +62,10 @@ struct ColumbaApp: App {
         // silently leaving legacy plaintext behind.
         DiagLog.schedulePurgeRetryIfNeeded(initiallyClean: DiagLog.purgeForNewLaunch())
 
-        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        // Register before starting embedded Python or any other potentially slow
-        // launch work. BGTaskScheduler requires every launch handler to be
-        // registered during application launch, including cold background launch.
-        BackgroundPropagationTaskScheduler.register()
-        ColumbaApplicationRuntime.shared.installBackgroundHandler()
-        #endif
-
-        #if COLUMBA_RUNTIME_PYTHON
-        // Boot embedded CPython once, before anything else can touch it.
-        // PythonBridge / PythonRNSBackend depend on this; without it
-        // PyGILState_Ensure deadlocks.
-        switch PythonRuntime.shared.start() {
-        case .success(let version):
-            logger.info("Python runtime started: \(version, privacy: .public)")
-        case .failure(let err):
-            logger.error("Python runtime failed: \(err.localizedDescription, privacy: .public)")
-        }
-        #endif
 
         #if os(iOS) && canImport(CoreBluetooth)
-        // Track C8 — background BLE wake / CoreBluetooth state restoration.
-        // When iOS relaunches the app for a preserved BLE event, CoreBluetooth expects
-        // the app to recreate its managers with the same restore identifiers early so
-        // it can replay preserved state via `willRestoreState`. This pure-SwiftUI app
-        // has no UIApplicationDelegate launch-options hook, so App.init() is the
-        // earliest app-owned seam. We restore only when an enabled BLE interface is
-        // already persisted; a fresh install must not create CoreBluetooth managers or
-        // show a permission prompt before the user explicitly opts into BLE.
-        //
-        // GAP / FOLLOW-ON: this re-arms the wake and re-adopts CoreBluetooth
-        // state, but inbound BLE bytes only become a *delivered + notified*
-        // message through the Python delivery path, which requires the active
-        // backend to be the Python backend AND its BLE bring-up
-        // (startBLEInterface → re-install of SwiftBLEBridge's callbackInvoker) to
-        // run on this relaunch. Native-Swift BLE delivery is a deliberate
-        // follow-on; until it lands, background-wake delivery is
-        // Python-backend-only. See the DELIVERY CAVEAT in SwiftBLEBridge.start().
-        //
-        // Model B follow-on (now landing): reticulum-swift's `CoreBluetoothBLEDriver`
-        // owns CoreBluetooth via `ModelBBLEService` (started from `AppServices` once
-        // the identity is ready). It must be the ONLY CB stack — `SwiftBLEBridge`
-        // creating its own managers would fight over the same GATT service — so we
-        // restore `SwiftBLEBridge` only on the Python-backend (non-Model-B) path.
-        // (Model B background-restore via CoreBluetoothBLEDriver's own restore
-        // identifier is a further follow-on: it needs the identity at launch.)
-        #if COLUMBA_RUNTIME_PYTHON
-        // Only re-arm CoreBluetooth restoration after the user has explicitly enabled
-        // the shipping BLE interface. Creating these managers on a fresh install causes
-        // iOS to prompt before onboarding can explain or offer Bluetooth.
-        if InterfaceRepository().getEnabledInterfaces().contains(where: { $0.type == .ble }) {
-            SwiftBLEBridge.shared.restoreAtLaunch()
-        }
-        #endif
+        // Native radios are initialized by the selected node host after it
+        // acquires exclusive process ownership.
         #endif
 
         // Install notification delegate early so didReceive (notification tap) works
@@ -547,9 +495,7 @@ final class ColumbaApplicationRuntime {
     var database: LXMFDatabase?
     var messageRepository: MessageRepository?
     var incomingMessageHandler: IncomingMessageHandler?
-    #if COLUMBA_RUNTIME_MODEL_B
-    var modelBInboundReplay: ModelBInboundReplay?
-    #endif
+    var nodeInboundReplay: NodeInboundReplay?
     var initError: String?
     var isInitialized = false
     private var serviceInitializationTask: Task<Bool, Never>?
@@ -558,123 +504,17 @@ final class ColumbaApplicationRuntime {
     private init() {}
 
     func installBackgroundHandler() {
-        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        guard !backgroundHandlerInstalled else { return }
-        backgroundHandlerInstalled = true
-        BackgroundTaskCoordinator.shared.installHandler { [weak self] in
-            guard let self else { return false }
-            let success = await self.performBackgroundPropagationSync()
-            // Anchor the next schedule to a COMPLETED run. Both task kinds
-            // (refresh and processing) funnel through this one handler, so the
-            // anchor is shared: a processing win overnight advances the next
-            // refresh no earlier than the interval, and a failed run leaves
-            // the next lane near-term.
-            BackgroundPropagationTaskScheduler.markSyncCompleted(success: success)
-            return success
-        }
-        #endif
     }
 
     func resetAfterIdentitySwitch() {
         isInitialized = false
         messageRepository = nil
         incomingMessageHandler = nil
-        #if COLUMBA_RUNTIME_MODEL_B
-        modelBInboundReplay = nil
-        #endif
+        nodeInboundReplay = nil
         database = nil
         initError = nil
     }
 
-    #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-    // MARK: - Background Propagation Sync
-
-    /// Execute one system-granted refresh against the shipping embedded-Python
-    /// propagation path. A cold launch may deliver the task while normal service
-    /// initialization is still running, so wait briefly for that single startup
-    /// path rather than starting a competing identity/router initialization.
-    @MainActor
-    private func performBackgroundPropagationSync() async -> Bool {
-        BackgroundPropagationTaskScheduler.logRuntime(context: "workflow-entered")
-        DiagLog.log("[BG-SYNC] workflow entered initialized=\(isInitialized)")
-        guard await settingsRepository.getPeriodicSyncEnabled() else {
-            DiagLog.log("[BG-SYNC] skipped: periodic sync disabled")
-            return true
-        }
-
-        guard await ensureServicesInitialized() else {
-            DiagLog.log("[BG-SYNC] failed: shared service initialization unsuccessful")
-            return false
-        }
-
-        guard isInitialized,
-              let repository = messageRepository,
-              let handler = incomingMessageHandler,
-              let propagationManager = appServices.propagationManager else {
-            DiagLog.log(
-                "[BG-SYNC] failed: services not ready initialized=\(isInitialized) "
-                    + "repository=\(messageRepository != nil) handler=\(incomingMessageHandler != nil) "
-                    + "propagationManager=\(appServices.propagationManager != nil)"
-            )
-            return false
-        }
-        DiagLog.log(
-            "[BG-SYNC] services ready backend=\(appServices.pythonBackend != nil) "
-                + "selectedNode=\(propagationManager.selectedNodeHash != nil)"
-        )
-
-        guard await appServices.beginExclusivePythonHostEventProcessing() else {
-            DiagLog.log("[BG-SYNC] cancelled before acquiring host event transaction")
-            return false
-        }
-        handler.setUserNotificationsSuppressed(true)
-
-        let syncOperationID = UUID()
-        let cancellation = BackgroundPropagationCancellation()
-        let workflow = BackgroundPropagationSyncWorkflow<LXMessage>(
-            captureInsertionCursor: {
-                try await repository.captureMessageInsertionCursor()
-            },
-            sync: {
-                let result = await withTaskCancellationHandler {
-                    await propagationManager.syncNow(
-                        timeout: 20.0,
-                        operationID: syncOperationID
-                    )
-                } onCancel: {
-                    // Promptly interrupt the blocking Python operation. The
-                    // structured path below also awaits this same task before the
-                    // BG task is reported complete.
-                    Task { @MainActor in
-                        cancellation.request {
-                            await propagationManager.cancelActiveSync(operationID: syncOperationID)
-                        }
-                    }
-                }
-                if Task.isCancelled {
-                    cancellation.request {
-                        await propagationManager.cancelActiveSync(operationID: syncOperationID)
-                    }
-                    await cancellation.wait()
-                    return false
-                }
-                return result
-            },
-            messagesInsertedAfter: { cursor in
-                try await repository.fetchIncomingMessagesInserted(after: cursor)
-            },
-            notify: { message in
-                await handler.postNotificationForNewlySyncedMessage(message)
-            }
-        )
-
-        let succeeded = await workflow.run()
-        handler.setUserNotificationsSuppressed(false)
-        await appServices.endExclusivePythonHostEventProcessing()
-        DiagLog.log("[BG-SYNC] completed success=\(succeeded)")
-        return succeeded
-    }
-    #endif
 
     // MARK: - Initialization
 
@@ -700,12 +540,7 @@ final class ColumbaApplicationRuntime {
 
     func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
-        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        BackgroundPropagationTaskScheduler.logRuntime(context: "initialize-services")
-        BackgroundPropagationTaskScheduler.logPendingRequests(context: "initialize-services")
-        #endif
 
-        #if COLUMBA_RUNTIME_MODEL_B
         // Surface the Network Extension's App-Group diagnostic log into Documents
         // so it's retrievable via `devicectl ... copy from` alongside diag.log.
         // The NE (sandboxed) writes ext-diag.log to the shared container; the host
@@ -715,7 +550,6 @@ final class ColumbaApplicationRuntime {
         // Keep that copy LIVE (not just this launch's snapshot) so on-device NE
         // diagnostics can be tailed in real time. DEBUG-only.
         DiagLog.startExtDiagLiveCopy()
-        #endif
         #endif
 
         // Retry the entire init up to 5 times with increasing delay —
@@ -857,20 +691,19 @@ final class ColumbaApplicationRuntime {
             }
             appServices.startPythonEventDrain()
 
-            #if COLUMBA_RUNTIME_MODEL_B
             // Model B: the NE owns LXMF delivery, so the live `LXMRouter` delegate
             // above never fires. Drive the SAME `handler`'s field side-channel
             // processing (reactions / replies / telemetry → map pin / icon / cease)
             // by replaying NE-persisted inbound messages from the shared store on
-            // each Darwin "new message" ping. See `ModelBInboundReplay`.
-            let replay = ModelBInboundReplay(
+            // each Darwin "new message" ping. See `NodeInboundReplay`.
+            let replay = NodeInboundReplay(
                 repository: repo,
                 handler: handler,
                 identityScope: appServices.grdbDatabasePath ?? ""
             )
-            self.modelBInboundReplay = replay
+            self.nodeInboundReplay = replay
+            appServices.replayInboundSideEffects = { [weak replay] in await replay?.catchUp() }
             replay.start()
-            #endif
 
             // 7. Start all enabled interfaces (non-blocking)
             DiagLog.log("[STARTUP] Step 7: starting \(enabledInterfaces.count) enabled interfaces")
@@ -879,7 +712,7 @@ final class ColumbaApplicationRuntime {
                 DiagLog.log("[STARTUP] Starting interface: \(iface.type) name=\(iface.name)")
                 switch iface.type {
                 case .tcpClient:
-                    if BackendPreference.modelB {
+
                         // Model B: the NE's embedded-Python node owns ALL transports
                         // (TCP relay, AutoInterface, BLE, RNode); the app holds no
                         // live RNS runtime. It must NOT open a competing/duplicate
@@ -890,23 +723,7 @@ final class ColumbaApplicationRuntime {
                         // Model B; the real interfaces come up in the NE from the
                         // shared RNS config the app writes.)
                         DiagLog.log("[STARTUP] Model B: skipping app-side TCP interface (NE owns TCP)")
-                    } else if case .tcpClient(let config) = iface.config {
-                        let entityId = iface.id
-                        Task {
-                            DiagLog.log("[STARTUP] TCP interface \(config.targetHost):\(config.targetPort) — registering")
-                            do {
-                                try await services.connectTCPInterface(entityId: entityId, host: config.targetHost, port: config.targetPort)
-                                // NB: this only means the interface was added and a
-                                // connection was initiated — NOT that the socket is up.
-                                // The Swift backend's connect() is fire-and-forget; the
-                                // real connected/connecting state shows in the `[RNS] iface
-                                // … -> connected/connecting` poll lines.
-                                DiagLog.log("[STARTUP] TCP interface registered [\(entityId)] (connecting async — see [RNS] iface state)")
-                            } catch {
-                                DiagLog.log("[STARTUP] TCP interface add FAILED [\(entityId)]: \(error.localizedDescription)")
-                            }
-                        }
-                    }
+
                 case .tcpServer:
                     break
                 case .autoInterface:
@@ -967,12 +784,6 @@ final class ColumbaApplicationRuntime {
 
             self.isInitialized = true
 
-            #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-            // Submit after startup as well as on scene/settings transitions. This
-            // survives the startup diagnostic-log reset and ensures the first
-            // request is based on fully restored persisted settings.
-            BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
-            #endif
 
             // DEBUG: Auto-trigger propagation sync on launch for testing
             if ProcessInfo.processInfo.arguments.contains("--auto-sync") {
@@ -1114,15 +925,11 @@ struct RootView: View {
                 // backend starts until the NE/VPN tunnel is up; on first launch that
                 // means showing the background-delivery gate instead of an indefinite
                 // "Connecting to network…" spinner on a tunnel that doesn't exist yet.
-                #if COLUMBA_RUNTIME_MODEL_B
                 if appServices.needsBackgroundDeliveryApproval {
                     BackgroundDeliveryGateView(appServices: appServices)
                 } else {
                     loadingView
                 }
-                #else
-                loadingView
-                #endif
             }
         }
         .onChange(of: colorScheme) { _, newScheme in
@@ -1138,14 +945,8 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             let phaseValue = newPhase
-            #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-            let context = phaseValue == .active
-                ? "scene-active"
-                : (phaseValue == .background ? "scene-background" : "scene-inactive")
-            BackgroundPropagationTaskScheduler.logRuntime(context: context)
-            BackgroundPropagationTaskScheduler.logPendingRequests(context: context)
-            #endif
             if phaseValue == .active {
+                appServices.propagationManager?.refreshLastSyncTime()
                 if let repository = messageRepository {
                     Task {
                         await NotificationService.shared
@@ -1166,9 +967,6 @@ struct RootView: View {
             }
             #if os(iOS)
             if newPhase == .background {
-                #if COLUMBA_RUNTIME_PYTHON
-                BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
-                #endif
                 // Flush RNS's path table + known destinations to disk now —
                 // iOS won't run RNS's clean-exit persist, so without this a
                 // cold start can't recall previously-heard peers.
@@ -1177,11 +975,6 @@ struct RootView: View {
             appServices.locationSharingManager?.setBackgroundState(newPhase != .active)
             #endif
         }
-        #if os(iOS) && COLUMBA_RUNTIME_PYTHON
-        .task {
-            BackgroundPropagationTaskScheduler.scheduleFromCurrentSettings()
-        }
-        #endif
     }
 
     // MARK: - Loading View

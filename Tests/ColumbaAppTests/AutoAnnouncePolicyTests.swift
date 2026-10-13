@@ -117,13 +117,12 @@ final class AutoAnnouncePolicyTests: XCTestCase {
 
     // MARK: - Empty defaults
 
-    /// On a fresh install the keys aren't in the suite at all. UserDefaults.bool(forKey:)
-    /// returns false for absent keys — so policy must report all-off when nothing has
-    /// been registered or set. (Production code uses `register(defaults:)` in
-    /// SettingsViewModel.loadLocalSettings to default these to true; that registration
-    /// is on UserDefaults.standard, not on a per-suite scratch defaults, so this test
-    /// validates the *raw* read behavior.)
+    /// Scratch suites still inherit the process registration domain. Temporarily
+    /// isolate it so this verifies absent-key behavior in a hosted app as well.
     func testEmptyDefaultsReportsAllOff() {
+        let registered = defaults.volatileDomain(forName: UserDefaults.registrationDomain)
+        defaults.setVolatileDomain([:], forName: UserDefaults.registrationDomain)
+        defer { defaults.setVolatileDomain(registered, forName: UserDefaults.registrationDomain) }
         let p = AutoAnnouncePolicy.current(defaults: defaults)
         XCTAssertFalse(p.masterEnabled)
         XCTAssertFalse(p.onInterval)

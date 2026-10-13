@@ -12,10 +12,8 @@ import RNSAPI
 import CoreLocation
 import UIKit
 #endif
-#if COLUMBA_RUNTIME_MODEL_B
 // For NEVPNStatus, used by the background-transport status helpers below.
 import NetworkExtension
-#endif
 
 /// Main settings screen view.
 ///
@@ -43,8 +41,10 @@ struct SettingsView: View {
 
     // MARK: - State
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel: SettingsViewModel?
     @State private var showMyIdentity = false
+    @State private var transportChangeNotice: String?
     @State private var showManageIdentities = false
     @State private var showInterfaceManagement = false
     @State private var showDiscoveredInterfaces = false
@@ -56,14 +56,12 @@ struct SettingsView: View {
     @State private var isMessagingExpanded = false
     @AppStorage(ComposerKeyboardPreference.key)
     private var sendsOnReturn = ComposerKeyboardPreference.defaultValue
-    #if COLUMBA_RUNTIME_MODEL_B
     /// Expanded state for the Reticulum Network card (Settings).
     @State private var isReticulumExpanded = false
     /// Transient busy state for the card's Start/Stop action.
     @State private var isReticulumActionWorking = false
     /// Presents the Reticulum Network explainer / first-time consent sheet.
     @State private var showReticulumExplainer = false
-    #endif
     @State private var interfaceRepository: InterfaceRepository?
     /// Persisted across body re-evaluations so showRNodeWizard=true is not lost
     /// when SettingsView re-renders due to connection status polling changes.
@@ -83,9 +81,7 @@ struct SettingsView: View {
                         // Manually start/stop it; defaults to enabled on app
                         // launch. Compiled entirely out of the shipping Python
                         // product.
-                        #if COLUMBA_RUNTIME_MODEL_B
                         reticulumNetworkCard()
-                        #endif
 
                         // Delivery & Retrieval
                         deliveryRetrievalCard(vm)
@@ -235,6 +231,22 @@ struct SettingsView: View {
         .onAppear {
             viewModel?.refreshSyncState()
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { viewModel?.refreshSyncState() }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NotificationObserver.propagationSyncStateChangedInApp
+        ).receive(on: RunLoop.main)) { _ in
+            viewModel?.refreshSyncState()
+        }
+        .alert("Transport Mode", isPresented: Binding(
+            get: { transportChangeNotice != nil },
+            set: { if !$0 { transportChangeNotice = nil } }
+        )) {
+            Button("OK") { transportChangeNotice = nil }
+        } message: {
+            Text(transportChangeNotice ?? "")
+        }
         .fullScreenCover(item: $onboardingReviewIdentity) { existingIdentity in
             #if COLUMBA_ONBOARDING_ENABLED
             OnboardingView(
@@ -363,7 +375,7 @@ struct SettingsView: View {
     private func networkCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "antenna.radiowaves.left.and.right",
-            title: "Network",
+            title: String(localized: "Network Connectivity"),
             isExpanded: Binding(get: { vm.isNetworkExpanded }, set: { vm.isNetworkExpanded = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
@@ -491,21 +503,16 @@ struct SettingsView: View {
                 vm.isTransportEnabled = newValue
                 vm.saveSettings()
                 Task {
-                    #if COLUMBA_BACKEND_SWIFT
-                    // Swift backend: route through the transport seam, not the
-                    // Python-only restart below. restartPythonBackend() is a
-                    // no-op without an embedded Python backend, so the toggle
-                    // would otherwise be saved to disk but never reach the
-                    // running engine.
-                    appServices.transport?.setTransportEnabled(
-                        newValue, identity: appServices.identity)
-                    #else
-                    // RNS reads `enable_transport` at Reticulum.__init__ time,
-                    // so we restart the Python backend to pick the new value
-                    // up — same path Settings → Manage Interfaces → Apply &
-                    // Restart uses. ~1-2s connectivity outage.
-                    await appServices.restartPythonBackend()
-                    #endif
+                    let outcome = await appServices.restartPythonBackend()
+                    switch outcome {
+                    case .applied: break
+                    case .requiresRelaunch:
+                        transportChangeNotice = "Transport Mode is saved. AutoInterface requires a fresh node process. Fully close and reopen Columba; in Background mode, stop and start Reticulum Network too."
+                    case .skipped:
+                        transportChangeNotice = "Transport Mode is saved and will apply when Reticulum starts."
+                    case .failed:
+                        transportChangeNotice = "Transport Mode is saved, but Reticulum could not restart. Close and reopen Columba to retry."
+                    }
                 }
             })
         ) {
@@ -523,7 +530,6 @@ struct SettingsView: View {
         }
     }
 
-    #if COLUMBA_RUNTIME_MODEL_B
     // MARK: - Background Transport Card
     //
     // Model B owns the Network Extension and its tunnel lifecycle. The entire
@@ -534,76 +540,77 @@ struct SettingsView: View {
         if let tunnel = appServices.tunnelManager {
             ExpandableSettingsCard(
                 icon: "antenna.radiowaves.left.and.right.circle.fill",
-                title: String(localized: "Reticulum Network"),
+                title: String(localized: "Reticulum Network Hosting"),
                 isExpanded: $isReticulumExpanded
             ) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(String(localized: "Manually stop or start the background Reticulum service."))
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(reticulumStatusColor(tunnel))
-                            .frame(width: 8, height: 8)
-                        Text(reticulumStatusLabel(tunnel))
-                            .font(.caption)
-                            .foregroundStyle(reticulumStatusColor(tunnel))
+                VStack(alignment: .leading, spacing: 14) {
+                    // Mode + status: title/subtitle on the left, a status pill on
+                    // the right (background mode only — foreground runs in-app).
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(appServices.hostingMode == .networkExtension
+                                 ? String(localized: "Background hosting")
+                                 : String(localized: "Foreground only"))
+                                .font(.headline)
+                                .foregroundStyle(Theme.textPrimary)
+                            Text(reticulumModeSubtitle)
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 12)
+                        if appServices.hostingMode == .networkExtension {
+                            reticulumStatusPill(tunnel)
+                        }
                     }
 
-                    // Stop/Start the in-NE RNS runtime. Stop is non-persistent:
-                    // disable() clears the on-demand connect rule so the tunnel
-                    // actually stays down for this session (a bare stop() would
-                    // let iOS auto-reconnect it shortly after, making Stop feel
-                    // broken). It does NOT touch the backgroundDeliveryEnabled
-                    // flag, so the default-enabled behavior is preserved — on the
-                    // next app launch ensureBackgroundDeliveryTunnel() sees the
-                    // flag still set, re-installs + re-arms on-demand, and brings
-                    // the tunnel back up without prompting. Start reinstalls the
-                    // profile (re-arms on-demand) and reconnects in this session.
-                    Button {
-                        guard !isReticulumActionWorking else { return }
-                        let stopping = reticulumIsOn(tunnel)
-                        isReticulumActionWorking = true
-                        Task {
-                            defer { isReticulumActionWorking = false }
-                            do {
-                                if stopping {
-                                    try await tunnel.disable()
-                                } else {
-                                    try await tunnel.install()
-                                    try await tunnel.start()
+                    // Start/Stop the tunnel (background mode only).
+                    if appServices.hostingMode == .networkExtension {
+                        Button {
+                            guard !isReticulumActionWorking else { return }
+                            isReticulumActionWorking = true
+                            let stopping = reticulumIsOn(tunnel)
+                            Task {
+                                defer { isReticulumActionWorking = false }
+                                do {
+                                    if stopping { try await tunnel.disable() }
+                                    else { try await tunnel.install(); try await tunnel.start() }
+                                } catch {
+                                    DiagLog.log("[RNS-CARD] start/stop failed: \(error.localizedDescription)")
                                 }
-                            } catch {
-                                DiagLog.log("[RNS-CARD] start/stop failed: \(error.localizedDescription)")
                             }
-                        }
-                    } label: {
-                        Group {
-                            if isReticulumActionWorking {
-                                ProgressView().tint(.white)
-                            } else {
-                                Text(reticulumIsOn(tunnel) ? String(localized: "Stop") : String(localized: "Start"))
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isReticulumActionWorking {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: reticulumIsOn(tunnel) ? "stop.fill" : "play.fill")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                Text(reticulumIsOn(tunnel)
+                                     ? String(localized: "Stop")
+                                     : String(localized: "Start"))
+                                    .font(.system(size: 15, weight: .medium))
                             }
+                            .foregroundStyle(reticulumIsOn(tunnel) ? Theme.textPrimary : .white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(reticulumIsOn(tunnel) ? Theme.backgroundTertiary : Theme.accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                         }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(reticulumIsOn(tunnel)
-                            ? LinearGradient(colors: [Theme.error], startPoint: .top, endPoint: .bottom)
-                            : Theme.accentGradient)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                        .buttonStyle(.plain)
+                        .disabled(isReticulumActionWorking || NodeHostingMode.selected != appServices.hostingMode)
                     }
-                    .disabled(isReticulumActionWorking)
 
+                    // Full-width "Learn more & set up" button — opens the full
+                    // VPN + hosting explainer and mode chooser.
                     Button {
                         showReticulumExplainer = true
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "info.circle")
                                 .font(.system(size: 14, weight: .medium))
-                            Text(String(localized: "Learn more & set up"))
+                            Text(String(localized: "Change hosting mode"))
                                 .font(.system(size: 15, weight: .medium))
                         }
                         .foregroundStyle(Theme.textPrimary)
@@ -612,10 +619,11 @@ struct SettingsView: View {
                         .background(Theme.backgroundTertiary)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .sheet(isPresented: $showReticulumExplainer) {
-                BackgroundTransportView(tunnel: tunnel) {
+                BackgroundTransportView(tunnel: tunnel, activeHost: appServices.hostingMode) {
                     showReticulumExplainer = false
                 }
             }
@@ -644,6 +652,36 @@ struct SettingsView: View {
         }
     }
 
+    /// One-line context under the mode title — this is the VPN/hosting explainer
+    /// that was stripped from the card when it was renamed from "Background
+    /// Transport". The full two-paragraph explanation still lives in the
+    /// explainer sheet; this keeps the card from reading like a bare status dump.
+    private var reticulumModeSubtitle: String {
+        if appServices.hostingMode == .networkExtension {
+            return String(localized: "Runs Reticulum in the background via a local VPN configuration. Only Columba's own traffic uses it — other apps are not routed.")
+        } else {
+            return String(localized: "Reticulum runs inside Columba and stops when iOS suspends the app. Use this if you'd rather not use a local VPN.")
+        }
+    }
+
+    /// Pill rendering the tunnel's live status (label + tint dot), matching the
+    /// status-badge idiom used across the other settings cards.
+    @ViewBuilder
+    private func reticulumStatusPill(_ tunnel: TunnelManager) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(reticulumStatusColor(tunnel))
+                .frame(width: 8, height: 8)
+            Text(reticulumStatusLabel(tunnel))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(reticulumStatusColor(tunnel))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(reticulumStatusColor(tunnel).opacity(0.14))
+        .clipShape(Capsule())
+    }
+
     /// Whether the card's action button should present the "Stop" (disable)
     /// affordance. Mirrors the explainer sheet's `isEnabledState`: the tunnel
     /// counts as "on" whenever it is connected, mid-connect, reasserting, or
@@ -661,7 +699,6 @@ struct SettingsView: View {
             return tunnel.isEnabled
         }
     }
-    #endif
 
     // MARK: - Identity Card
 
@@ -1311,7 +1348,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
 
-#if !COLUMBA_RUNTIME_MODEL_B
+
                 Divider()
                     .padding(.vertical, 4)
 
@@ -1353,7 +1390,6 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
                 }
-#endif
 
                 // Default Delivery Method
                 HStack {
@@ -1540,7 +1576,7 @@ struct SettingsView: View {
         }
     }
 
-#if !COLUMBA_RUNTIME_MODEL_B
+
     private struct IncomingMessageCapPreset: Identifiable {
         let kb: Int
         let title: String
@@ -1554,7 +1590,6 @@ struct SettingsView: View {
         .init(kb: 25_600, title: "25 MB"),
         .init(kb: 131_072, title: "Unlimited")
     ]
-#endif
 
     // MARK: - Onboarding Review
 

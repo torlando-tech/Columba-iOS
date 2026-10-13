@@ -270,6 +270,8 @@ public protocol RnsCore: AnyObject, Sendable {
     func stop() async
     @discardableResult func announce(displayName: String) async throws -> Bool
     @discardableResult func announceTelephony(displayName: String) async throws -> Bool
+    func discovery() async -> DiscoverySnapshot?
+    func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool
     func statusSnapshot() async -> StatusSnapshot?
     @discardableResult func persist() async -> Bool
 
@@ -301,6 +303,8 @@ public protocol RnsCore: AnyObject, Sendable {
 }
 
 public extension RnsCore {
+    func discovery() async -> DiscoverySnapshot? { nil }
+    func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool { false }
     /// Default: no native BLE interface, so no peers. Keeps the non-Model-B
     /// backends (Swift / Python) conforming without each needing a stub.
     func bleConnections() async -> [BLEConnectionInfo] { [] }

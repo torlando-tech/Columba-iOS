@@ -1,29 +1,17 @@
 #if os(iOS)
 //
-//  ModelBInboundReplay.swift
-//  ColumbaApp
+//  NodeInboundReplay.swift
+//  Shared-store replay for either Python node host.
 //
-//  Restores app-side inbound FIELD side-channel processing under Model B.
-//
-//  In Model B the Network Extension owns LXMF delivery: it persists each inbound
-//  message to the shared App-Group GRDB store and posts a Darwin "new message"
-//  ping, but it runs NONE of the field side-channel processing (reactions,
-//  replies, telemetry → map pin, peer icon, cease) that `IncomingMessageHandler`
-//  performs in Model A, where the in-process `LXMRouter` delegate fires per
-//  message. `ProxyRnsBackend` emits no `.inbound` BackendEvent, so that handler
-//  never runs. Symptom on device: the base message arrives + notifies, but a
-//  peer's shared location never renders a pin, an inbound reaction never merges,
-//  an inbound reply never threads.
-//
-//  This driver closes the gap PURELY app-side (no NE / IPC changes): on each
+//  This driver closes the gap app-side: on each
 //  Darwin ping (and on start, to catch up on anything delivered while suspended)
 //  it scans the shared store for inbound messages it hasn't processed yet and
 //  replays each through the SAME `IncomingMessageHandler.handleInbound` — one
 //  code path, every field, uniformly. The base message is already persisted (the
 //  NE did it), so `handleInbound` only runs the side channels; user notifications
-//  are suppressed because the NE already posted them.
+//  are suppressed because the node host already posted them.
 //
-//  ── Exactly-once, correctly (the Model B counterpart of "the in-process delegate
+//  ── Exactly-once, correctly (the shared-store counterpart of "the in-process delegate
 //     fires once per message", made explicit because delivery crosses the
 //     suspendable NE↔app boundary) ──
 //    • The scan starts from watermark 0, so messages the NE persisted BEFORE this
@@ -52,12 +40,12 @@ import os.log
 
 @available(iOS 17.0, *)
 @MainActor
-public final class ModelBInboundReplay {
+public final class NodeInboundReplay {
 
     private let repository: MessageRepository
     private let handler: IncomingMessageHandler
     private let observer = NotificationObserver()
-    private let logger = Logger(subsystem: "network.columba.Columba", category: "ModelBInboundReplay")
+    private let logger = Logger(subsystem: "network.columba.Columba", category: "NodeInboundReplay")
 
     /// Stable per-identity discriminator (the identity's GRDB path) so checkpoints
     /// don't leak across an identity switch.
@@ -72,6 +60,7 @@ public final class ModelBInboundReplay {
 
     private var draining = false
     private var rescanRequested = false
+    private var catchUpWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// One atomically-persisted checkpoint per identity: the timestamp watermark
     /// (only inbound at/after it are scan candidates), the boundary-dedup set
@@ -129,12 +118,28 @@ public final class ModelBInboundReplay {
     /// rescan, so a flurry of arrivals doesn't spawn overlapping scans.
     private func requestDrain() {
         if draining { rescanRequested = true; return }
+        draining = true
         Task { @MainActor in await self.drain() }
     }
 
+    /// Wait until the common field-processing path has caught up with the store.
+    public func catchUp() async {
+        if draining {
+            rescanRequested = true
+            await withCheckedContinuation { catchUpWaiters.append($0) }
+        } else {
+            draining = true
+            await drain()
+        }
+    }
+
     private func drain() async {
-        draining = true
-        defer { draining = false }
+        defer {
+            draining = false
+            let waiters = catchUpWaiters
+            catchUpWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
         repeat {
             rescanRequested = false
             await drainOnce()

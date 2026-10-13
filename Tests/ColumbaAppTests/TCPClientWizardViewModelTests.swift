@@ -1,4 +1,5 @@
 import XCTest
+import RNSAPI
 @testable import ColumbaApp
 
 @available(iOS 17.0, macOS 14.0, *)

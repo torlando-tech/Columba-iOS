@@ -1,64 +1,25 @@
-#!/usr/bin/env python3
-"""Linux-runnable static contract checks for BackendFactory's flavor isolation."""
-
+"""Both runtime modes use one facade and vary only command transport."""
 from pathlib import Path
 import unittest
-
-
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-FACTORY_SOURCE = REPOSITORY_ROOT / "Sources/ColumbaApp/Services/BackendFactory.swift"
-
+ROOT = Path(__file__).resolve().parents[2]
 
 class BackendFactoryContractTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.source = FACTORY_SOURCE.read_text(encoding="utf-8")
-        cls.python_branch = cls.source.split(
-            "#elseif COLUMBA_RUNTIME_PYTHON", maxsplit=1
-        )[1].split("#elseif COLUMBA_RUNTIME_MODEL_B", maxsplit=1)[0]
-        cls.model_b_branch = cls.source.split(
-            "#elseif COLUMBA_RUNTIME_MODEL_B", maxsplit=1
-        )[1].split("#else", maxsplit=1)[0]
+    def test_both_hosts_use_one_facade(self):
+        source = (ROOT / "Sources/ColumbaApp/Services/BackendFactory.swift").read_text()
+        self.assertIn("switch mode", source)
+        self.assertEqual(source.count("return ProxyRnsBackend("), 2)
+        self.assertIn("LocalNodeAdapter()", source)
+        self.assertNotIn("#if", source)
+        self.assertNotIn("PythonRNSBackend", source)
 
-    def test_factory_enforces_exactly_one_canonical_flavor(self) -> None:
-        self.assertIn(
-            "#if COLUMBA_RUNTIME_PYTHON && COLUMBA_RUNTIME_MODEL_B", self.source
-        )
-        self.assertIn(
-            '#error("Exactly one Columba runtime flavor may be compiled")',
-            self.source,
-        )
-        self.assertIn(
-            '#error("Exactly one Columba runtime flavor must be compiled")',
-            self.source,
-        )
-
-    def test_shipping_branch_constructs_only_python(self) -> None:
-        self.assertIn(
-            'DiagLog.log("[BACKEND] active=python flavor=shipping")',
-            self.python_branch,
-        )
-        self.assertIn("return PythonRNSBackend()", self.python_branch)
-        self.assertNotIn("ProxyRnsBackend", self.python_branch)
-        self.assertNotIn("SwiftRNSBackend", self.python_branch)
-
-    def test_model_b_branch_constructs_only_proxy(self) -> None:
-        self.assertIn(
-            'DiagLog.log("[BACKEND] active=proxy flavor=modelB")',
-            self.model_b_branch,
-        )
-        self.assertIn("proxySend ?? { _ in nil }", self.model_b_branch)
-        self.assertIn("return ProxyRnsBackend(send: send)", self.model_b_branch)
-        self.assertNotIn("PythonRNSBackend", self.model_b_branch)
-        self.assertNotIn("SwiftRNSBackend", self.model_b_branch)
-
-    def test_factory_does_not_consult_legacy_runtime_preferences(self) -> None:
-        make_body = self.source.split("static func make", maxsplit=1)[1]
-        self.assertNotIn("BackendPreference", make_body)
-        self.assertNotIn("SharedDefaults", make_body)
-        self.assertNotIn("useSwiftBackend", make_body)
-        self.assertNotIn("SwiftRNSBackend", make_body)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_both_hosts_use_one_command_implementation(self):
+        local = (ROOT / "Sources/RNSHost/LocalNodeAdapter.swift").read_text()
+        tunnel = (ROOT / "Sources/ColumbaNetworkExtension/PacketTunnelProvider.swift").read_text()
+        self.assertIn("NodeCommandDispatcher.dispatch", local)
+        self.assertIn("NodeCommandDispatcher.dispatch", tunnel)
+        self.assertNotIn("switch request", local)
+        self.assertNotIn("switch request", tunnel)
+    def test_ui_mirror_does_not_stop_the_host_radio(self):
+        source = (ROOT / "Sources/ColumbaApp/Services/AppServices.swift").read_text()
+        mirror = source.split("private func stopBLEInterfaceUnlocked() async", 1)[1].split("#endif", 1)[0]
+        self.assertNotIn("SwiftBLEBridge.shared", mirror)

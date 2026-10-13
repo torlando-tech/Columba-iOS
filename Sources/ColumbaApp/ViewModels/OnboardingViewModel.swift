@@ -38,16 +38,9 @@ final class OnboardingViewModel {
     var selectedInterfaces: Set<OnboardingInterfaceType> = [.tcp]
     var selectedTcpServer: TcpCommunityServer? = nil
     var notificationsGranted: Bool = false
-    /// Current CoreBluetooth authorization. Under Model B the APP runs the CoreBluetooth
-    /// host (the NE can't), so the BLE prompt would otherwise fire un-guided after
-    /// onboarding when `ModelBBLEService` starts — surfacing it on the Permissions page
-    /// keeps it inside the flow.
+    /// Pre-arm Bluetooth authorization during onboarding; the node host owns the radio.
     var bluetoothAuthorization: CBManagerAuthorization = CBCentralManager.authorization
     var bluetoothGranted: Bool {
-        // Reflects the system Bluetooth authorization. Whether the Model B BLE host
-        // actually starts is decided by the interface list (an enabled `.ble`
-        // interface, created via Manage Interfaces) — see ModelBBLEService.shouldStart.
-        // The onboarding card is a permission pre-arm; no BLE interface exists yet.
         bluetoothAuthorization == .allowedAlways
     }
     @ObservationIgnored private var bluetoothProbe: BluetoothPermissionProbe?
@@ -93,11 +86,7 @@ final class OnboardingViewModel {
     }
 
     /// Total number of onboarding pages.
-    #if COLUMBA_RUNTIME_MODEL_B
     static let pageCount = 6
-    #else
-    static let pageCount = 5
-    #endif
 
     // MARK: - Computed
 
@@ -148,7 +137,7 @@ final class OnboardingViewModel {
 
     /// Trigger the iOS Bluetooth prompt now (creating a CBCentralManager is what fires
     /// it) so the user grants/denies it INSIDE onboarding instead of being surprised by
-    /// it later, when `ModelBBLEService` starts the app-side CoreBluetooth host.
+    /// it later, when the selected node host starts its CoreBluetooth radio.
     func requestBluetoothPermission() {
         // Creating the CBCentralManager is what fires the iOS Bluetooth prompt.
         // Surfacing it here (inside onboarding) keeps the consent step with the
@@ -354,22 +343,7 @@ final class OnboardingViewModel {
     }
 
     private func createInterfaces(in repo: InterfaceRepository) {
-        #if COLUMBA_RUNTIME_MODEL_B
-        // Model B's Network Extension owns its local transports and reads one TCP relay
-        // from the shared store. Seed only that relay and keep the operation idempotent.
-        // (BLE is not selected in Model B onboarding — it's added via Manage Interfaces,
-        // where the app-side BLE host starts off the interface's presence.)
-        let server = selectedTcpServer ?? TcpCommunityServer.defaultServer
-        ensureInterfaceEnabled(InterfaceEntity(
-            name: server.name,
-            type: .tcpClient,
-            config: .tcpClient(TCPClientConfig(
-                targetHost: server.host,
-                targetPort: server.port
-            ))
-        ), in: repo)
-        #else
-        // The shipping runtime owns these interfaces in the app process. Build a
+        // Both hosts use the same persisted interface configuration. Build a
         // canonical candidate for each selection and add it only if an equivalent
         // interface is not already stored. This makes completion safe to retry.
         for interfaceType in selectedInterfaces {
@@ -408,7 +382,6 @@ final class OnboardingViewModel {
             guard let candidate else { continue }
             ensureInterfaceEnabled(candidate, in: repo)
         }
-        #endif
     }
 
     /// Preserve one equivalent configuration and make sure it is enabled. Restore may

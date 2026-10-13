@@ -14,12 +14,12 @@
 //  `columba_ble_*` symbols (that would duplicate the package's). It has exactly
 //  two jobs:
 //
-//    1. `NEPythonBridgeHook` - the single Swift->Python channel for this
+//    1. `PythonNodeBridgeHook` - the single Swift->Python channel for this
 //       process. The NE calls the named `rns_bridge.invoke_ble_callback`
 //       function through the embedded interpreter, so the driver's registered
 //       callback slots fire exactly as they do in the in-app (Model A) path.
 //
-//    2. `NEBLECallbackInvoker` - the `BleCallbackInvoker` installed on
+//    2. `PythonNodeBLECallbackInvoker` - the `BleCallbackInvoker` installed on
 //       `SwiftBLEBridge.shared`. It translates each `BleCallbackSlot` the radio
 //       emits into the `invoke_ble_callback(slot, address, extra)` payload
 //       `rns_bridge` expects (byte fields ride as base64 strings so they
@@ -41,14 +41,14 @@ import SwiftBLEBridge
 /// degrades event delivery to a no-op (commands still reach the radio in-process;
 /// the driver just stops receiving async events). Kept in this file (not
 /// SwiftBLEBridge, which is a shared package) because it binds to the NE's
-/// `NEPythonRNS` interpreter seam, which the package must not depend on.
-final class NEPythonBridgeHook: @unchecked Sendable {
-    static let shared = NEPythonBridgeHook()
+/// `PythonNodeEngine` interpreter seam, which the package must not depend on.
+final class PythonNodeBridgeHook: @unchecked Sendable {
+    static let shared = PythonNodeBridgeHook()
     private var fn: (@Sendable (String, [String: Any]) -> Void)?
     /// Dedicated serial queue for the Swift->Python hop. The BLE callback
-    /// invoker (`NEBLECallbackInvoker.invoke`) runs on SwiftBLEBridge's serial
-    /// queue; the Python call it forwards to (`NEPythonRNS.invoke`) grabs the
-    /// GIL inside `NEPythonRuntime.callBridge`. Hopping that GIL-blocking call
+    /// invoker (`PythonNodeBLECallbackInvoker.invoke`) runs on SwiftBLEBridge's serial
+    /// queue; the Python call it forwards to (`PythonNodeEngine.invoke`) grabs the
+    /// GIL inside `PythonNodeRuntime.callBridge`. Hopping that GIL-blocking call
     /// onto THIS queue means the BLE queue is released immediately instead of
     /// being held while it waits for the GIL - which breaks the AB-BA deadlock
     /// (Issue 6) where a Python worker that holds the GIL waits on the BLE
@@ -121,21 +121,20 @@ final class NEPythonBridgeHook: @unchecked Sendable {
 
     /// Wire event delivery to the embedded Python interpreter: forward each
     /// event to `rns_bridge.invoke_ble_callback` through the NE's public
-    /// `NEPythonRNS.invoke` seam (which serializes the kwargs and calls the
+    /// `PythonNodeEngine.invoke` seam (which serializes the kwargs and calls the
     /// named function through the embedded interpreter). Called once at NE
     /// startup (idempotent).
     static func wireToPython() {
         shared.setFn { fn, kwargs in
-            NEPythonRNS.shared.invoke(fn, kwargs: kwargs)
+            PythonNodeEngine.shared.invoke(fn, kwargs: kwargs)
         }
     }
 }
 
 /// Translates `SwiftBLEBridge`'s `BleCallbackSlot` invocations into the
 /// `invoke_ble_callback(slot, address, extra)` payload delivered to Python
-/// through `NEPythonBridgeHook`. Argument decoding mirrors the proven app-side
-/// invoker (`ModelBBLEService`'s nested `Invoker`); the only difference is the
-/// sink: here it is the NE's Python channel instead of the App-Group seam.
+/// through `PythonNodeBridgeHook`. Argument decoding mirrors the proven app-side
+/// callback invoker. Delivery stays inside the process hosting Python RNS.
 ///
 /// `invoke` runs on SwiftBLEBridge's serial queue, so events are delivered in
 /// order. `invokeBool` is the synchronous duplicate-identity check, which is NOT
@@ -143,8 +142,8 @@ final class NEPythonBridgeHook: @unchecked Sendable {
 /// it returns `false` so the radio always accepts and the driver resolves
 /// identity/rotation via the async `on_address_changed` path - the same behavior
 /// the app's seam invoker had.
-final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
-    static let shared = NEBLECallbackInvoker()
+final class PythonNodeBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
+    static let shared = PythonNodeBLECallbackInvoker()
 
     private init() {}
 
@@ -176,7 +175,7 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
             let name = args.count > 1 ? str(args[1]) : ""
             let rssi = args.count > 2 ? int(args[2]) : 0
             let serviceUUIDs = args.count > 3 ? (args[3] as? [String] ?? []) : []
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: [
                     "slot": slot.rawValue,
@@ -190,14 +189,14 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
             let identity = args.count > 1 ? (args[1] as? Data) : nil
             var extra: [String: Any] = [:]
             if let identity { extra["identity_b64"] = identity.base64EncodedString() }
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: ["slot": slot.rawValue, "address": address, "extra": extra]
             )
         case .onDeviceDisconnected:
             // [address]
             let address = args.count > 0 ? str(args[0]) : ""
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: ["slot": slot.rawValue, "address": address, "extra": [:]]
             )
@@ -205,7 +204,7 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
             // [address, value]
             let address = args.count > 0 ? str(args[0]) : ""
             let data = args.count > 1 ? (args[1] as? Data ?? Data()) : Data()
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: [
                     "slot": slot.rawValue,
@@ -217,7 +216,7 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
             // [address, mtu]
             let address = args.count > 0 ? str(args[0]) : ""
             let mtu = args.count > 1 ? int(args[1]) : 0
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: [
                     "slot": slot.rawValue,
@@ -229,7 +228,7 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
             // [address, identityHex]
             let address = args.count > 0 ? str(args[0]) : ""
             let identityHex = args.count > 1 ? str(args[1]) : ""
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: [
                     "slot": slot.rawValue,
@@ -242,7 +241,7 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
             let oldAddress = args.count > 0 ? str(args[0]) : ""
             let newAddress = args.count > 1 ? str(args[1]) : ""
             let identityHash = args.count > 2 ? str(args[2]) : ""
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: [
                     "slot": slot.rawValue,
@@ -266,7 +265,7 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
             if severity != "info" {
                 ExtensionDiagLog.log("[BLE-NE-ERR] severity=\(severity) msg=\(detail)")
             }
-            NEPythonBridgeHook.shared.invoke(
+            PythonNodeBridgeHook.shared.invoke(
                 fn: "invoke_ble_callback",
                 object: [
                     "slot": slot.rawValue,
@@ -283,10 +282,10 @@ final class NEBLECallbackInvoker: BleCallbackInvoker, @unchecked Sendable {
     func invokeBool(slot: BleCallbackSlot, args: [Any]) -> Bool { false }
 }
 
-extension NEBLECallbackInvoker {
+extension PythonNodeBLECallbackInvoker {
     /// Install the invoker on the in-extension radio + force-link the package's
     /// `columba_ble_*` C-ABI into the NE dylib. Idempotent. Called once at NE
-    /// startup (after `NEPythonBridgeHook.wireToPython()`), before the Python
+    /// startup (after `PythonNodeBridgeHook.wireToPython()`), before the Python
     /// driver issues its first `columba_ble_start`, so the radio's event
     /// callback is live from the first connection.
     static func install() {
@@ -294,7 +293,7 @@ extension NEBLECallbackInvoker {
         // `@_cdecl columba_ble_*` exports (driven by the NE's Python driver via
         // CDLL(None)) are present in this dylib.
         columbaBLEForceLinkNativeBindings()
-        SwiftBLEBridge.shared.setCallbackInvoker(NEBLECallbackInvoker.shared)
+        SwiftBLEBridge.shared.setCallbackInvoker(PythonNodeBLECallbackInvoker.shared)
         ExtensionDiagLog.log("[BLE-NE] in-process radio callback invoker installed (no seam)")
         #if DEBUG
         // [BLE-NE-DIAG] Periodic radio-state probe (DEBUG only): log the

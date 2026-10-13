@@ -21,64 +21,6 @@ struct ConnectivityPage: View {
     @State private var showServerPicker = false
 
     var body: some View {
-        #if COLUMBA_RUNTIME_MODEL_B
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 32)
-
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 64))
-                        .foregroundStyle(Theme.accentColor)
-                        .padding(.bottom, 24)
-
-                    Group {
-                        if isReadOnly {
-                            Text("Current relay")
-                        } else {
-                            Text("Choose a relay")
-                        }
-                    }
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.bottom, 8)
-
-                    Group {
-                        if isReadOnly {
-                            Text("This is the relay currently configured for Columba. You can change it later in Settings.")
-                        } else {
-                            Text("A relay helps your device reach Reticulum peers over the internet. It transports encrypted Reticulum traffic — it does not create an account or hold your identity. We've selected a recommended default.")
-                        }
-                    }
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 32)
-                        .padding(.bottom, 24)
-
-                    tcpServerRow
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 12)
-
-                    Text("You can choose another relay later in Settings.")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(.bottom, 16)
-                }
-            }
-
-            navigationButtons
-        }
-        .sheet(isPresented: $showServerPicker) {
-            serverPickerSheet
-        }
-        .onAppear {
-            if !isReadOnly && selectedTcpServer == nil {
-                selectedTcpServer = TcpCommunityServer.defaultServer
-            }
-        }
-        #else
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 0) {
@@ -156,7 +98,6 @@ struct ConnectivityPage: View {
                 selectedTcpServer = TcpCommunityServer.defaultServer
             }
         }
-        #endif
     }
 
     // MARK: - Shipping Interface Selection

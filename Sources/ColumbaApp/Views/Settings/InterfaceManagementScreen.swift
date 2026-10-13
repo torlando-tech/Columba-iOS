@@ -67,12 +67,6 @@ struct InterfaceManagementScreen: View {
                     // the state is actionable (denied or awaiting a carrier);
                     // it auto-clears when discovery becomes healthy. Python
                     // backend only.
-                    #if COLUMBA_RUNTIME_PYTHON
-                    if let state = viewModel.localNetworkState,
-                       state == .denied || state == .noCarrier {
-                        localNetworkWarningCard(state)
-                    }
-                    #endif
 
                     // Interface Discovery entry card — always visible,
                     // tappable into the discovered-interfaces screen.
@@ -237,55 +231,6 @@ struct InterfaceManagementScreen: View {
     /// only while actionable (denied, or awaiting a carrier), non-dismissible,
     /// tappable straight into app Settings (denied case), and it auto-clears
     /// the moment discovery becomes healthy. Carries no PII.
-    #if COLUMBA_RUNTIME_PYTHON
-    @ViewBuilder
-    private func localNetworkWarningCard(_ state: LocalNetworkHealthState) -> some View {
-        let denied = (state == .denied)
-        let tint: Color = denied ? Theme.warning : Theme.textSecondary
-        let icon = denied ? "exclamationmark.triangle.fill" : "wifi.exclamationmark"
-        let title = String(localized: denied ? "Local Network access is off" : "Waiting for a network connection")
-        let detail = String(localized: denied
-            ? "Columba can't find nearby peers until Local Network access is allowed. This setting can be changed in iOS Settings."
-            : "Auto Discovery is ready and will connect as soon as a Wi-Fi or cellular connection is available.")
-        Button {
-            if denied {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.body)
-                    .foregroundStyle(tint)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                if denied {
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(tint.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
-        }
-        .buttonStyle(.plain)
-        .disabled(!denied)
-        .accessibilityIdentifier(denied ? "local_network_denied_warning" : "local_network_no_carrier_warning")
-        .accessibilityHint(denied ? "Opens app settings to enable Local Network access" : "")
-    }
-    #endif
 
     // MARK: - Discovery Entry Card
 
@@ -296,10 +241,7 @@ struct InterfaceManagementScreen: View {
     /// full list lives in DiscoveredInterfacesScreen, not here.
     private var discoveryEntryCard: some View {
         Button {
-            #if COLUMBA_RUNTIME_PYTHON
             onOpenDiscoveredInterfaces()
-            #endif
-            // Model B has no app-side discovery — the tap is a no-op.
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
@@ -373,17 +315,9 @@ struct InterfaceManagementScreen: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    /// One-shot lightweight read of the discovery snapshot for the entry
-    /// card. `pythonBackend` is compiled only into the shipping (Python)
-    /// build — Model B has no app-side discovery, so the card renders the
-    /// "tap to configure" state (tap is a no-op there, see the destination).
+    /// Read discovery through the same backend seam in either hosting mode.
     private func refreshDiscoverySummary() async {
-        let snapshot: RNSAPI.DiscoverySnapshot?
-        #if COLUMBA_RUNTIME_PYTHON
-        snapshot = await appServices.pythonBackend?.discovery()
-        #else
-        snapshot = nil
-        #endif
+        let snapshot = await appServices.backend?.core.discovery()
 
         guard let snapshot else {
             discoverySummary = nil

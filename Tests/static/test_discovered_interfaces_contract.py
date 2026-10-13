@@ -5,8 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RNS_BRIDGE = ROOT / "app/rns_bridge.py"
-PYTHON_BRIDGE = ROOT / "Sources/PythonBridge/PythonBridge.swift"
-PYTHON_BACKEND = ROOT / "Sources/RNSBackendPy/PythonRNSBackend.swift"
+PYTHON_BRIDGE = ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift"
+PYTHON_BACKEND = ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift"
 DISCOVERED_MODEL = ROOT / "Sources/RNSAPI/Models/DiscoveredInterface.swift"
 DISCOVERED_FORMATTING = ROOT / "Sources/RNSAPI/DiscoveredInterfaceFormatting.swift"
 CONFIG_WRITER = ROOT / "Sources/ColumbaApp/Services/PythonConfigWriter.swift"
@@ -38,7 +38,7 @@ class DiscoveredInterfacesContractTests(unittest.TestCase):
     def test_python_bridge_forwards_discovery_snapshot(self) -> None:
         source = PYTHON_BRIDGE.read_text(encoding="utf-8")
         self.assertIn("func discovery()", source, "PythonBridge must expose discovery()")
-        self.assertIn("discovery_json", source, "PythonBridge.discovery() must call discovery_json")
+        self.assertIn("discovery_json", (ROOT / "Sources/RNSHost/NodeCommandDispatcher.swift").read_text(), "shared dispatcher must call discovery_json")
         self.assertIn(
             "DiscoverySnapshot",
             source,

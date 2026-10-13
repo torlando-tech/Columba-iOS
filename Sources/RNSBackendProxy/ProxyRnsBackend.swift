@@ -1,43 +1,15 @@
-//
-//  ProxyRnsBackend.swift
-//  Columba (RNSBackendProxy — compiled into ColumbaApp)
-//
-//  Track A5b — the app-side thin client for the Model B send path.
-//
-//  Under Model B the Network Extension owns the canonical `lxmf.delivery`
-//  destination + node (the in-NE Python RNS engine, `NEPythonRNS`). The app
-//  therefore must NOT run its own destination-owning backend - instead
-//  `BackendFactory` hands the app this `ProxyRnsBackend`, which conforms to the
-//  full `RnsBackend` protocol but *marshals* node-owning operations to the NE
-//  over IPC (`ProxyIPC` envelopes sent through an injected async send closure)
-//  rather than touching a local reticulum-swift / LXMF-swift stack.
-//
-//  ── ALWAYS-THE-NODE INVARIANT ────────────────────────────────────────────────
-//  This type owns NO destination, identity, transport, or router. When Model B
-//  is enabled the NE is the single owner of the `lxmf.delivery` destination; if
-//  the app also started a `SwiftRNSBackend`/`PythonRNSBackend` they would BOTH
-//  register the same destination and double-deliver. `BackendFactory` enforces
-//  this by returning EITHER a destination-owning backend OR this proxy, never
-//  both (see `BackendFactory.make()`).
-//
-//  ── COLLISION RULE (HARD) ────────────────────────────────────────────────────
-//  This file imports RNSAPI ONLY (for the `RnsBackend` protocol surface +
-//  `StartParams` / `LocalInfo` / `SendOutcome` / `StatusSnapshot` / `BackendEvent`
-//  / `LXDeliveryMethod` / `RnsFileAttachment` / `IconAppearance`). It MUST NOT
-//  import ReticulumSwift or LXMFSwift: it only marshals already-serialized data
-//  across the seam (hex strings, MessagePack-packed field bytes via RNSAPI's
-//  `LxmfFieldCodec`, JSON), and never constructs a protocol object
-//  (Identity/Destination/Link/LXMessage/…). `ProxyIPC` itself is Foundation-only
-//  (Shared target).
-//
+// App-side facade for the selected Python node host.
+// LocalNodeAdapter and TunnelManager carry the same framed ProxyRequest and
+// ProxyResponse. Field encoding, durable outbox admission, event mapping, and
+// drain ownership stay here regardless of which process owns RNS.
+// This module uses RNSAPI DTOs and serialized Foundation data; it never creates
+// a protocol identity, destination, router, or native RNS transport.
 
 import Foundation
 import os
 import RNSAPI
 
-/// Errors raised by the Model B proxy for operations that are NOT marshaled to
-/// the NE (they run NE-side under the in-extension node, or aren't part of the
-/// A5b skeleton yet).
+/// Failures in the node command interface or its injected transport.
 public enum BackendError: Error, LocalizedError, Equatable {
     /// The called method has no app-side meaning under Model B: it operates on
     /// node-owned state that lives entirely in the NE and isn't proxied (yet).
@@ -50,20 +22,16 @@ public enum BackendError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .unsupportedInProxy(let feature):
-            return "Unsupported in Model B proxy: \(feature)"
+            return "Reticulum operation unavailable: \(feature)"
         case .ipcFailed(let operation):
-            return "Model B IPC failed: \(operation)"
+            return "Reticulum connection failed: \(operation)"
         }
     }
 }
 
-/// App-side `RnsBackend` that proxies node-owning operations to the NE under
-/// Model B. Conforms to the FULL protocol; only the key node ops marshal, the
-/// rest throw `BackendError.unsupportedInProxy` or no-op (each annotated).
-///
-/// `@unchecked Sendable`: the only mutable state is `cachedLocalInfo`, guarded by
-/// `stateLock` (never held across an `await`), matching `SwiftRNSBackend`'s
-/// class-with-lock posture.
+/// Common app backend. The injected transport is the only hosting variation.
+/// Mutable lifecycle and drain state are guarded by `stateLock`, never across
+/// an `await`; generation checks discard obsolete asynchronous replies.
 @available(iOS 17.0, macOS 14.0, *)
 public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
@@ -206,6 +174,18 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     public var events: AsyncStream<BackendEvent> { eventStream }
 
+    deinit {
+        // The facade can be replaced without stopping the process-owned node.
+        // Darwin observers use an unretained pointer, so remove it before this
+        // instance goes away even when the caller did not explicitly stop it.
+        if let token = eventDrainObserverToken {
+            CFNotificationCenterRemoveObserver(
+                CFNotificationCenterGetDarwinNotifyCenter(), token,
+                CFNotificationName(Self.eventsDarwinName), nil)
+        }
+        eventContinuation.finish()
+    }
+
     @discardableResult
     public func start(_ params: StartParams) async throws -> LocalInfo {
         // The NE loads the shared identity + computes the App-Group store path
@@ -299,7 +279,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     ///
     /// Burst-coalescing: at most one in-flight drain plus one trailing re-drain, so
     /// a flurry of pings doesn't spawn overlapping round-trips (mirrors
-    /// `ModelBInboundReplay.requestDrain`). Announces are diffed by last-heard time
+    /// `NodeInboundReplay.requestDrain`). Announces are diffed by last-heard time
     /// so a re-announce isn't re-yielded; all other kinds are yielded once per drain
     /// (the inbox is emptied each drain, so no double-delivery).
     ///
@@ -613,6 +593,29 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         replyQuotedContent: String?,
         extraFields: [UInt8: Data]?
     ) async throws -> SendOutcome {
+        try await sendLxmfMessage(destHashHex: destHashHex, content: content, method: method,
+            failureFallbackMethod: nil, imageData: imageData, imageFormat: imageFormat,
+            fileAttachments: fileAttachments, audioAttachment: audioAttachment, iconAppearance: iconAppearance,
+            replyToMessageHashHex: replyToMessageHashHex, replyQuotedContent: replyQuotedContent, extraFields: extraFields)
+    }
+
+    public func sendLxmfMessage(
+        destHashHex: String,
+        content: String,
+        method: LXDeliveryMethod,
+        failureFallbackMethod: LXDeliveryMethod?,
+        imageData: Data?,
+        imageFormat: String?,
+        fileAttachments: [RnsFileAttachment]?,
+        audioAttachment: RnsAudio?,
+        iconAppearance: IconAppearance?,
+        replyToMessageHashHex: String?,
+        replyQuotedContent: String?,
+        extraFields: [UInt8: Data]?
+    ) async throws -> SendOutcome {
+        if method != .propagated, let resolved = try? await resolvePath(destHashHex: destHashHex), !resolved {
+            return .requestingPath
+        }
         // Assemble the canonical on-wire LXMF field map APP-SIDE (RNSAPI's
         // `LxmfFieldCodec` is in scope here; the NE-side dispatch is NOT — it
         // doesn't import RNSAPI) and pass it across the seam as MessagePack
@@ -640,11 +643,11 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         let response: ProxyResponse
         do {
             response = try await roundTrip(
-                .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId),
+                .lxmfSend(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId, failureFallbackMethod: failureFallbackMethod?.rawValue),
                 op: "lxmfSend")
         } catch {
             // Transport-level failure (no/garbled response) — NE down/unreachable.
-            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId)
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId, failureFallbackMethod: failureFallbackMethod?.rawValue)
         }
         switch response {
         case .ok(let payload):
@@ -664,7 +667,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         case .error, .unsupported:
             // NE answered but did NOT accept the send (node not running / send
             // rejected). Persist for replay rather than dropping it.
-            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId)
+            return enqueueToOutbox(destHashHex: destHashHex, content: content, method: method.rawValue, fieldsData: fieldsData, sendId: sendId, failureFallbackMethod: failureFallbackMethod?.rawValue)
         }
     }
 
@@ -679,7 +682,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// The returned `.queued` hash is therefore empty, matching the existing
     /// "no real hash yet" shape (the live path's `ProxySendOutcome.detail` is
     /// likewise empty until the NE packs).
-    private func enqueueToOutbox(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String) -> SendOutcome {
+    private func enqueueToOutbox(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String, failureFallbackMethod: String? = nil) -> SendOutcome {
         let entry = OutboxEntry(
             destHashHex: destHashHex,
             content: content,
@@ -687,11 +690,12 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             fieldsData: fieldsData.isEmpty ? nil : fieldsData,
             messageHashHex: nil,
             sendId: sendId,
-            createdAt: Date().timeIntervalSince1970
+            createdAt: Date().timeIntervalSince1970,
+            failureFallbackMethod: failureFallbackMethod
         )
         OutboxQueue().append(entry)
         let destPrefix = String(destHashHex.prefix(8))
-        Self.log.info("Model B NE unreachable - queued LXMF send to durable outbox (dest=\(destPrefix, privacy: .public)…)")
+        Self.log.info("Node unreachable - queued LXMF send to durable outbox (dest=\(destPrefix, privacy: .public)…)")
         return .queued(messageHash: "")
     }
 
@@ -713,6 +717,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         let method = LXDeliveryMethod.opportunistic.rawValue
         // P1 #6: one stable id for this reaction, shared by the live IPC request
         // and the outbox fallback (reactions replay through the same dedup path).
+        if let resolved = try? await resolvePath(destHashHex: destHashHex), !resolved { return .requestingPath }
         let sendId = UUID().uuidString
         let response: ProxyResponse
         do {
@@ -751,13 +756,50 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     @discardableResult
     public func setPropagationNode(destHashHex: String, stampCost: Int) async throws -> Bool {
-        // Model B: runs NE-side / not proxied yet.
-        throw BackendError.unsupportedInProxy(feature: "setPropagationNode")
+        let value = try await commandObject(.setPropagationNode(destHashHex: destHashHex, stampCost: stampCost), op: "setPropagationNode")
+        return value["ok"] as? Bool ?? false
     }
 
     public func propagationSync(timeout: TimeInterval) async throws -> PropagationSyncResult {
-        // Model B: runs NE-side / not proxied yet.
-        PropagationSyncResult(ok: false, state: .noNode, receivedMessages: 0, reason: "not proxied (Model B)")
+        let value = try await commandObject(.propagationSync(timeout: timeout), op: "propagationSync", deadline: timeout + 10)
+        return PropagationSyncResult(ok: value["ok"] as? Bool ?? false,
+            state: PropagationSyncResult.State(rawValue: value["state"] as? String ?? "") ?? .unknown,
+            receivedMessages: value["received_messages"] as? Int ?? 0, reason: value["reason"] as? String ?? "")
+    }
+
+    public func cancelPropagationSync() async {
+        _ = try? await commandObject(.cancelPropagationSync, op: "cancelPropagationSync")
+    }
+
+    public func discovery() async -> DiscoverySnapshot? {
+        guard let response = try? await roundTrip(.discovery, op: "discovery"),
+              case .ok(let data) = response, let data else { return nil }
+        return try? JSONDecoder().decode(DiscoverySnapshot.self, from: data)
+    }
+
+    public func setIncomingMessageSizeLimitKB(_ limitKB: Int) async throws -> Bool {
+        let value = try await commandObject(.incomingMessageLimit(limitKB: limitKB), op: "incomingMessageLimit")
+        return value["ok"] as? Bool ?? false
+    }
+
+    public func rememberPeerIdentity(destHashHex: String, publicKey: Data) async -> Bool {
+        let key = publicKey.map { String(format: "%02x", $0) }.joined()
+        let value = try? await commandObject(.rememberPeer(destHashHex: destHashHex, publicKeyHex: key), op: "rememberPeer")
+        return value?["ok"] as? Bool ?? false
+    }
+
+    private func resolvePath(destHashHex: String) async throws -> Bool {
+        let value = try await commandObject(.resolvePath(destHashHex: destHashHex, timeout: 10), op: "resolvePath", deadline: 13)
+        return value["ok"] as? Bool ?? false
+    }
+
+    private func commandObject(_ request: ProxyRequest, op: String, deadline: TimeInterval? = nil) async throws -> [String: Any] {
+        let response = try await roundTrip(request, op: op, deadline: deadline)
+        guard case .ok(let data) = response, let data,
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw RNSError.backendNotReady
+        }
+        return object
     }
 
     // MARK: - RnsTelemetry
@@ -953,7 +995,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                 collectorHostMode: .unsupported,
                 storeOwnTelemetry: .unsupported,
                 allowedRequestersFilter: .unsupported,
-                degradationHint: "Model B proxy: peer-to-peer location telemetry (FIELD_TELEMETRY 0x02) IS wired via the NE lxmf-send path; collector-host mode and propagation/telephony are not proxied yet. NomadNet fetch IS proxied via the NE. Interface hot-attach / hot-detach IS proxied via the NE (RNS 1.5.5)."
+                degradationHint: "Collector-host telemetry is unavailable. Messaging, propagation, telephony, discovery, NomadNet, and live interface changes use the same node commands in either hosting mode."
             ),
             performance: .init(batteryProfileTuning: .unsupported, sharedInstanceAvailabilityChecks: false)
         )
