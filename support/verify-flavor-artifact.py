@@ -481,6 +481,8 @@ def _verify_modelb(
     extension_metadata = _load_bundle(
         extension, "XPC!", "Model B extension", app_root
     )
+    if "UIBackgroundModes" in extension_metadata:
+        raise VerificationError("extension Info.plist must not contain UIBackgroundModes (App Store error 90363)")
     if extension_metadata.get("CFBundleIdentifier") != EXTENSION_BUNDLE_IDENTIFIER:
         raise VerificationError(
             "Model B extension CFBundleIdentifier must be {}".format(

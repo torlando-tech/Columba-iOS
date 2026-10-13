@@ -201,6 +201,13 @@ class ArtifactCheckerTests(unittest.TestCase):
             for name in ("Frameworks", "python", "app_packages", "app"):
                 shutil.rmtree(fixture.extension / name)
             self.verify(fixture, "unified")
+            plist_path = fixture.extension / "Info.plist"
+            metadata = plistlib.loads(plist_path.read_bytes())
+            metadata["UIBackgroundModes"] = ["bluetooth-central", "bluetooth-peripheral"]
+            plist_path.write_bytes(plistlib.dumps(metadata))
+            self.assert_rejected(fixture, "unified", "UIBackgroundModes")
+            del metadata["UIBackgroundModes"]
+            plist_path.write_bytes(plistlib.dumps(metadata))
             for name in ("Frameworks", "python", "app_packages", "app"):
                 duplicate = fixture.extension / name
                 duplicate.mkdir()

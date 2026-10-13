@@ -26,6 +26,14 @@ class UnifiedHostingContracts(unittest.TestCase):
             result = subprocess.run([executable], check=True, capture_output=True, text=True)
             self.assertIn("Host contracts passed", result.stdout)
 
+    def test_extension_omits_app_only_background_modes(self):
+        import plistlib
+        extension = plistlib.loads((ROOT / 'Sources/ColumbaNetworkExtension/Info.plist').read_bytes())
+        self.assertNotIn('UIBackgroundModes', extension)
+        app = plistlib.loads((ROOT / 'Sources/ColumbaApp/Resources/Info.plist').read_bytes())
+        self.assertIn('bluetooth-central', app['UIBackgroundModes'])
+        self.assertIn('bluetooth-peripheral', app['UIBackgroundModes'])
+
     def test_discovery_entry_uses_shared_backend_and_navigation(self):
         source = (ROOT / 'Sources/ColumbaApp/Views/Settings/InterfaceManagementScreen.swift').read_text()
         entry = source.split('private var discoveryEntryCard:')[1].split('} label:')[0]
