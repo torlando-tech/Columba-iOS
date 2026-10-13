@@ -3115,16 +3115,6 @@
         }
       }
     },
-    "Reticulum Network": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reticulum Network"
-          }
-        }
-      }
-    },
     "Manually stop or start the background Reticulum service.": {
       "localizations": {
         "en": {
@@ -3151,16 +3141,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Stop"
-          }
-        }
-      }
-    },
-    "Learn more & set up": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Learn more & set up"
           }
         }
       }
@@ -3321,6 +3301,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Background Hosting"
+          }
+        }
+      }
+    },
+    "Change hosting mode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change hosting mode"
+          }
+        }
+      }
+    },
+    "Reticulum Network Hosting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reticulum Network Hosting"
+          }
+        }
+      }
+    },
+    "Network Connectivity": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network Connectivity"
           }
         }
       }

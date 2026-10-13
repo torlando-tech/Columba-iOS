@@ -375,7 +375,7 @@ struct SettingsView: View {
     private func networkCard(_ vm: SettingsViewModel) -> some View {
         ExpandableSettingsCard(
             icon: "antenna.radiowaves.left.and.right",
-            title: "Network",
+            title: String(localized: "Network Connectivity"),
             isExpanded: Binding(get: { vm.isNetworkExpanded }, set: { vm.isNetworkExpanded = $0 })
         ) {
             VStack(alignment: .leading, spacing: 12) {
@@ -540,7 +540,7 @@ struct SettingsView: View {
         if let tunnel = appServices.tunnelManager {
             ExpandableSettingsCard(
                 icon: "antenna.radiowaves.left.and.right.circle.fill",
-                title: String(localized: "Reticulum Network"),
+                title: String(localized: "Reticulum Network Hosting"),
                 isExpanded: $isReticulumExpanded
             ) {
                 VStack(alignment: .leading, spacing: 14) {
@@ -610,7 +610,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "info.circle")
                                 .font(.system(size: 14, weight: .medium))
-                            Text(String(localized: "Learn more & set up"))
+                            Text(String(localized: "Change hosting mode"))
                                 .font(.system(size: 15, weight: .medium))
                         }
                         .foregroundStyle(Theme.textPrimary)
