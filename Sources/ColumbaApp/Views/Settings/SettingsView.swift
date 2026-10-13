@@ -543,13 +543,30 @@ struct SettingsView: View {
                 title: String(localized: "Reticulum Network"),
                 isExpanded: $isReticulumExpanded
             ) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(appServices.hostingMode == .networkExtension ? "Background hosting" : "Foreground only")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 14) {
+                    // Mode + status: title/subtitle on the left, a status pill on
+                    // the right (background mode only — foreground runs in-app).
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(appServices.hostingMode == .networkExtension
+                                 ? String(localized: "Background hosting")
+                                 : String(localized: "Foreground only"))
+                                .font(.headline)
+                                .foregroundStyle(Theme.textPrimary)
+                            Text(reticulumModeSubtitle)
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 12)
+                        if appServices.hostingMode == .networkExtension {
+                            reticulumStatusPill(tunnel)
+                        }
+                    }
+
+                    // Start/Stop the tunnel (background mode only).
                     if appServices.hostingMode == .networkExtension {
-                        Text(reticulumStatusLabel(tunnel))
-                            .foregroundStyle(reticulumStatusColor(tunnel))
-                        Button(reticulumIsOn(tunnel) ? "Stop" : "Start") {
+                        Button {
                             guard !isReticulumActionWorking else { return }
                             isReticulumActionWorking = true
                             let stopping = reticulumIsOn(tunnel)
@@ -562,10 +579,49 @@ struct SettingsView: View {
                                     DiagLog.log("[RNS-CARD] start/stop failed: \(error.localizedDescription)")
                                 }
                             }
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isReticulumActionWorking {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: reticulumIsOn(tunnel) ? "stop.fill" : "play.fill")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                Text(reticulumIsOn(tunnel)
+                                     ? String(localized: "Stop")
+                                     : String(localized: "Start"))
+                                    .font(.system(size: 15, weight: .medium))
+                            }
+                            .foregroundStyle(reticulumIsOn(tunnel) ? Theme.textPrimary : .white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(reticulumIsOn(tunnel) ? Theme.backgroundTertiary : Theme.accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                         }
+                        .buttonStyle(.plain)
                         .disabled(isReticulumActionWorking || NodeHostingMode.selected != appServices.hostingMode)
                     }
-                    Button("Choose Hosting Mode") { showReticulumExplainer = true }
+
+                    // Full VPN + hosting explainer + mode chooser, one tap away.
+                    Button {
+                        showReticulumExplainer = true
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(Theme.accentColor)
+                            Text(String(localized: "Choose Hosting Mode"))
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
                 }
             }
             .sheet(isPresented: $showReticulumExplainer) {
@@ -596,6 +652,36 @@ struct SettingsView: View {
         case .disconnected: return Theme.textSecondary
         @unknown default: return Theme.textSecondary
         }
+    }
+
+    /// One-line context under the mode title — this is the VPN/hosting explainer
+    /// that was stripped from the card when it was renamed from "Background
+    /// Transport". The full two-paragraph explanation still lives in the
+    /// explainer sheet; this keeps the card from reading like a bare status dump.
+    private var reticulumModeSubtitle: String {
+        if appServices.hostingMode == .networkExtension {
+            return String(localized: "Runs Reticulum in the background via a local VPN configuration. Only Columba's own traffic uses it — other apps are not routed.")
+        } else {
+            return String(localized: "Reticulum runs inside Columba and stops when iOS suspends the app. Use this if you'd rather not use a local VPN.")
+        }
+    }
+
+    /// Pill rendering the tunnel's live status (label + tint dot), matching the
+    /// status-badge idiom used across the other settings cards.
+    @ViewBuilder
+    private func reticulumStatusPill(_ tunnel: TunnelManager) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(reticulumStatusColor(tunnel))
+                .frame(width: 8, height: 8)
+            Text(reticulumStatusLabel(tunnel))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(reticulumStatusColor(tunnel))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(reticulumStatusColor(tunnel).opacity(0.14))
+        .clipShape(Capsule())
     }
 
     /// Whether the card's action button should present the "Stop" (disable)

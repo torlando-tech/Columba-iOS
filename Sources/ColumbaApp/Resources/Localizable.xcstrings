@@ -3244,6 +3244,56 @@
           }
         }
       }
+    },
+    "Background hosting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background hosting"
+          }
+        }
+      }
+    },
+    "Foreground only": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Foreground only"
+          }
+        }
+      }
+    },
+    "Choose Hosting Mode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Hosting Mode"
+          }
+        }
+      }
+    },
+    "Runs Reticulum in the background via a local VPN configuration. Only Columba's own traffic uses it — other apps are not routed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs Reticulum in the background via a local VPN configuration. Only Columba's own traffic uses it — other apps are not routed."
+          }
+        }
+      }
+    },
+    "Reticulum runs inside Columba and stops when iOS suspends the app. Use this if you'd rather not use a local VPN.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reticulum runs inside Columba and stops when iOS suspends the app. Use this if you'd rather not use a local VPN."
+          }
+        }
+      }
     }
   },
   "version": "1.0"
