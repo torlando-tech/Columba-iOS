@@ -3265,16 +3265,6 @@
         }
       }
     },
-    "Choose Hosting Mode": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose Hosting Mode"
-          }
-        }
-      }
-    },
     "Runs Reticulum in the background via a local VPN configuration. Only Columba's own traffic uses it — other apps are not routed.": {
       "localizations": {
         "en": {

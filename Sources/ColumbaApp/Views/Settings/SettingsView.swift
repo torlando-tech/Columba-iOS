@@ -602,26 +602,24 @@ struct SettingsView: View {
                         .disabled(isReticulumActionWorking || NodeHostingMode.selected != appServices.hostingMode)
                     }
 
-                    // Full VPN + hosting explainer + mode chooser, one tap away.
+                    // Full-width "Learn more & set up" button — opens the full
+                    // VPN + hosting explainer and mode chooser.
                     Button {
                         showReticulumExplainer = true
                     } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             Image(systemName: "info.circle")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(Theme.accentColor)
-                            Text(String(localized: "Choose Hosting Mode"))
+                                .font(.system(size: 14, weight: .medium))
+                            Text(String(localized: "Learn more & set up"))
                                 .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(Theme.textPrimary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Theme.textSecondary)
                         }
-                        .contentShape(Rectangle())
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.backgroundTertiary)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 2)
                 }
             }
             .sheet(isPresented: $showReticulumExplainer) {
