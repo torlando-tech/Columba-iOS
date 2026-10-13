@@ -3284,6 +3284,46 @@
           }
         }
       }
+    },
+    "Learn more": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Learn more"
+          }
+        }
+      }
+    },
+    "Stay reachable in the background": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stay reachable in the background"
+          }
+        }
+      }
+    },
+    "Keep mesh delivery alive while Columba is closed or your phone is locked.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep mesh delivery alive while Columba is closed or your phone is locked."
+          }
+        }
+      }
+    },
+    "Background Hosting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background Hosting"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
