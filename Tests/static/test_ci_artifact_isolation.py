@@ -89,6 +89,7 @@ class ArtifactFixture:
             rnode.mkdir(parents=True)
             (rnode / "IOSRNodeInterface.py").write_text("interface_class = object\n")
             (rnode / "IOSRNodeDriver.py").write_text("class IOSRNodeDriver: pass\n")
+            (self.app / "app/rns_bridge.py").write_text("def main(): pass\n")
             self.outputs[("otool", str(self.app / executable))] += (
                 b"\t@rpath/Python.framework/Python\n"
             )
@@ -186,7 +187,7 @@ class ArtifactCheckerTests(unittest.TestCase):
         with self.assertRaisesRegex(self.checker.VerificationError, message):
             self.verify(fixture, flavor)
 
-    def test_unified_requires_both_process_host_payloads(self):
+    def test_unified_shares_app_payload_and_rejects_extension_copies(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = ArtifactFixture(root, "modelb")
@@ -197,7 +198,26 @@ class ArtifactCheckerTests(unittest.TestCase):
             host_otool = ("otool", str(fixture.app / fixture.executable))
             fixture.outputs[host_nm] = python.outputs[("nm", str(python.app / python.executable))]
             fixture.outputs[host_otool] += b"\t@rpath/Python.framework/Python\n"
+            for name in ("Frameworks", "python", "app_packages", "app"):
+                shutil.rmtree(fixture.extension / name)
             self.verify(fixture, "unified")
+            plist_path = fixture.extension / "Info.plist"
+            metadata = plistlib.loads(plist_path.read_bytes())
+            metadata["UIBackgroundModes"] = ["bluetooth-central", "bluetooth-peripheral"]
+            plist_path.write_bytes(plistlib.dumps(metadata))
+            self.assert_rejected(fixture, "unified", "UIBackgroundModes")
+            del metadata["UIBackgroundModes"]
+            plist_path.write_bytes(plistlib.dumps(metadata))
+            for name in ("Frameworks", "python", "app_packages", "app"):
+                duplicate = fixture.extension / name
+                duplicate.mkdir()
+                (duplicate / "unexpected.py").write_text("import sys\n")
+                self.assert_rejected(fixture, "unified", "extension.*shared Python|extension.*payload")
+                shutil.rmtree(duplicate)
+            stray = fixture.extension / "helper.py"
+            stray.write_text("import sys\n")
+            self.assert_rejected(fixture, "unified", "extension.*Python runtime resource")
+            stray.unlink()
             shutil.rmtree(fixture.app / "python")
             self.assert_rejected(fixture, "unified", "python/lib")
 

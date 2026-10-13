@@ -20,6 +20,10 @@ static inline PyStatus ColumbaNEPy_PyConfig_SetHome(PyConfig *config, const wcha
     return PyConfig_SetString(config, &config->home, home);
 }
 
+static inline PyStatus ColumbaNEPy_PyConfig_SetExecutable(PyConfig *config, const wchar_t *executable) {
+    return PyConfig_SetString(config, &config->executable, executable);
+}
+
 static inline PyObject *ColumbaNEPy_None(void) {
     Py_INCREF(Py_None);
     return Py_None;

@@ -62,4 +62,16 @@ defaults.set("foreground", forKey: NodeHostingMode.preferenceKey)
 require(NodeHostingMode.resolve(defaults: defaults) == .foreground, "foreground selection must survive persistence")
 defaults.set("unknown", forKey: NodeHostingMode.preferenceKey)
 require(NodeHostingMode.resolve(defaults: defaults) == .networkExtension, "invalid preferences must recover safely")
+
+let appBundle = URL(fileURLWithPath: "/Applications/ColumbaApp.app")
+let extensionBundle = appBundle.appendingPathComponent("PlugIns/ColumbaNetworkExtension.appex")
+let foregroundResources = try NodePythonBundleLayout.resourceBundleURL(for: appBundle)
+let extensionResources = try NodePythonBundleLayout.resourceBundleURL(for: extensionBundle)
+require(foregroundResources.path == appBundle.path, "foreground uses shared app resources")
+require(extensionResources.path == appBundle.path, "extension uses the same app resources")
+do {
+    _ = try NodePythonBundleLayout.resourceBundleURL(for: URL(fileURLWithPath: "/tmp/Detached.appex"))
+    fatalError("detached extension must not silently use another payload")
+} catch NodePythonBundleLayout.LayoutError.missingContainingApp {}
+
 print("Host contracts passed")

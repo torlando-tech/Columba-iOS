@@ -1,11 +1,11 @@
 // Embedded CPython lifecycle shared by the foreground and extension hosts.
-// Bundle.main supplies the selected process's Python payload. Initialization
+// The containing app supplies one Python payload for both hosts. Initialization
 // is serialized once per process; later calls acquire the GIL independently.
 // This module deliberately has no dependency on RNSAPI or native RNS types.
 
 import Foundation
 
-/// Owns the embedded Python interpreter in the NE process.
+/// Owns the embedded Python interpreter in the selected process host.
 final class PythonNodeRuntime: @unchecked Sendable {
     static let shared = PythonNodeRuntime()
 
@@ -49,10 +49,17 @@ final class PythonNodeRuntime: @unchecked Sendable {
         return result
     }
 
+    private var payloadBundle: Bundle?
+
     private func performInit() -> Result<String, Error> {
         ExtensionDiagLog.log("[NE-PY] init begin")
 
-        let resourcePath = Bundle.main.resourcePath ?? Bundle.main.bundlePath
+        guard let payloadURL = try? NodePythonBundleLayout.resourceBundleURL(for: Bundle.main.bundleURL),
+              let payload = Bundle(url: payloadURL), let executable = payload.executableURL else {
+            return failed("containing app's Python payload bundle is missing")
+        }
+        payloadBundle = payload
+        let resourcePath = payload.resourcePath ?? payload.bundlePath
         let pythonHome = "\(resourcePath)/python"
 
         setenv("NO_COLOR", "1", 1)
@@ -80,6 +87,21 @@ final class PythonNodeRuntime: @unchecked Sendable {
                 PyConfig_Clear(&config)
                 return failed("PyConfig_SetString(home): \(message(pyStatus))")
             }
+        }
+
+        // AppleFrameworkLoader resolves .fwork/.origin paths relative to
+        // sys.executable. Anchor it to the shared payload's app executable,
+        // even when the interpreter itself is running inside the extension.
+        // This does not launch the app or change the process's native symbols.
+        guard let executableWide = Py_DecodeLocale(executable.path, nil) else {
+            PyConfig_Clear(&config)
+            return failed("could not decode Python framework anchor")
+        }
+        pyStatus = ColumbaNEPy_PyConfig_SetExecutable(&config, executableWide)
+        PyMem_RawFree(executableWide)
+        if PyStatus_Exception(pyStatus) != 0 {
+            PyConfig_Clear(&config)
+            return failed("PyConfig_SetString(executable): \(message(pyStatus))")
         }
 
         pyStatus = PyConfig_Read(&config)
@@ -246,7 +268,7 @@ final class PythonNodeRuntime: @unchecked Sendable {
     }
 
     private func addSiteDir(_ relPath: String) -> Bool {
-        let resourcePath = Bundle.main.resourcePath ?? Bundle.main.bundlePath
+        guard let resourcePath = payloadBundle?.resourcePath else { return false }
         let siteDir = "\(resourcePath)/\(relPath)"
         guard let siteModule = PyImport_ImportModule("site") else { return false }
         defer { Py_DecRef(siteModule) }
@@ -264,7 +286,7 @@ final class PythonNodeRuntime: @unchecked Sendable {
     }
 
     private func prependSysPath(_ relPath: String) -> Bool {
-        let resourcePath = Bundle.main.resourcePath ?? Bundle.main.bundlePath
+        guard let resourcePath = payloadBundle?.resourcePath else { return false }
         let appDir = "\(resourcePath)/\(relPath)"
         guard let sysModule = PyImport_ImportModule("sys") else { return false }
         defer { Py_DecRef(sysModule) }
