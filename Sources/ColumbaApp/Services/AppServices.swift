@@ -3126,6 +3126,13 @@ public final class AppServices {
                 // one whose old form was already removed stays dropped.
             } else {
                 newLive[entity.id] = entity
+                // Seed the app-local status mirror so the isConnected poll can
+                // see this interface without a restart. The mirror starts
+                // .connecting; the 2s status poll flips it to .connected once
+                // Python reports it online. Without this, a hot-added TCP relay
+                // is invisible to startStateObserver and the "No Interfaces
+                // Connected" banner stays until the next launch.
+                await seedSwiftStub(for: entity)
             }
         }
 
