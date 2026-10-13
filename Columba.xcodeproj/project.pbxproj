@@ -132,6 +132,7 @@
 		483C8C635306DDB8DCCDBA4B /* OutboxReplayCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ORCF /* OutboxReplayCoordinator.swift */; };
 		4965B2C16153DB6C2595A906 /* NodeHostObservers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2A8439A1A8EF5976AFAF6F /* NodeHostObservers.swift */; };
 		5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A49337EFC55C10979AEB702B /* LXSTSwift */; };
+		559370B6AEF59EAC179302D7 /* NodePythonBundleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE6E7F6812429F902DB95E7 /* NodePythonBundleLayout.swift */; };
 		55F3BF7D600C32E07B7B8C26 /* TCPClientWizard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96EBCA636D502CF4367E32C7 /* TCPClientWizard.swift */; };
 		568E489558D111023D5E3777 /* PeerChildInterfaceRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D58209FE6421B8FFA3FA289 /* PeerChildInterfaceRegistryTests.swift */; };
 		581B32CC36584C0648CBF43A /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
@@ -140,7 +141,6 @@
 		5F1FF2954475331208BAAD47 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B1AB71D8977FE792BA9B176D /* JetBrainsMono-Bold.ttf */; };
 		60CC574F0906D247788E05C0 /* PeerLocationFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */; platformFilter = ios; };
 		6176037A389D1F97BB47992B /* Python.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		6176037A389D1F97BB47992C /* Python.xcframework in Embed Frameworks (NE) */ = {isa = PBXBuildFile; fileRef = 3BEE6E339CC852C9BA8C5D75 /* Python.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		6546B018A27051979F102C2B /* NodeNetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = MBN002 /* NodeNetworkTransport.swift */; };
 		67079BBC2E8309A43DF576E5 /* app in Resources */ = {isa = PBXBuildFile; fileRef = D001472BC7DFD3CD7BF27F0C /* app */; };
 		69B724BD147A18C5EAFD080C /* PythonConfigWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */; };
@@ -227,6 +227,7 @@
 		E4FCBD54560B74AC8CCB1C91 /* DirectionsLauncherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9DA888204CA742BD1403A51 /* DirectionsLauncherTests.swift */; };
 		E56C5B9AFA508F5AC22443BA /* NodeStateMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40A002A75F77432C7912C974 /* NodeStateMigration.swift */; };
 		E5F60718293A4B5C6D7E8F91 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E5F60718293A4B5C6D7E8F90 /* GRDB */; };
+		E87EBCD3911AFA3690877E7B /* NodePythonBundleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE6E7F6812429F902DB95E7 /* NodePythonBundleLayout.swift */; };
 		EA609BF7A35298B1651160C3 /* PttButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68384C48BFF8F5294340EDB /* PttButton.swift */; };
 		EBDS /* BLEDriverSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDS /* BLEDriverSeam.swift */; };
 		EBST /* AppGroupBLESeamTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBST /* AppGroupBLESeamTransport.swift */; };
@@ -332,17 +333,6 @@
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		EFEMB /* Embed Frameworks (NE) */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				6176037A389D1F97BB47992C /* Python.xcframework in Embed Frameworks (NE) */,
-			);
-			name = "Embed Frameworks (NE)";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -367,6 +357,7 @@
 		6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/AudioManagerConfigChangeTests.swift; sourceTree = SOURCE_ROOT; };
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Call/CallControlButton.swift; sourceTree = SOURCE_ROOT; };
 		7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Call/CodecSelectionSheet.swift; sourceTree = SOURCE_ROOT; };
+		7CE6E7F6812429F902DB95E7 /* NodePythonBundleLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NodePythonBundleLayout.swift; path = Sources/RNSHost/NodePythonBundleLayout.swift; sourceTree = SOURCE_ROOT; };
 		853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/MigrationRoundTripTests.swift; sourceTree = SOURCE_ROOT; };
 		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/CallManager.swift; sourceTree = SOURCE_ROOT; };
 		894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift; sourceTree = SOURCE_ROOT; };
@@ -1104,6 +1095,7 @@
 				AA496723275650AA3347CCB0 /* NodeHostingMode.swift */,
 				40A002A75F77432C7912C974 /* NodeStateMigration.swift */,
 				A5716A12800CCDCFF9D903FB /* OutboxEntry.swift */,
+				7CE6E7F6812429F902DB95E7 /* NodePythonBundleLayout.swift */,
 				FE01 /* PacketTunnelProvider.swift */,
 				NDDI /* NERNodeDiagLogShim.swift */,
 				AB56A9C5F062142B6EF61DA2 /* PeerLocationRemovalTests.swift */,
@@ -1180,8 +1172,7 @@
 			buildPhases = (
 				ESRCBP /* Sources */,
 				EFWBP /* Frameworks */,
-				EFEMB /* Embed Frameworks (NE) */,
-				EPIPS /* Install Python stdlib + RNS wheels (NE) */,
+				EPIPS /* Remove obsolete extension Python payload */,
 			);
 			buildRules = (
 			);
@@ -1354,7 +1345,7 @@
 			shellScript = "set -e\n\n# Copy platform-appropriate wheels into <app>/app_packages/ before\n# install_python processes the .so extensions inside them.\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || {\n  echo \"error: $WHEELS_SRC missing — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\n[ -s \"$WHEELS_SRC/ble_reticulum/BLEInterface.py\" ] || {\n  echo \"error: ble_reticulum missing from $WHEELS_SRC — run support/fetch-wheels.sh\" >&2\n  exit 1\n}\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\n\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages\n";
 			showEnvVarsInLog = 0;
 		};
-		EPIPS /* Install Python stdlib + RNS wheels (NE) */ = {
+		EPIPS /* Remove obsolete extension Python payload */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -1363,16 +1354,15 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(PROJECT_DIR)/Frameworks/Python.xcframework/build/utils.sh",
 			);
-			name = "Install Python stdlib + RNS wheels (NE)";
+			name = "Remove obsolete extension Python payload";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n\ncase \"$EFFECTIVE_PLATFORM_NAME\" in\n  -iphoneos)         WHEELS_SRC=\"$PROJECT_DIR/wheels-iphoneos\" ;;\n  -iphonesimulator)  WHEELS_SRC=\"$PROJECT_DIR/wheels-iphonesimulator\" ;;\n  *) echo \"error: unsupported platform $EFFECTIVE_PLATFORM_NAME\" >&2; exit 1 ;;\nesac\n[ -d \"$WHEELS_SRC\" ] || { echo \"error: $WHEELS_SRC missing\" >&2; exit 1; }\n[ -s \"$WHEELS_SRC/ble_reticulum/BLEInterface.py\" ] || { echo \"error: ble_reticulum missing\" >&2; exit 1; }\n\n# RNS/LXMF wheels -> <appex>/app_packages (site-packages); bridge -> <appex>/app.\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app_packages\"\nrsync -au --delete \"$WHEELS_SRC/\" \"$CODESIGNING_FOLDER_PATH/app_packages/\"\nmkdir -p \"$CODESIGNING_FOLDER_PATH/app\"\ncp \"$PROJECT_DIR/app/rns_bridge.py\" \"$CODESIGNING_FOLDER_PATH/app/\"\ncp -r \"$PROJECT_DIR/app/ble\" \"$CODESIGNING_FOLDER_PATH/app/\"\ncp -r \"$PROJECT_DIR/app/rnode\" \"$CODESIGNING_FOLDER_PATH/app/\"\n\n# stdlib + re-extension/sign the wheels' .so files (CRNS, cffi, cryptography).\nsource \"$PROJECT_DIR/Frameworks/Python.xcframework/build/utils.sh\"\ninstall_python Frameworks/Python.xcframework app_packages\n\n# Re-sign the .appex so its CodeResources manifest covers every file this\n# phase added (app/, app_packages/, python/). Xcode Cloud can resolve the\n# extension CodeSign step before this alwaysOutOfDate script phase finishes,\n# leaving the added files out of the manifest -> ITMS-90035 on ASC upload.\n# No-op on simulator (no signing identity).\nif [ \"$EFFECTIVE_PLATFORM_NAME\" = \"-iphoneos\" ] && [ -n \"$EXPANDED_CODE_SIGN_IDENTITY\" ]; then\n  codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" ${OTHER_CODE_SIGN_FLAGS:-} \\\n    -o runtime --preserve-metadata=identifier,entitlements,flags \\\n    --generate-entitlement-der \"$CODESIGNING_FOLDER_PATH\"\nfi\n";
+			shellScript = "set -e\n# Clear only this generated extension product, including incremental builds\n# made before the shared app-level payload replaced extension-local copies.\ncase \"$CODESIGNING_FOLDER_PATH\" in\n  */ColumbaNetworkExtension.appex) ;;\n  *) echo \"error: unexpected extension product path\" >&2; exit 1 ;;\nesac\nfor relative in app app_packages python Frameworks; do\n  rm -rf \"$CODESIGNING_FOLDER_PATH/$relative\"\ndone\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -1408,6 +1398,7 @@
 				32BC1D5635CB39D011BB88B4 /* NodeHostingMode.swift in Sources */,
 				8F2DCA0779843A07C58A174E /* NodeStateMigration.swift in Sources */,
 				CB517262B7ADAEB1F9EF2036 /* OutboxEntry.swift in Sources */,
+				559370B6AEF59EAC179302D7 /* NodePythonBundleLayout.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1595,6 +1586,7 @@
 				446B31F000793678357DDAC0 /* NodeHostingMode.swift in Sources */,
 				E56C5B9AFA508F5AC22443BA /* NodeStateMigration.swift in Sources */,
 				DA188CC9E79F6E5D5446F191 /* OutboxEntry.swift in Sources */,
+				E87EBCD3911AFA3690877E7B /* NodePythonBundleLayout.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

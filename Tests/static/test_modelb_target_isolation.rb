@@ -44,6 +44,34 @@ class UnifiedHostingProjectTest < Minitest::Test
     refute_nil embed
     assert embed.files.any? { |f| f.file_ref == ne.product_reference && f.settings.fetch('ATTRIBUTES', []).include?('CodeSignOnCopy') }
   end
+  def test_extension_links_python_without_embedding_another_payload
+    ne = @project.targets.find { |t| t.name == 'ColumbaNetworkExtension' }
+    refute ne.copy_files_build_phases.any? { |p| p.files_references.any? { |f| f.path.to_s.include?('Python.xcframework') } }
+    refute ne.shell_script_build_phases.any? { |p| p.shell_script.include?('install_python') || p.shell_script.include?('codesign --force') }
+    ne.build_configurations.each do |c|
+      assert_includes Array(c.build_settings['LD_RUNPATH_SEARCH_PATHS']), '@executable_path/../../Frameworks'
+    end
+  end
+  def test_incremental_cleanup_is_scoped_to_generated_extension_payload
+    ne = @project.targets.find { |t| t.name == 'ColumbaNetworkExtension' }
+    phase = ne.shell_script_build_phases.find { |p| p.name == 'Remove obsolete extension Python payload' }
+    refute_nil phase
+    Dir.mktmpdir('columba-extension-cleanup') do |dir|
+      product = File.join(dir, 'ColumbaNetworkExtension.appex')
+      FileUtils.mkdir_p(product)
+      %w[app app_packages python Frameworks].each { |p| FileUtils.mkdir_p(File.join(product, p)); File.write(File.join(product, p, 'old.py'), 'old') }
+      File.write(File.join(product, 'Info.plist'), 'metadata')
+      File.write(File.join(product, 'ColumbaNetworkExtension'), 'executable')
+      2.times do
+        output, status = Open3.capture2e({'CODESIGNING_FOLDER_PATH' => product}, 'sh', '-c', phase.shell_script)
+        assert status.success?, output
+      end
+      assert_equal %w[ColumbaNetworkExtension Info.plist], Dir.children(product).sort
+      output, status = Open3.capture2e({'CODESIGNING_FOLDER_PATH' => dir}, 'sh', '-c', phase.shell_script)
+      refute status.success?, output
+      assert File.exist?(File.join(product, 'Info.plist'))
+    end
+  end
   def test_source_paths_exist_and_are_unique
     @project.targets.each do |target|
       files = target.source_build_phase.files_references.map { |r| r.real_path.to_s }

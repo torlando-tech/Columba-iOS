@@ -67,6 +67,29 @@ Dir.glob('Tests/ColumbaAppTests/*.swift').each do |path|
   ref = project.files.find { |f| f.real_path.to_s.end_with?(path) } || project.main_group.new_file(path)
   add_source(tests, ref)
 end
+# Python resources and native frameworks ship once at the top app level.
+# The extension links Python via @executable_path/../../Frameworks.
+ne.copy_files_build_phases.to_a.each do |phase|
+  phase.files.to_a.each { |f| f.remove_from_project if f.file_ref&.path.to_s.include?('Python.xcframework') }
+  phase.remove_from_project if phase.files.empty? && phase.name == 'Embed Frameworks (NE)'
+end
+cleanup = ne.shell_script_build_phases.find { |p| p.name == 'Install Python stdlib + RNS wheels (NE)' || p.name == 'Remove obsolete extension Python payload' }
+if cleanup
+  cleanup.name = 'Remove obsolete extension Python payload'
+  cleanup.input_paths = []
+  cleanup.shell_script = <<~SH
+    set -e
+    # Clear only this generated extension product, including incremental builds
+    # made before the shared app-level payload replaced extension-local copies.
+    case "$CODESIGNING_FOLDER_PATH" in
+      */ColumbaNetworkExtension.appex) ;;
+      *) echo "error: unexpected extension product path" >&2; exit 1 ;;
+    esac
+    for relative in app app_packages python Frameworks; do
+      rm -rf "$CODESIGNING_FOLDER_PATH/$relative"
+    done
+  SH
+end
 # Types shared by the app's voice adapter.
 path = 'Sources/ColumbaApp/Services/ColumbaLXSTTransport.swift'
 add_source(app, project.files.find { |f| f.real_path.to_s.end_with?(path) })

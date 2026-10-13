@@ -4377,10 +4377,7 @@ public final class AppServices {
     /// `IOSBLEInterface.py`/`IOSBLEDriver.py` must land there too or RNS can't
     /// `exec()` them.
     ///
-    /// In Model B the `app/` Python files are bundled inside the NE appex, not
-    /// at the top level of the app bundle. We resolve the source dir from the
-    /// app bundle first (Model A / in-app Python), then fall back to the NE
-    /// appex.
+    /// Both hosts use the containing app's shared Python resources.
     private func deployIOSBLEPythonFilesIfPossible(configDirs: [URL]) {
         guard !configDirs.isEmpty else {
             DiagLog.log("[BLE_DIAG] no config dirs — skipping deploy")
@@ -4388,18 +4385,7 @@ public final class AppServices {
         }
 
         let fm = FileManager.default
-        var sourceAppDir = Bundle.main.url(forResource: "app", withExtension: nil)
-
-        // Model B: Python runtime is in the NE appex
-        if sourceAppDir == nil {
-            let appexDir = Bundle.main.bundleURL
-                .appendingPathComponent("PlugIns/ColumbaNetworkExtension.appex", isDirectory: true)
-            let candidate = appexDir.appendingPathComponent("app", isDirectory: true)
-            if fm.fileExists(atPath: candidate.path) {
-                sourceAppDir = candidate
-                DiagLog.log("[BLE_DIAG] using NE appex app/ dir: \(candidate.path)")
-            }
-        }
+        let sourceAppDir = Bundle.main.url(forResource: "app", withExtension: nil)
 
         guard let bundleAppDir = sourceAppDir else {
             DiagLog.log("[BLE_DIAG] app/ bundle resource missing — skipping deploy")

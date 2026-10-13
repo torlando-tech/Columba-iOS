@@ -522,13 +522,23 @@ def _verify_modelb(
         raise VerificationError("Model B host app links forbidden Python.framework")
     if PYTHON_LOAD not in extension_libraries:
         raise VerificationError("Model B extension does not link the embedded Python.framework")
-    # Linking Python.framework is necessary but not sufficient: the extension
-    # must also actually CONTAIN the runtime payload, or it links a framework
-    # that is not present and the in-NE Python node cannot start. Verify the
-    # embedded framework binary, the standard library, the wheel packages, and
-    # the bridge driver are all present and non-empty (mirrors the shipping
-    # payload check, rooted at the extension).
-    ext_framework = extension / "Frameworks/Python.framework"
+    # The unified app contains one read-only payload shared by both hosts.
+    # Extension-local scripts/frameworks are not valid distribution packaging.
+    payload_bundle = app if unified else extension
+    if unified:
+        for relative in ("app", "app_packages", "python", "Frameworks"):
+            duplicate = extension / relative
+            if duplicate.exists() or duplicate.is_symlink():
+                raise VerificationError(
+                    "unified extension contains duplicate shared Python payload: {}".format(relative)
+                )
+    if unified:
+        for path in extension.rglob("*"):
+            if path.suffix.casefold() in (".py", ".pyi", ".pyw", ".pyc", ".pyo", ".fwork", ".framework"):
+                raise VerificationError(
+                    "unified extension contains Python runtime resource or framework: {}".format(path.relative_to(extension))
+                )
+    ext_framework = payload_bundle / "Frameworks/Python.framework"
     ext_framework_metadata = _load_bundle(
         ext_framework, "FMWK", "Model B extension Python.framework", app_root
     )
@@ -537,22 +547,22 @@ def _verify_modelb(
     )
     if ext_framework_executable.stat().st_size == 0:
         raise VerificationError("Model B extension Python.framework executable is missing or empty")
-    ext_stdlib = extension / "python/lib"
+    ext_stdlib = payload_bundle / "python/lib"
     if not _contains_regular_file(ext_stdlib, app_root, "Model B extension python/lib"):
         raise VerificationError("Model B extension python/lib standard-library payload is missing or empty")
-    ext_packages = extension / "app_packages"
+    ext_packages = payload_bundle / "app_packages"
     if not _contains_regular_file(ext_packages, app_root, "Model B extension app_packages"):
         raise VerificationError("Model B extension app_packages wheel payload is missing or empty")
     ext_ble = ext_packages / "ble_reticulum/BLEInterface.py"
     _resolve_contained(ext_ble, app_root, "Model B extension ble_reticulum package")
     if not ext_ble.is_file() or ext_ble.stat().st_size == 0:
         raise VerificationError("Model B extension app_packages/ble_reticulum runtime is missing or empty")
-    ext_rns_bridge = extension / "app/rns_bridge.py"
+    ext_rns_bridge = payload_bundle / "app/rns_bridge.py"
     _resolve_contained(ext_rns_bridge, app_root, "Model B extension rns_bridge")
     if not ext_rns_bridge.is_file() or ext_rns_bridge.stat().st_size == 0:
         raise VerificationError("Model B extension app/rns_bridge.py is missing or empty")
     for relative in SHIPPING_RNODE_PYTHON_PAYLOADS:
-        payload = extension / relative
+        payload = payload_bundle / relative
         _resolve_contained(payload, app_root, "Model B extension Python RNode payload")
         if not payload.is_file() or payload.stat().st_size == 0:
             raise VerificationError(

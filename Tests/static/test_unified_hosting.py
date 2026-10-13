@@ -17,6 +17,7 @@ class UnifiedHostingContracts(unittest.TestCase):
             "Sources/Shared/NodeHostingMode.swift",
             "Sources/Shared/NodeStateMigration.swift",
             "Sources/RNSHost/NodeProcessLease.swift",
+            "Sources/RNSHost/NodePythonBundleLayout.swift",
             "Tests/host-contracts/main.swift",
         ]
         with tempfile.TemporaryDirectory() as directory:
@@ -71,3 +72,23 @@ class UnifiedHostingContracts(unittest.TestCase):
         model = (ROOT / 'Sources/ColumbaApp/ViewModels/SettingsViewModel.swift').read_text()
         refresh = model.split('public func refreshSyncState()')[1].split('/// Copy identity')[0]
         self.assertIn('propManager.refreshLastSyncTime()', refresh)
+
+    def test_shared_payload_anchor_is_set_before_python_initialization(self):
+        source = (ROOT / 'Sources/RNSHost/PythonNodeRuntime.swift').read_text()
+        self.assertIn('NodePythonBundleLayout.resourceBundleURL(for: Bundle.main.bundleURL)', source)
+        self.assertLess(source.index('ColumbaNEPy_PyConfig_SetExecutable'), source.index('PyConfig_Read(&config)'))
+        self.assertNotIn('Bundle.main.resourcePath', source)
+
+    def test_cloud_checks_the_archived_distribution_layout(self):
+        import os
+        hook = ROOT / 'ci_scripts/ci_post_xcodebuild.sh'
+        source = hook.read_text()
+        self.assertIn('verify-flavor-artifact.py" unified', source)
+        self.assertIn('codesign --verify --deep --strict', source)
+        self.assertIn('$CI_ARCHIVE_PATH/Products/Applications/ColumbaApp.app', source)
+        environment = os.environ.copy()
+        environment.pop('CI_ARCHIVE_PATH', None)
+        subprocess.run(['bash', str(hook)], env=environment, check=True, capture_output=True)
+        environment['CI_ARCHIVE_PATH'] = '/nonexistent/Columba.xcarchive'
+        result = subprocess.run(['bash', str(hook)], env=environment, capture_output=True)
+        self.assertNotEqual(result.returncode, 0, 'missing archive must not silently pass validation')
