@@ -11,6 +11,7 @@ GENERATOR = ROOT / "Sources/ColumbaApp/Views/Components/IdenticonGenerator.swift
 CONTACTS_VIEW = ROOT / "Sources/ColumbaApp/Views/Contacts/ContactsView.swift"
 MESSAGE_REPOSITORY = ROOT / "Sources/ColumbaApp/Services/MessageRepository.swift"
 LOCALIZATIONS = ROOT / "Sources/ColumbaApp/Resources/Localizable.xcstrings"
+APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 
 
 class ContactsNetworkPerformanceContractTests(unittest.TestCase):
@@ -23,6 +24,50 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         cls.view = CONTACTS_VIEW.read_text()
         cls.repository = MESSAGE_REPOSITORY.read_text()
         cls.localizations = LOCALIZATIONS.read_text()
+        cls.app_services = APP_SERVICES.read_text()
+
+    def test_path_table_instance_is_reused_across_reinit(self):
+        # Regression: the Contacts -> Network tab's live "Show N new" stream
+        # broke because AppServices re-inits (identity switch, reconnect,
+        # first interface activation) each built a FRESH PathTable and
+        # reassigned self.pathTable. ContactsViewModel's
+        # `for await entry in pathUpdates` loop had captured the OLD instance
+        # at subscription time, so it was pinned to a table that no longer
+        # received announces: live updates died (pill never appeared) while
+        # pull-to-refresh -- which re-reads appServices.pathTable.allEntries()
+        # and gets the NEW instance -- still worked.
+        #
+        # The fix reuses the existing instance (construct only when nil) at
+        # every re-init site. These counts pin that invariant: the three
+        # unconditional-reinit sites (both initializeUnlocked overloads and
+        # reinitializeConnection) must use the reuse guard, and the ONLY place
+        # still allowed to construct a fresh table is initializeBaseStack,
+        # which is itself nil-guarded. Re-introducing an unconditional
+        # `let newPathTable = try PathTable(...); self.pathTable = newPathTable`
+        # anywhere re-breaks the live stream and fails this contract.
+        #
+        # Reuse guard + rebound instance, one per re-init site:
+        self.assertEqual(
+            self.app_services.count("if self.pathTable == nil {"), 3,
+            "expected exactly the three re-init sites to reuse via the nil guard",
+        )
+        self.assertEqual(
+            self.app_services.count("let newPathTable = self.pathTable!"), 3,
+            "expected the three re-init sites to reuse the live instance",
+        )
+        # Cap the fresh-construct / replace patterns to the single guarded
+        # initializeBaseStack site; an unconditional re-init replace makes
+        # these exceed 1.
+        self.assertLessEqual(
+            self.app_services.count("let newPathTable = try PathTable(databasePath: pathDbPath)"),
+            1,
+            "a re-init site is constructing a fresh PathTable instead of reusing it",
+        )
+        self.assertLessEqual(
+            self.app_services.count("self.pathTable = newPathTable"),
+            1,
+            "a re-init site is replacing self.pathTable instead of reusing it",
+        )
 
     def test_contact_diagnostics_are_aggregate_only(self):
         self.assertNotIn("relayContacts.map", self.vm)
