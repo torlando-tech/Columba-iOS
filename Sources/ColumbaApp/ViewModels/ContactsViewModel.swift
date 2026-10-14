@@ -446,6 +446,47 @@ public final class ContactsViewModel {
     /// Task for streaming path updates.
     private var updateTask: Task<Void, Never>?
 
+    /// Generation bumped every time `networkAnnounces` is structurally
+    /// replaced. The index cache is valid only for the generation it was built
+    /// for, so a stale cache is rebuilt lazily on next use.
+    @ObservationIgnored private var networkIndexGeneration: Int = 0
+
+    /// Cached id->index map of `networkAnnounces`, tagged with the generation
+    /// it was built for. The live stream path looks each announced id up in
+    /// O(1) here instead of running a linear `firstIndex` over the 12k visible
+    /// list per entry (that scan is the excess CPU the user reported). It
+    /// preserves the original one-entry-per-turn cadence EXACTLY — no batching,
+    /// no chunking, no yields — so the SwiftUI re-render pattern (one render
+    /// per entry, spread over time) is unchanged. In-place edits to
+    /// `networkAnnounces[i]` don't change the index mapping, so the map only
+    /// needs rebuilding where the array is structurally replaced.
+    @ObservationIgnored private var networkIndexCache: (generation: Int, map: [String: Int])? = nil
+
+    /// Invalidate the cached network index. Call every place `networkAnnounces`
+    /// is structurally replaced (reassignment). In-place value edits do NOT
+    /// need this — they don't change which index each id lives at.
+    @MainActor
+    private func invalidateNetworkIndex() {
+        networkIndexGeneration &+= 1
+    }
+
+    /// O(1) lookup of a contact id in the visible list, building the index map
+    /// once (lazily, only when stale) if needed. Replaces the per-entry O(n)
+    /// `firstIndex` scan.
+    @MainActor
+    private func visibleIndex(for id: String) -> Int? {
+        if let cached = networkIndexCache, cached.generation == networkIndexGeneration {
+            return cached.map[id]
+        }
+        var map: [String: Int] = [:]
+        map.reserveCapacity(networkAnnounces.count)
+        for (i, c) in networkAnnounces.enumerated() {
+            map[c.id] = i
+        }
+        networkIndexCache = (networkIndexGeneration, map)
+        return map[id]
+    }
+
     /// One-shot task for lightweight saved-contact reconciliation.
     private var favoriteRefreshTask: Task<Void, Never>?
 
@@ -683,11 +724,13 @@ public final class ContactsViewModel {
             contact = contact.copy(isFavorite: true, isPinned: savedContact.isPinned)
         }
 
-        if let existingIndex = networkAnnounces.firstIndex(where: { $0.id == contact.id }) {
-            // Already visible → update data in place. We deliberately do NOT
-            // re-sort here: rearranging the visible list while the user is
-            // scrolling the Network tab caused mistaps (#34). Position only
-            // refreshes on pull-to-refresh / tab reload / "show new" tap.
+        // O(1) lookup into the visible list (cached index map, invalidated
+        // only where the array is structurally replaced). Already visible →
+        // update data in place. We deliberately do NOT re-sort here:
+        // rearranging the visible list while the user is scrolling the Network
+        // tab caused mistaps (#34). Position only refreshes on
+        // pull-to-refresh / tab reload / "show new" tap.
+        if let existingIndex = visibleIndex(for: contact.id) {
             networkAnnounces[existingIndex] = contact
         } else if pendingAnnounces.contains(where: { $0.id == contact.id }) {
             // New announce for an id we've already buffered — just refresh
@@ -740,6 +783,7 @@ public final class ContactsViewModel {
             .sorted { $0.timestamp > $1.timestamp }
         pendingAnnounces.removeAll(keepingCapacity: true)
         networkAnnounces = merged
+        invalidateNetworkIndex()
     }
 
     // MARK: - Public Methods
@@ -779,6 +823,7 @@ public final class ContactsViewModel {
                     .map { Contact(from: $0) }
                     .sorted { $0.timestamp > $1.timestamp }
                 networkAnnounces = markingSavedContacts(in: loaded)
+                invalidateNetworkIndex()
             }
 
             // Drop only pending entries that the fresh snapshot covers. Keep
@@ -820,6 +865,7 @@ public final class ContactsViewModel {
                 .map { Contact(from: $0) }
                 .sorted { $0.timestamp > $1.timestamp }
             networkAnnounces = markingSavedContacts(in: loaded)
+            invalidateNetworkIndex()
         }
         // Drop only the pending entries the fresh path-table snapshot
         // already covers — see `loadContacts` for the same race
@@ -1199,6 +1245,7 @@ public final class ContactsViewModel {
 
         if reconcileNetwork {
             networkAnnounces = markingSavedContacts(in: networkAnnounces)
+            invalidateNetworkIndex()
             pendingAnnounces = markingSavedContacts(in: pendingAnnounces)
             enrichMyContactBadges()
         }
