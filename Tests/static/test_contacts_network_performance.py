@@ -172,7 +172,7 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         # write inside handleNewPathEntry re-breaks the CPU budget and fails
         # this contract.
         start = self.vm.index("private func handleNewPathEntry(_ entry: PathEntry) {")
-        end = self.vm.index("/// Merge any buffered new announces", start)
+        end = self.vm.index("/// Load contacts from storage.", start)
         fn = self.vm[start:end]
         self.assertNotIn(
             "networkAnnounces[",
@@ -186,6 +186,42 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         self.assertIn("if !alreadyVisible {", fn)
         self.assertIn("pendingAnnounces.append(contact)", fn)
         self.assertIn("pendingAnnounces.contains(where:", fn)
+
+    def test_structural_network_replacement_invalidates_index(self):
+        # The O(1) `visibleIndex(for:)` lookup is backed by a cached
+        # id->index map. It is only valid for the generation it was built for,
+        # so EVERY structural replacement of `networkAnnounces` (whole-array
+        # reassignment -- loadContacts, refreshAnnounces, favorite reconcile)
+        # must call `invalidateNetworkIndex()` or the stale cache will drop new
+        # peers / report duplicates on the next live lookup. In-place edits of
+        # a row (`networkAnnounces[i] = ...` in the user-tap favorite/rename/
+        # delete paths) do NOT change the index mapping and are deliberately
+        # exempt. Re-introducing a structural `networkAnnounces =` without a
+        # following invalidate (before the next replacement) breaks membership
+        # and fails this contract.
+        text = self.vm
+        replace_token = "networkAnnounces = "
+        invalidate_token = "invalidateNetworkIndex()"
+        sites = [
+            m.start()
+            for m in re.finditer(re.escape(replace_token), text)
+        ]
+        self.assertGreaterEqual(
+            len(sites),
+            3,
+            "expected the loadContacts / refreshAnnounces / favorite-reconcile "
+            "structural replacements to still exist",
+        )
+        for i, pos in enumerate(sites):
+            upper = sites[i + 1] if i + 1 < len(sites) else len(text)
+            segment = text[pos:upper]
+            self.assertIn(
+                invalidate_token,
+                segment,
+                "a structural `networkAnnounces =` replacement is not followed "
+                "by invalidateNetworkIndex() before the next replacement; the "
+                "cached visible index would go stale",
+            )
 
 
 if __name__ == "__main__":

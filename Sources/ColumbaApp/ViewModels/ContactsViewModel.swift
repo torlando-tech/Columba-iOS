@@ -794,19 +794,6 @@ public final class ContactsViewModel {
         syncRelayState()
     }
 
-    /// Merge any buffered new announces into the visible list and re-sort.
-    /// Called when the user pulls to refresh, taps the "show N new" banner,
-    /// or otherwise asks for the latest data.
-    @MainActor
-    public func flushPendingAnnounces() {
-        guard !pendingAnnounces.isEmpty else { return }
-        let merged = (networkAnnounces + pendingAnnounces)
-            .sorted { $0.timestamp > $1.timestamp }
-        pendingAnnounces.removeAll(keepingCapacity: true)
-        networkAnnounces = merged
-        invalidateNetworkIndex()
-    }
-
     // MARK: - Public Methods
 
     /// Load contacts from storage. After the first full path snapshot, ordinary
