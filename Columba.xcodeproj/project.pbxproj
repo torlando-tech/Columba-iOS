@@ -563,7 +563,6 @@
 		RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/RuntimeActivityMonitorLeaseTests.swift; sourceTree = SOURCE_ROOT; };
 		RQP01 /* ReplyQuoteParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ReplyQuoteParityTests.swift; sourceTree = SOURCE_ROOT; };
 		SIDSF /* SentIdStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/SentIdStore.swift; sourceTree = SOURCE_ROOT; };
-		SRB002 /* SwiftRNSBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwiftRNSBackend.swift; path = Sources/RNSBackendSwift/SwiftRNSBackend.swift; sourceTree = SOURCE_ROOT; };
 		TMP001 /* ThemeManagerPersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ThemeManagerPersistenceTests.swift; sourceTree = SOURCE_ROOT; };
 		TPROD /* ColumbaAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ColumbaAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		TSP001 /* TextSizePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Messaging/TextSizePickerSheet.swift; sourceTree = SOURCE_ROOT; };
@@ -696,15 +695,6 @@
 				D293DF12C132854354B20FFF /* Models */,
 			);
 			name = Python;
-			sourceTree = "<group>";
-		};
-		9FCA0C1149D62160BB052B3A /* RNSBackendPy */ = {
-			isa = PBXGroup;
-			children = (
-				SRB002 /* SwiftRNSBackend.swift */,
-			);
-			name = RNSBackendPy;
-			path = Sources/RNSBackendPy;
 			sourceTree = "<group>";
 		};
 		C6877E3C038C0DC36597F1D5 /* PythonBridge */ = {
@@ -914,7 +904,6 @@
 				D001472BC7DFD3CD7BF27F0C /* app */,
 				C6877E3C038C0DC36597F1D5 /* PythonBridge */,
 				4AD6205A86259FBAD00F37F1 /* RNSAPI */,
-				9FCA0C1149D62160BB052B3A /* RNSBackendPy */,
 				E000A64C153F97167050B87D /* PeerContactSheet.swift */,
 				A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */,
 				977911678B80FDC0021BFC8D /* PeerLocationFormatting.swift */,

@@ -12,7 +12,6 @@ BRIDGE_PY = ROOT / "app/rns_bridge.py"
 PYTHON_BRIDGE = ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift"
 RNS_BACKEND = ROOT / "Sources/RNSAPI/Protocols/RnsBackend.swift"
 PY_BACKEND = ROOT / "Sources/RNSBackendProxy/ProxyRnsBackend.swift"
-SWIFT_BACKEND = ROOT / "Sources/RNSBackendSwift/SwiftRNSBackend.swift"
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 SETTINGS_VIEW = ROOT / "Sources/ColumbaApp/Views/Settings/SettingsView.swift"
 MAIN_TAB_VIEW = ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
@@ -114,16 +113,6 @@ class ReportedRuntimeBugContracts(unittest.TestCase):
         )
 
         self.assertIn('method: deliveryMethod', proxy)
-
-        swift_backend = SWIFT_BACKEND.read_text()
-        self.assertRegex(
-            swift_backend,
-            r"\.inbound\(sourceHash: message\.sourceHash\.hexHash, "
-            r"messageHash: message\.hash\.hexHash, content:.*?"
-            r"method: Self\.mapDeliveryMethod\(message\.method\), "
-            r"rssi: nil, snr: nil, t: Date\(\)\)",
-        )
-        self.assertIn("case .paper: return .paper", swift_backend)
 
         app_services = APP_SERVICES.read_text()
         persist = re.search(
