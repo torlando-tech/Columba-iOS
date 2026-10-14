@@ -155,6 +155,38 @@ class ContactsNetworkPerformanceContractTests(unittest.TestCase):
         self.assertIn("isFavorite: saved != nil", self.vm)
         self.assertIn("await vm.loadContacts(force: true)", self.view)
 
+    def test_live_reannounce_does_not_rewrite_visible_rows(self):
+        # The Network list is a snapshot: it keeps its order and only
+        # refreshes on pull-to-refresh / "show new" / tab reload. The
+        # #34 regression (live re-sorting the visible list caused mistaps)
+        # is why live re-arrangement was removed, and the pending bucket +
+        # "N new" chip is the design that lets the list stay put.
+        #
+        # The live per-announce path (handleNewPathEntry) must therefore
+        # NEVER rewrite an already-visible row in place: that in-place
+        # write into the 12k @Observable `networkAnnounces` array fires
+        # change-tracking and re-renders the list on every re-announce
+        # (~all of them on a stable mesh) -- the remaining excess CPU.
+        # Genuinely NEW ids still go to `pendingAnnounces`, which is what
+        # updates the "N new" chip. Re-introducing a live `networkAnnounces[...]`
+        # write inside handleNewPathEntry re-breaks the CPU budget and fails
+        # this contract.
+        start = self.vm.index("private func handleNewPathEntry(_ entry: PathEntry) {")
+        end = self.vm.index("/// Merge any buffered new announces", start)
+        fn = self.vm[start:end]
+        self.assertNotIn(
+            "networkAnnounces[",
+            fn,
+            "the live announce path rewrites a visible row in place; "
+            "already-visible ids must be skipped (snapshot stays until refresh)",
+        )
+        # The already-visible guard short-circuits before the pending bucket.
+        self.assertIn("let alreadyVisible = visibleIndex(for: contact.id) != nil", fn)
+        # Only new ids buffer into the chip; the bucket is still wired.
+        self.assertIn("if !alreadyVisible {", fn)
+        self.assertIn("pendingAnnounces.append(contact)", fn)
+        self.assertIn("pendingAnnounces.contains(where:", fn)
+
 
 if __name__ == "__main__":
     unittest.main()

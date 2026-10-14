@@ -724,25 +724,46 @@ public final class ContactsViewModel {
             contact = contact.copy(isFavorite: true, isPinned: savedContact.isPinned)
         }
 
-        // O(1) lookup into the visible list (cached index map, invalidated
-        // only where the array is structurally replaced). Already visible →
-        // update data in place. We deliberately do NOT re-sort here:
-        // rearranging the visible list while the user is scrolling the Network
-        // tab caused mistaps (#34). Position only refreshes on
-        // pull-to-refresh / tab reload / "show new" tap.
-        if let existingIndex = visibleIndex(for: contact.id) {
-            networkAnnounces[existingIndex] = contact
-        } else if pendingAnnounces.contains(where: { $0.id == contact.id }) {
-            // New announce for an id we've already buffered — just refresh
-            // the buffered copy so the eventual flush has the latest data.
-            if let i = pendingAnnounces.firstIndex(where: { $0.id == contact.id }) {
-                pendingAnnounces[i] = contact
+        // The visible Network list is a SNAPSHOT: it keeps its order and only
+        // refreshes on pull-to-refresh / "show new" / tab reload. The #34
+        // regression (re-sorting the visible list while scrolling caused
+        // mistaps) is why live re-arrangement was removed, and the pending
+        // bucket + "N new" chip is the design that lets the list stay put.
+        //
+        // The visible Network list is a SNAPSHOT: it keeps its order and only
+        // refreshes on pull-to-refresh / "show new" / tab reload. The #34
+        // regression (re-sorting the visible list while scrolling caused
+        // mistaps) is why live re-arrangement was removed, and the pending
+        // bucket + "N new" chip is the design that lets the list stay put.
+        //
+        // For a destination ALREADY in the visible list, a re-announce must
+        // NOT rewrite the row: that in-place write into the 12k @Observable
+        // array fires change-tracking and re-renders the list for every
+        // re-announce (~all of them on a stable mesh) — the remaining excess
+        // CPU. We leave the row as-is; it refreshes with its latest
+        // hops/signal/last-seen on the next pull-to-refresh or "show new".
+        // Tapping a peer still shows live status (NodeDetailsView polls).
+        //
+        // Only GENUINELY NEW ids go to the pending bucket, which is what
+        // updates the "N new" chip. The myContacts + relay sync below still
+        // run for every announce (small array / 3 reads — cheap, and keeps
+        // saved contacts + relay selection current).
+        let alreadyVisible = visibleIndex(for: contact.id) != nil
+        if !alreadyVisible {
+            if pendingAnnounces.contains(where: { $0.id == contact.id }) {
+                // New announce for an id we've already buffered — just
+                // refresh the buffered copy so the eventual flush has the
+                // latest data.
+                if let i = pendingAnnounces.firstIndex(where: { $0.id == contact.id }) {
+                    pendingAnnounces[i] = contact
+                }
+            } else {
+                // First time seeing this id since the last user-driven
+                // refresh. Hold it in the pending bucket so the visible list
+                // keeps its current order; the UI surfaces a banner that
+                // flushes on tap.
+                pendingAnnounces.append(contact)
             }
-        } else {
-            // First time seeing this id since the last user-driven refresh.
-            // Hold it in the pending bucket so the visible list keeps its
-            // current order; the UI surfaces a banner that flushes on tap.
-            pendingAnnounces.append(contact)
         }
 
         // Update myContacts from this announce — badge, relay state, and
