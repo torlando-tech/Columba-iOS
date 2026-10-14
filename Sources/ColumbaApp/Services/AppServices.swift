@@ -1423,10 +1423,28 @@ public final class AppServices {
         self.identity = newIdentity
         self.localIdentityHashHex = localIdentityHash.map { String(format: "%02x", $0) }.joined()
 
-        // 2. Create path table for routing with persistence
+        // 2. Reuse the live path table (or create one on first init).
+        //
+        // Reusing the existing instance — never replacing it — is what keeps
+        // every `pathTable.pathUpdates` subscriber alive across re-inits.
+        // ContactsViewModel's `for await entry in pathUpdates` loop captured
+        // the instance that was current when it started listening; if a
+        // re-init here swapped in a brand-new PathTable, that loop would be
+        // pinned to the old instance forever: live announces would stop
+        // reaching the Network tab (the "Show N new" pill never appears) while
+        // pull-to-refresh — which re-reads `appServices.pathTable.allEntries()`
+        // and gets the NEW instance — still works. That exact divergence is
+        // the Network-tab live-update regression this fix removes.
+        //
+        // Safe because the path DB is a single shared file
+        // (`paths.db`, see `pathTableFilePath`) and path entries are
+        // identity-agnostic (see the switchIdentity note), so the in-memory
+        // table already holds exactly what a fresh instance would load.
         let pathDbPath = Self.pathTableFilePath
-        let newPathTable = try PathTable(databasePath: pathDbPath)
-        self.pathTable = newPathTable
+        if self.pathTable == nil {
+            self.pathTable = try PathTable(databasePath: pathDbPath)
+        }
+        let newPathTable = self.pathTable!
 
         // 3. Create transport with path table
         let newTransport = ReticulumTransport(pathTable: newPathTable)
@@ -3755,10 +3773,28 @@ public final class AppServices {
         // loadOrCreateIdentity, so do the NE-sharing here.
         Self.shareIdentityForModelB(identity)
 
-        // 2. Create path table for routing with persistence
+        // 2. Reuse the live path table (or create one on first init).
+        //
+        // Reusing the existing instance — never replacing it — is what keeps
+        // every `pathTable.pathUpdates` subscriber alive across re-inits.
+        // ContactsViewModel's `for await entry in pathUpdates` loop captured
+        // the instance that was current when it started listening; if a
+        // re-init here swapped in a brand-new PathTable, that loop would be
+        // pinned to the old instance forever: live announces would stop
+        // reaching the Network tab (the "Show N new" pill never appears) while
+        // pull-to-refresh — which re-reads `appServices.pathTable.allEntries()`
+        // and gets the NEW instance — still works. That exact divergence is
+        // the Network-tab live-update regression this fix removes.
+        //
+        // Safe because the path DB is a single shared file
+        // (`paths.db`, see `pathTableFilePath`) and path entries are
+        // identity-agnostic (see the switchIdentity note), so the in-memory
+        // table already holds exactly what a fresh instance would load.
         let pathDbPath = Self.pathTableFilePath
-        let newPathTable = try PathTable(databasePath: pathDbPath)
-        self.pathTable = newPathTable
+        if self.pathTable == nil {
+            self.pathTable = try PathTable(databasePath: pathDbPath)
+        }
+        let newPathTable = self.pathTable!
 
         // 3. Create transport with path table
         let newTransport = ReticulumTransport(pathTable: newPathTable)
@@ -5040,10 +5076,17 @@ public final class AppServices {
 
         logger.info("Connecting to \(host):\(port)")
 
-        // Create new path table with persistence (or reuse existing if already loaded)
+        // Create a new path table only on first init; on re-init REUSE the
+        // existing instance. Reusing is what keeps the Network tab's live
+        // `pathUpdates` stream attached to the table that keeps receiving
+        // announces — see the `initializeUnlocked` note for the full
+        // divergence. (The old comment "or reuse existing if already loaded"
+        // is now actually true.)
         let pathDbPath = Self.pathTableFilePath
-        let newPathTable = try PathTable(databasePath: pathDbPath)
-        self.pathTable = newPathTable
+        if self.pathTable == nil {
+            self.pathTable = try PathTable(databasePath: pathDbPath)
+        }
+        let newPathTable = self.pathTable!
         logger.info("Created PathTable with persistence: \(pathDbPath)")
 
         // Create new transport with path table

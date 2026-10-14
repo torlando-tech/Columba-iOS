@@ -93,6 +93,7 @@ jobs:
             Tests.static.test_rns_bridge_inbox \
             Tests.static.test_ios_rnode_stale_bond_contract \
             Tests.static.test_network_card_interface_list \
+            Tests.static.test_contacts_network_performance \
             Tests.static.test_tag_version_stamp
 
       # Verify a standalone production-layout app before xcodebuild test embeds

@@ -283,8 +283,15 @@ struct NetworkAnnouncesTab: View {
         // actually appear in the list after a flush.
         let count = viewModel.filteredPendingAnnounces.count
         return Button {
-            withAnimation(.easeOut(duration: 0.25)) {
-                viewModel.flushPendingAnnounces()
+            // Authoritative rebuild from the current PathTable (the same path
+            // pull-to-refresh uses, mirroring the refresh button above): merges
+            // the buffered new peers in AND refreshes every already-visible
+            // row's last-seen / hops / signal, so no row is left stale after
+            // the tap. Live announces still keep the snapshot rows put in the
+            // meantime -- only this user-initiated action re-sorts/rewrites the
+            // visible list.
+            Task {
+                await viewModel.refreshAnnounces()
             }
         } label: {
             HStack(spacing: 8) {
