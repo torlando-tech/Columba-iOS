@@ -29,31 +29,32 @@ extension TcpCommunityServer {
     /// Sourced from Android Columba's `TcpCommunityServer.kt`. Keep this list
     /// in sync with `app/src/main/java/network/columba/app/data/model/TcpCommunityServer.kt`.
     /// Up-to-date community directories: directory.rns.recipes, rmap.world.
+    ///
+    /// Mirrors Android's list verbatim, including order. Android removed
+    /// bootstrap-as-default (commit d22ba34aa) and no server is flagged
+    /// bootstrap, so every entry here is `isBootstrap: false`. `defaultServer`
+    /// therefore resolves to `servers[0]` — matching Android, whose onboarding
+    /// default is `TcpCommunityServers.servers.firstOrNull()`.
     static let servers: [TcpCommunityServer] = [
-        // Bootstrap-class servers (well-established, reliable nodes).
-        // Reticulum-Swift does not yet support the bootstrap interface mode,
-        // so the iOS UI surfaces these alongside other community servers.
-        // NOTE: Beleth's :4242 is currently unreachable (host up, but the RNS
-        // port drops connections), so it is NOT flagged bootstrap — otherwise
-        // `defaultServer` would seed it as the SOLE TCP path on a skipped/empty
-        // onboarding and the node would come up with no reachable relay. It
-        // stays in the directory as a selectable option in case it recovers.
-        // (Diverges intentionally from Android's list until Beleth is back.)
-        TcpCommunityServer(name: "Beleth RNS Hub", host: "rns.beleth.net", port: 4242, isBootstrap: false),
-        TcpCommunityServer(name: "Quad4 TCP Node 1", host: "rns.quad4.io", port: 4242, isBootstrap: true),
-        TcpCommunityServer(name: "FireZen", host: "firezen.com", port: 4242, isBootstrap: true),
-
-        // Community servers
-        TcpCommunityServer(name: "g00n.cloud Hub", host: "dfw.us.g00n.cloud", port: 6969, isBootstrap: false),
+        TcpCommunityServer(name: "rns.kin.earth", host: "rns.kin.earth", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "rmap.world", host: "rmap.world", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "RNS Sofia", host: "193.193.182.147", port: 4242, isBootstrap: false),
         TcpCommunityServer(name: "noDNS1", host: "202.61.243.41", port: 4965, isBootstrap: false),
         TcpCommunityServer(name: "noDNS2", host: "193.26.158.230", port: 4965, isBootstrap: false),
-        TcpCommunityServer(name: "NomadNode SEAsia TCP", host: "rns.jaykayenn.net", port: 4242, isBootstrap: false),
-        TcpCommunityServer(name: "0rbit-Net", host: "93.95.227.8", port: 49952, isBootstrap: false),
-        TcpCommunityServer(name: "Quad4 TCP Node 2", host: "rns2.quad4.io", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "interloper node", host: "intr.cx", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "Jon's Node", host: "rns.jlamothe.net", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "R-Net TCP", host: "istanbul.reserve.network", port: 9034, isBootstrap: false),
+        TcpCommunityServer(name: "RNS bnZ-NODE01", host: "node01.rns.bnz.se", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "RNS_Transport_US-East", host: "45.77.109.86", port: 4965, isBootstrap: false),
         TcpCommunityServer(name: "SparkN0de", host: "aspark.uber.space", port: 44860, isBootstrap: false),
+        TcpCommunityServer(name: "Beleth RNS Hub", host: "rns.beleth.net", port: 4242, isBootstrap: false),
+        TcpCommunityServer(name: "g00n.cloud Hub", host: "dfw.us.g00n.cloud", port: 6969, isBootstrap: false),
     ]
 
     /// Default server for first-time connections.
+    ///
+    /// Matches Android's `TcpCommunityServers.servers.firstOrNull()`: with no
+    /// server flagged bootstrap, this is simply the first entry.
     static var defaultServer: TcpCommunityServer {
         servers.first(where: { $0.isBootstrap }) ?? servers[0]
     }
