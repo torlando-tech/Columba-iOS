@@ -233,14 +233,20 @@ struct ConnectivityPage: View {
     private var serverPickerSheet: some View {
         NavigationStack {
             List {
-                Section("Recommended Relays") {
-                    ForEach(TcpCommunityServer.servers.filter { $0.isBootstrap }) { server in
-                        serverRow(server)
+                let bootstrapServers = TcpCommunityServer.servers.filter { $0.isBootstrap }
+                let communityServers = TcpCommunityServer.servers.filter { !$0.isBootstrap }
+                if !bootstrapServers.isEmpty {
+                    Section("Recommended Relays") {
+                        ForEach(bootstrapServers) { server in
+                            serverRow(server)
+                        }
                     }
                 }
-                Section("Other Public Relays") {
-                    ForEach(TcpCommunityServer.servers.filter { !$0.isBootstrap }) { server in
-                        serverRow(server)
+                if !communityServers.isEmpty {
+                    Section(bootstrapServers.isEmpty ? "Public Relays" : "Other Public Relays") {
+                        ForEach(communityServers) { server in
+                            serverRow(server)
+                        }
                     }
                 }
             }
