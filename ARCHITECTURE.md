@@ -26,7 +26,7 @@ UI / AppServices / Messaging / NodeNetworkTransport
 
 Background is the default. Onboarding can explicitly choose foreground without installing a VPN profile. Settings saves a choice for the next fresh application launch; it does not move live interfaces between interpreters. This preserves the existing AutoInterface restriction: same-process RNS restart may require relaunch because multicast sockets are not fully released.
 
-Before foreground startup, the app disables VPN on-demand and stops the existing tunnel. A process-held `flock` lease in the App Group container prevents either process from starting another node before the previous owner releases it. The kernel releases the lease after process death. Failed Python cleanup retains ownership rather than admitting a competing node. Delayed extension startup checks the selected host again before initializing RNS.
+Before foreground startup, the app disables VPN on-demand and stops the existing tunnel. A process-held `flock` lease in the App Group container prevents either process from starting another node before the previous owner releases it. The kernel releases the lease after process death. Failed Python cleanup retains ownership rather than admitting a competing node. Delayed extension startup checks the selected host again before initializing RNS. iOS SIGKILLs (0xdead10cc) a suspended app that holds a shared-container file lock, so the app releases the lease when it backgrounds and re-acquires it on foreground return; the extension's host re-check covers the free-lease window.
 
 ## Durable state
 

@@ -86,6 +86,42 @@ final class NodeHostContractTests: XCTestCase {
         XCTAssertTrue(first.acquire(at: url))
     }
 
+    func testLeaseReleaseForBackgroundDropsLockAndRefusesReacquisitionUntilResume() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("owner.lock")
+        let owner = NodeProcessLease()
+        let other = NodeProcessLease()
+        XCTAssertTrue(owner.acquire(at: url))
+        owner.releaseForBackground()
+        XCTAssertTrue(other.acquire(at: url), "background release must actually drop the flock")
+        XCTAssertFalse(owner.acquire(at: url), "a suspended process must not re-take the lease")
+        // A live node reclaims the lease once it is free again.
+        other.release()
+        XCTAssertTrue(owner.resumeFromBackground(reacquireAt: url))
+        XCTAssertFalse(other.acquire(at: url), "re-acquired lease must exclude other owners")
+        owner.release()
+    }
+
+    func testLeaseResumeWithoutLiveNodeClearsRefusalAndContendedReacquireStaysRetryable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("owner.lock")
+        let owner = NodeProcessLease()
+        let other = NodeProcessLease()
+        owner.releaseForBackground()
+        XCTAssertTrue(owner.resumeFromBackground(reacquireAt: nil), "no live node: resume only clears the refusal flag")
+        XCTAssertTrue(owner.acquire(at: url), "acquire works again after resume")
+        owner.releaseForBackground()
+        XCTAssertTrue(other.acquire(at: url))
+        XCTAssertFalse(owner.resumeFromBackground(reacquireAt: url), "reacquire must fail while another process holds the lease")
+        other.release()
+        XCTAssertTrue(owner.acquire(at: url), "a failed reacquire must still clear the refusal flag")
+        owner.release()
+    }
+
     func testStateMigrationPreservesNewerSharedFilesAndRetriesMissingFiles() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let source = root.appendingPathComponent("private")

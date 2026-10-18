@@ -340,6 +340,37 @@ final class PythonNodeEngine: @unchecked Sendable {
         return true
     }
 
+    /// Foreground-mode owner only: drop the lease flock before iOS suspends
+    /// the app. iOS SIGKILLs (0xdead10cc) any process suspended while holding
+    /// a file lock in the App Group container, and suspension freezes the
+    /// node's threads anyway, so the lock protects nothing across it.
+    ///
+    /// Deliberately does NOT take `lifecycleLock`: the reporter's kill
+    /// happened with a startup in flight holding that lock, so releasing the
+    /// lease must work exactly then. `NodeProcessLease` serializes itself.
+    func releaseLeaseForBackground() {
+        processLease.releaseForBackground()
+    }
+
+    /// Re-take the lease after returning from suspension. Returns false when
+    /// a live node could not reclaim ownership. While foreground mode is the
+    /// selected host the extension re-checks hosting before initializing its
+    /// own node, so contention here should be impossible; the caller logs and
+    /// keeps the node rather than tearing a working session down.
+    func reacquireLeaseAfterForeground() -> Bool {
+        stateLock.lock()
+        let running = isRunning
+        stateLock.unlock()
+        guard running else {
+            // No live node: only clear the refusal flag so a later start()
+            // can acquire normally.
+            return processLease.resumeFromBackground(reacquireAt: nil)
+        }
+        guard let root = AppGroupPaths.containerURL() else { return false }
+        return processLease.resumeFromBackground(
+            reacquireAt: root.appendingPathComponent("rns-owner.lock"))
+    }
+
     // MARK: - Bridge op wrappers (used by PacketTunnelProvider.dispatchPython)
 
     /// `rns_bridge.announce(display_name)` → `{ok, reason}`.
