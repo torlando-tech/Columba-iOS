@@ -153,6 +153,7 @@
 		7CE3523F6D1459A0A5CE76BE /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
 		83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A1380C075A9F67E1B173EA94 /* ReticulumSwift */; };
 		85C01EE558921012E4E057D6 /* NodeHostContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6FA51D689C6EEA75831D2C8 /* NodeHostContractTests.swift */; };
+		B309C475AAFC405051A82829 /* TunnelTeardownTimeoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8080510781074E76A587DA31 /* TunnelTeardownTimeoutTests.swift */; };
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
 		89AF655B749BC8073AE370D7 /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
@@ -523,6 +524,7 @@
 		F0A5 /* ColumbaModelBApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaModelBApp.entitlements; sourceTree = "<group>"; };
 		F6CAE98185D8B2D41D2ACA7E /* DiscoveredInterfacesScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Settings/DiscoveredInterfacesScreen.swift; sourceTree = SOURCE_ROOT; };
 		F6FA51D689C6EEA75831D2C8 /* NodeHostContractTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NodeHostContractTests.swift; path = Tests/ColumbaAppTests/NodeHostContractTests.swift; sourceTree = SOURCE_ROOT; };
+		8080510781074E76A587DA31 /* TunnelTeardownTimeoutTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TunnelTeardownTimeoutTests.swift; path = Tests/ColumbaAppTests/TunnelTeardownTimeoutTests.swift; sourceTree = SOURCE_ROOT; };
 		FBDS /* BLEDriverSeam.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/BLEDriverSeam.swift; sourceTree = SOURCE_ROOT; };
 		FBDT /* BLESeamDriverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/BLESeamDriverTests.swift; sourceTree = SOURCE_ROOT; };
 		FBST /* AppGroupBLESeamTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/AppGroupBLESeamTransport.swift; sourceTree = SOURCE_ROOT; };
@@ -1131,6 +1133,7 @@
 				0C625A513CF7628DC1512541 /* AutoAnnouncePolicyTests.swift */,
 				BEE73C13850F3692AFE70F05 /* MapStyleURLTests.swift */,
 				F6FA51D689C6EEA75831D2C8 /* NodeHostContractTests.swift */,
+				8080510781074E76A587DA31 /* TunnelTeardownTimeoutTests.swift */,
 				4D58209FE6421B8FFA3FA289 /* PeerChildInterfaceRegistryTests.swift */,
 				9158D917B99798FD205F1EA4 /* TCPClientWizardViewModelTests.swift */,
 			);
@@ -1627,6 +1630,7 @@
 				BB88CE246AEE328C3D7DAC99 /* AutoAnnouncePolicyTests.swift in Sources */,
 				2B5A40B3FC0EAA8FC42E26E7 /* MapStyleURLTests.swift in Sources */,
 				85C01EE558921012E4E057D6 /* NodeHostContractTests.swift in Sources */,
+				B309C475AAFC405051A82829 /* TunnelTeardownTimeoutTests.swift in Sources */,
 				568E489558D111023D5E3777 /* PeerChildInterfaceRegistryTests.swift in Sources */,
 				ABEE3CB05B416BFBC130DC76 /* TCPClientWizardViewModelTests.swift in Sources */,
 			);

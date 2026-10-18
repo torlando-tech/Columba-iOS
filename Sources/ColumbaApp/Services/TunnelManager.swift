@@ -45,12 +45,81 @@ public final class TunnelManager: @unchecked Sendable {
 
     private let logger = Logger(subsystem: "network.columba.Columba", category: "TunnelManager")
 
+    // MARK: - Bounded NE-preferences awaits
+
+    /// Errors surfaced by the bounded NetworkExtension-preferences awaits.
+    public enum TunnelManagerError: Error, LocalizedError, Equatable {
+        /// The NE preferences XPC call (loadAllFromPreferences /
+        /// saveToPreferences) did not report completion within its deadline.
+        /// The completion handler for these calls is delivered over the
+        /// neagent XPC and is known to be lost while a VPN session is
+        /// active; awaiting them unbounded hung foreground startup forever
+        /// ("Connecting to network…" never finishing after switching back
+        /// from background mode). The operation is left parked (never
+        /// cancelled, so the framework's continuation is never dropped);
+        /// callers decide whether to retry, surface, or proceed.
+        case preferencesTimedOut
+
+        public var errorDescription: String? {
+            switch self {
+            case .preferencesTimedOut:
+                return "The VPN configuration did not respond in time."
+            }
+        }
+    }
+
+    /// Thread-safe one-shot completion signal.
+    private final class CompletionFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var completed = false
+        func mark() { lock.withLock { completed = true } }
+        var isSet: Bool { lock.withLock { completed } }
+    }
+
+    /// True if `task` finished within `seconds`. The operation's task is
+    /// never cancelled and never joined: a lost framework completion leaves
+    /// it parked, which is safe (the suspended job keeps the continuation
+    /// alive — no CheckedContinuation deinit trap) and strictly better than
+    /// blocking a caller that must start up. The watcher mirrors `task`'s
+    /// completion into the flag and is itself fire-and-forget: a task group
+    /// would JOIN the watcher on exit and re-introduce the very hang this
+    /// helper prevents.
+    static func awaitCompleted<T, Failure: Error>(_ task: Task<T, Failure>, seconds: Double) async -> Bool {
+        let flag = CompletionFlag()
+        Task.detached(priority: .high) {
+            _ = await task.result
+            flag.mark()
+        }
+        let stepNs: UInt64 = 50_000_000
+        let limitNs = UInt64(seconds * 1_000_000_000)
+        var waitedNs: UInt64 = 0
+        while !flag.isSet {
+            if waitedNs >= limitNs { return false }
+            try? await Task.sleep(nanoseconds: stepNs)
+            waitedNs += stepNs
+        }
+        return true
+    }
+
     // MARK: - Lifecycle
 
     /// Load the existing VPN configuration or create a new one.
     public func load() async {
         do {
-            let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+            // `loadAllFromPreferences`' completion handler rides the neagent
+            // XPC and is known to be lost while a VPN session is active —
+            // awaiting it unbounded hung foreground startup forever
+            // ("Connecting to network…" after switching back from background
+            // mode). Race it bounded; on timeout the task stays parked (its
+            // continuation is never dropped, so the system wrapper cannot
+            // trap) and we proceed as if no config handle exists.
+            let loadTask = Task { try await NETunnelProviderManager.loadAllFromPreferences() }
+            var managers: [NETunnelProviderManager] = []
+            if await Self.awaitCompleted(loadTask, seconds: 5) {
+                managers = try await loadTask.value
+            } else {
+                DiagLog.log("[TUNNEL] load: loadAllFromPreferences timed out after 5s; continuing without config handle")
+            }
             if let existing = managers.first {
                 manager = existing
                 isEnabled = existing.isEnabled
@@ -156,21 +225,36 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel stopped (on-demand still armed)")
     }
 
-    /// Fully disable background transport: clear the on-demand connect rule and
-    /// the enabled flag, persist, then stop the live session.
+    /// Fully disable background transport: stop the live session, clear the
+    /// on-demand connect rule and the enabled flag, then persist.
     ///
     /// Without clearing on-demand, "Disable Background Transport" is a no-op —
     /// iOS auto-resumes the NE through the `NEOnDemandRuleConnect()` armed in
-    /// `install()`. Clearing `isOnDemandEnabled`/`onDemandRules`/`isEnabled` and
-    /// `saveToPreferences()` is what actually keeps it down. Re-enabling via
-    /// `start()` re-arms everything through `install()`. (ports #57 38f8d2e)
+    /// `install()`. Clearing `isOnDemandEnabled`/`onDemandRules`/`isEnabled`
+    /// and `saveToPreferences()` is what actually keeps it down. Re-enabling
+    /// via `start()` re-arms everything through `install()`. (ports #57 38f8d2e)
+    ///
+    /// The session is stopped BEFORE the disarm is saved: saving while a
+    /// session is active is exactly the neagent contention whose completion
+    /// handler can be lost, and the old unbounded `saveToPreferences()` await
+    /// then hung foreground startup forever. The save is raced bounded; on
+    /// timeout this throws `preferencesTimedOut` with the session already
+    /// stopped — startup callers treat that as best-effort-complete (a
+    /// surviving armed config is safe: the NE re-checks the selected host
+    /// before initializing RNS and the flock lease serializes the node).
     public func disable() async throws {
         guard let manager else { return }
+        manager.connection.stopVPNTunnel()
         manager.isOnDemandEnabled = false
         manager.onDemandRules = []
         manager.isEnabled = false
-        try await manager.saveToPreferences()
-        manager.connection.stopVPNTunnel()
+        let saveTask = Task { try await manager.saveToPreferences() }
+        guard await Self.awaitCompleted(saveTask, seconds: 5) else {
+            DiagLog.log("[TUNNEL] disable: saveToPreferences timed out after 5s (task parked; disarm may land late)")
+            isEnabled = false
+            throw TunnelManagerError.preferencesTimedOut
+        }
+        try await saveTask.value
         isEnabled = false
         logger.info("Tunnel disabled (on-demand cleared)")
     }
