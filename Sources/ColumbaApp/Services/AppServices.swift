@@ -1708,8 +1708,10 @@ public final class AppServices {
             return
         }
         if SharedDefaults.suite.bool(forKey: Self.backgroundDeliveryEnabledKey) {
-            // Returning user: bring the tunnel up without prompting.
-            try? await tunnel.install(seconds: 120)
+            // Returning user: bring the tunnel up without prompting. Tight
+            // deadline: no approval prompt can appear here, so a lost
+            // preferences completion must fail in seconds, not minutes.
+            try? await tunnel.install()
             try? await tunnel.start()
             if await tunnel.waitUntilConnected(timeoutMs: 20_000) {
                 DiagLog.log("[TUNNEL-GATE] returning user — tunnel reconnected")
@@ -1778,7 +1780,9 @@ public final class AppServices {
     func startTunnelForTest() async -> Bool {
         guard let tunnel = tunnelManager else { return false }
         do {
-            try await tunnel.install(seconds: 120)
+            // DEBUG deep-link tooling on a device that already approved the
+            // prompt: no user is waiting on a dialog, keep the tight cap.
+            try await tunnel.install()
             try await tunnel.start()
         } catch {
             DiagLog.log("[TEST-START-TUNNEL] start failed: \(error)")
