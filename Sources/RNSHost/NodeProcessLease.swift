@@ -38,14 +38,17 @@ final class NodeProcessLease: @unchecked Sendable {
 
     /// Drop the flock before iOS suspends the process. The node's threads are
     /// frozen by suspension anyway, so the lock protects nothing across it.
-    /// Remembers whether THIS call dropped a held lock, so a resume restores
-    /// ownership even when the caller's node-state snapshot cannot see an
-    /// in-flight `start()` that acquired it.
+    /// Remembers that THIS process held the lock when it backgrounded, so a
+    /// resume restores ownership even when the caller's node-state snapshot
+    /// cannot see an in-flight `start()` that acquired it. Multi-scene apps
+    /// call this once per backgrounding window before a single resume, so a
+    /// repeat call while suspended must not lose the pending restore; an
+    /// explicit `release()` (a completed stop) still cancels it.
     func releaseForBackground() {
         stateLock.lock()
         defer { stateLock.unlock() }
         suspendedForBackground = true
-        restoreOnResume = descriptor >= 0
+        if descriptor >= 0 { restoreOnResume = true }
         closeDescriptorLocked()
     }
 

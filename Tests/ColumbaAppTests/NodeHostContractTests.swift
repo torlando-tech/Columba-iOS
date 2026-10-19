@@ -157,6 +157,26 @@ final class NodeHostContractTests: XCTestCase {
         other.release()
     }
 
+    func testLeaseRepeatedBackgroundCallsPreservePendingRestore() throws {
+        // Multi-scene apps fire the background handler per window before a
+        // single resume; the second call must not lose the restore intent
+        // recorded while the lock was still held.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("owner.lock")
+        let owner = NodeProcessLease()
+        let other = NodeProcessLease()
+        XCTAssertTrue(owner.acquire(at: url))
+        owner.releaseForBackground()
+        owner.releaseForBackground()
+        XCTAssertTrue(other.acquire(at: url))
+        other.release()
+        XCTAssertTrue(owner.resumeFromBackground(reacquireAt: nil), "a second background call must not drop the pending restore")
+        XCTAssertFalse(other.acquire(at: url), "restored lease must exclude other owners")
+        owner.release()
+    }
+
     func testStateMigrationPreservesNewerSharedFilesAndRetriesMissingFiles() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let source = root.appendingPathComponent("private")
