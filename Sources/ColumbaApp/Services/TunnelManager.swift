@@ -32,6 +32,13 @@ public final class TunnelManager: @unchecked Sendable {
     /// Whether the extension is enabled in settings
     public private(set) var isEnabled = false
 
+    /// True when the initial `loadAllFromPreferences()` await timed out.
+    /// Distinct from "no config exists": a live tunnel may still hold the
+    /// node lease, so startup must attempt bounded recovery (see the late
+    /// adoption task in `load()`).
+    public private(set) var loadTimedOut = false
+    /// True once a config handle exists (loaded eagerly or adopted late).
+    public var hasConfigHandle: Bool { manager != nil }
     /// The loaded tunnel provider manager
     private var manager: NETunnelProviderManager?
 
@@ -91,12 +98,15 @@ public final class TunnelManager: @unchecked Sendable {
             flag.mark()
         }
         let stepNs: UInt64 = 50_000_000
+        // Monotonic deadline, not accumulated sleep: a busy executor or app
+        // suspension can delay each wake past its requested 50 ms, and
+        // counting requested sleep would silently stretch the deadline.
         let limitNs = UInt64(seconds * 1_000_000_000)
-        var waitedNs: UInt64 = 0
+        let deadlineNs = DispatchTime.now().uptimeNanoseconds &+ limitNs
         while !flag.isSet {
-            if waitedNs >= limitNs { return false }
-            try? await Task.sleep(nanoseconds: stepNs)
-            waitedNs += stepNs
+            let nowNs = DispatchTime.now().uptimeNanoseconds
+            if nowNs >= deadlineNs { return false }
+            try? await Task.sleep(nanoseconds: min(stepNs, deadlineNs - nowNs))
         }
         return true
     }
@@ -118,7 +128,22 @@ public final class TunnelManager: @unchecked Sendable {
             if await Self.awaitCompleted(loadTask, seconds: 5) {
                 managers = try await loadTask.value
             } else {
-                DiagLog.log("[TUNNEL] load: loadAllFromPreferences timed out after 5s; continuing without config handle")
+                // A timed-out load is NOT an empty result: a live tunnel may
+                // exist and keep holding the node lease. Keep the handle
+                // distinct (loadTimedOut) and adopt the parked task's result
+                // the moment it lands, so startup's bounded recovery can
+                // still reach disable() instead of permanently dropping the
+                // config.
+                loadTimedOut = true
+                DiagLog.log("[TUNNEL] load: loadAllFromPreferences timed out after 5s; awaiting late completion")
+                Task { [weak self] in
+                    guard let managers = try? await loadTask.value, let first = managers.first else { return }
+                    guard let self, self.manager == nil else { return }
+                    self.manager = first
+                    self.isEnabled = first.isEnabled
+                    self.status = first.connection.status
+                    DiagLog.log("[TUNNEL] load: adopted late loadAllFromPreferences result")
+                }
             }
             if let existing = managers.first {
                 manager = existing
