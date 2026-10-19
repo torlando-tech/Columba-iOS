@@ -36,7 +36,17 @@ PIP_VENV="$(mktemp -d "${TMPDIR:-/tmp}/columba-wheel-pip.XXXXXX")"
 trap 'rm -rf "$PIP_VENV"' EXIT
 python3 -m venv --without-pip "$PIP_VENV"
 PIP_PYTHON="$PIP_VENV/bin/python"
-curl -sSLo "$PIP_VENV/pip.pyz" https://bootstrap.pypa.io/pip/pip.pyz
+# Xcode Cloud intermittently resets long downloads; --fail keeps an HTTP
+# error page from being saved as pip.pyz (Python would then "run" the error
+# page), and the bounded retries match fetch-python.sh's convention.
+curl --fail --silent --show-error --location \
+    --retry 5 \
+    --retry-all-errors \
+    --retry-delay 2 \
+    --retry-max-time 600 \
+    --connect-timeout 30 \
+    --output "$PIP_VENV/pip.pyz" \
+    https://bootstrap.pypa.io/pip/pip.pyz
 "$PIP_PYTHON" "$PIP_VENV/pip.pyz" install --quiet \
     "pip==26.2.1" "setuptools==80.9.0" "wheel==0.45.1"
 "$PIP_PYTHON" -m pip --version | grep -q "pip 26.2.1"
