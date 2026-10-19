@@ -114,6 +114,25 @@ public final class TunnelManager: @unchecked Sendable {
         return true
     }
 
+    /// Runs one NE-preferences operation under a bounded await. On timeout
+    /// the operation's task stays parked (never cancelled — the suspended
+    /// job keeps the framework continuation alive) and the caller receives
+    /// `preferencesTimedOut` instead of hanging the Settings start/stop or
+    /// background-delivery paths forever. Same contract as the bounded
+    /// awaits in `load()`/`disable()`/`awaitPendingLoad()`.
+    static func boundedPreferences<T: Sendable>(
+        name: String,
+        seconds: Double = 5,
+        _ op: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let task = Task { try await op() }
+        guard await awaitCompleted(task, seconds: seconds) else {
+            DiagLog.log("[TUNNEL] \(name): preferences XPC timed out after \(seconds)s (task parked)")
+            throw TunnelManagerError.preferencesTimedOut
+        }
+        return try await task.value
+    }
+
     // MARK: - Lifecycle
 
     /// Load the existing VPN configuration or create a new one.
@@ -229,8 +248,12 @@ public final class TunnelManager: @unchecked Sendable {
         mgr.isOnDemandEnabled = true
         mgr.onDemandRules = [NEOnDemandRuleConnect()]
 
-        try await mgr.saveToPreferences()
-        try await mgr.loadFromPreferences()
+        try await Self.boundedPreferences(name: "install.save") {
+            try await mgr.saveToPreferences()
+        }
+        try await Self.boundedPreferences(name: "install.reload") {
+            try await mgr.loadFromPreferences()
+        }
 
         manager = mgr
         isEnabled = true
@@ -248,7 +271,9 @@ public final class TunnelManager: @unchecked Sendable {
 
         if !manager.isEnabled {
             manager.isEnabled = true
-            try await manager.saveToPreferences()
+            try await Self.boundedPreferences(name: "start.save") {
+                try await manager.saveToPreferences()
+            }
         }
 
         try manager.connection.startVPNTunnel()
@@ -407,7 +432,9 @@ public final class TunnelManager: @unchecked Sendable {
     /// Remove the VPN configuration entirely.
     public func uninstall() async throws {
         guard let manager else { return }
-        try await manager.removeFromPreferences()
+        try await Self.boundedPreferences(name: "uninstall.remove") {
+            try await manager.removeFromPreferences()
+        }
         self.manager = nil
         isEnabled = false
         status = .disconnected

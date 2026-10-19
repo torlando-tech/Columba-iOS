@@ -51,4 +51,39 @@ final class TunnelTeardownTimeoutTests: XCTestCase {
         try await tunnel.disable()
         XCTAssertFalse(tunnel.isEnabled)
     }
+
+    func testBoundedPreferencesReturnsValueOnSuccess() async throws {
+        let value = try await TunnelManager.boundedPreferences(name: "test.ok", seconds: 2) { 7 }
+        XCTAssertEqual(value, 7)
+    }
+
+    func testBoundedPreferencesThrowsTimeoutErrorAtDeadline() async {
+        let started = Date()
+        do {
+            _ = try await TunnelManager.boundedPreferences(name: "test.stall", seconds: 0.3) {
+                try await Task.sleep(nanoseconds: 3_600_000_000_000)
+                return 0
+            }
+            XCTFail("a stalled preferences op must surface preferencesTimedOut")
+        } catch let error as TunnelManager.TunnelManagerError {
+            XCTAssertEqual(error, .preferencesTimedOut)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2.0, "must fail at the deadline, not hang")
+    }
+
+    func testBoundedPreferencesPropagatesOperationError() async {
+        struct Boom: Error {}
+        do {
+            _ = try await TunnelManager.boundedPreferences(name: "test.boom", seconds: 2) {
+                throw Boom()
+            }
+            XCTFail("the operation's own error must propagate")
+        } catch is Boom {
+            // expected: a real failure is reported, not masked as a timeout
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
 }
