@@ -574,7 +574,7 @@ struct SettingsView: View {
                                 defer { isReticulumActionWorking = false }
                                 do {
                                     if stopping { try await tunnel.disable() }
-                                    else { try await tunnel.install(); try await tunnel.start() }
+                                    else { try await tunnel.install(seconds: 120); try await tunnel.start(seconds: 120) }
                                 } catch {
                                     DiagLog.log("[RNS-CARD] start/stop failed: \(error.localizedDescription)")
                                 }

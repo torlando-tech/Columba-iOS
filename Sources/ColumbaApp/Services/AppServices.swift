@@ -1679,7 +1679,7 @@ public final class AppServices {
         await ensureTunnelManager()
         guard let tunnel = tunnelManager else { return false }
         do {
-            try await tunnel.install()
+            try await tunnel.install(seconds: 120)
             try await tunnel.start()
         } catch {
             DiagLog.log("[TUNNEL-GATE] onboarding enable failed: \(error)")
@@ -1709,7 +1709,7 @@ public final class AppServices {
         }
         if SharedDefaults.suite.bool(forKey: Self.backgroundDeliveryEnabledKey) {
             // Returning user: bring the tunnel up without prompting.
-            try? await tunnel.install()
+            try? await tunnel.install(seconds: 120)
             try? await tunnel.start()
             if await tunnel.waitUntilConnected(timeoutMs: 20_000) {
                 DiagLog.log("[TUNNEL-GATE] returning user — tunnel reconnected")
@@ -1747,7 +1747,7 @@ public final class AppServices {
     func approveBackgroundDelivery() async -> Bool {
         guard let tunnel = tunnelManager else { return false }
         do {
-            try await tunnel.install()
+            try await tunnel.install(seconds: 120)
             try await tunnel.start()
         } catch {
             DiagLog.log("[TUNNEL-GATE] enable failed: \(error)")
@@ -1778,7 +1778,7 @@ public final class AppServices {
     func startTunnelForTest() async -> Bool {
         guard let tunnel = tunnelManager else { return false }
         do {
-            try await tunnel.install()
+            try await tunnel.install(seconds: 120)
             try await tunnel.start()
         } catch {
             DiagLog.log("[TEST-START-TUNNEL] start failed: \(error)")
