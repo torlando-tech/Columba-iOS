@@ -329,8 +329,13 @@ class IOSBLEBridgeContracts(unittest.TestCase):
 
     def test_wheel_fetch_uses_modern_packaging_and_requires_ble_runtime(self) -> None:
         script = FETCH_WHEELS.read_text()
-        self.assertIn('"pip==25.1.1"', script)
+        # The pip pin must stay interpreter-forward-compatible (25.1.x
+        # crashes on Python 3.15) and the bootstrap must never execute the
+        # interpreter's ensurepip pip - zipapp bootstrap + pinned install.
+        self.assertIn('"pip==26.2.1"', script)
         self.assertIn('"setuptools==80.9.0"', script)
+        self.assertIn("-m venv --without-pip", script)
+        self.assertIn("bootstrap.pypa.io/pip/pip.pyz", script)
         self.assertIn('$dst/ble_reticulum/BLEInterface.py', script)
 
 
