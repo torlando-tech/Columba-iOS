@@ -1902,15 +1902,13 @@ public final class AppServices {
         if NodeHostingMode.current == .foreground {
             DiagLog.log("[TUNNEL] foreground teardown begin")
             await ensureTunnelManager()
-            // Bounded recovery after a timed-out load: the parked
-            // loadAllFromPreferences task adopts its handle the moment the
-            // late completion lands; without this wait, disable() would
-            // no-op while a live extension keeps holding the node lease.
-            if tunnelManager?.loadTimedOut == true, tunnelManager?.hasConfigHandle == false {
-                for _ in 0..<100 {
-                    if tunnelManager?.hasConfigHandle == true { break }
-                    try await Task.sleep(for: .milliseconds(50))
-                }
+            // Bounded recovery after a timed-out load: await the parked
+            // loadAllFromPreferences task on THIS (startup) task so a late
+            // config handle is adopted without a second concurrent writer;
+            // without this, disable() would no-op while a live extension
+            // keeps holding the node lease.
+            if tunnelManager?.loadTimedOut == true {
+                await tunnelManager?.awaitPendingLoad(seconds: 5)
                 DiagLog.log("[TUNNEL] load-timeout recovery: configHandle=\(tunnelManager?.hasConfigHandle == true)")
             }
             do {

@@ -34,9 +34,12 @@ public final class TunnelManager: @unchecked Sendable {
 
     /// True when the initial `loadAllFromPreferences()` await timed out.
     /// Distinct from "no config exists": a live tunnel may still hold the
-    /// node lease, so startup must attempt bounded recovery (see the late
-    /// adoption task in `load()`).
+    /// node lease, so startup must attempt bounded recovery via
+    /// `awaitPendingLoad()`.
     public private(set) var loadTimedOut = false
+    /// The parked load task after a timeout; consumed once by
+    /// `awaitPendingLoad()` (single writer: the startup call chain).
+    private var pendingLoadTask: Task<[NETunnelProviderManager], any Error>?
     /// True once a config handle exists (loaded eagerly or adopted late).
     public var hasConfigHandle: Bool { manager != nil }
     /// The loaded tunnel provider manager
@@ -122,7 +125,7 @@ public final class TunnelManager: @unchecked Sendable {
             // ("Connecting to network…" after switching back from background
             // mode). Race it bounded; on timeout the task stays parked (its
             // continuation is never dropped, so the system wrapper cannot
-            // trap) and we proceed as if no config handle exists.
+            // trap) and startup may recover it via awaitPendingLoad().
             let loadTask = Task { try await NETunnelProviderManager.loadAllFromPreferences() }
             var managers: [NETunnelProviderManager] = []
             if await Self.awaitCompleted(loadTask, seconds: 5) {
@@ -130,20 +133,14 @@ public final class TunnelManager: @unchecked Sendable {
             } else {
                 // A timed-out load is NOT an empty result: a live tunnel may
                 // exist and keep holding the node lease. Keep the handle
-                // distinct (loadTimedOut) and adopt the parked task's result
-                // the moment it lands, so startup's bounded recovery can
-                // still reach disable() instead of permanently dropping the
-                // config.
+                // distinct (loadTimedOut) and hand the parked task to
+                // awaitPendingLoad(), so startup's bounded recovery adopts
+                // the late result ON THE STARTUP TASK - a second concurrent
+                // writer of manager/isEnabled/status would race the reads
+                // in hasConfigHandle/disable().
                 loadTimedOut = true
-                DiagLog.log("[TUNNEL] load: loadAllFromPreferences timed out after 5s; awaiting late completion")
-                Task { [weak self] in
-                    guard let managers = try? await loadTask.value, let first = managers.first else { return }
-                    guard let self, self.manager == nil else { return }
-                    self.manager = first
-                    self.isEnabled = first.isEnabled
-                    self.status = first.connection.status
-                    DiagLog.log("[TUNNEL] load: adopted late loadAllFromPreferences result")
-                }
+                pendingLoadTask = loadTask
+                DiagLog.log("[TUNNEL] load: loadAllFromPreferences timed out after 5s; startup may await late completion")
             }
             if let existing = managers.first {
                 manager = existing
@@ -183,6 +180,27 @@ public final class TunnelManager: @unchecked Sendable {
         } catch {
             logger.error("Failed to load tunnel config: \(error)")
         }
+    }
+
+    /// Bounded recovery after a timed-out `load()`: awaits the parked
+    /// `loadAllFromPreferences` task for up to `seconds` and adopts its
+    /// result on the CALLER's task — the startup call chain stays the
+    /// single writer of `manager`/`isEnabled`/`status`, so `disable()` and
+    /// `hasConfigHandle` cannot race a background adoption. The task is
+    /// consumed either way (never re-adopted); on a second timeout it
+    /// stays parked, keeping the framework continuation alive.
+    public func awaitPendingLoad(seconds: Double) async {
+        guard let task = pendingLoadTask else { return }
+        pendingLoadTask = nil
+        guard await Self.awaitCompleted(task, seconds: seconds) else {
+            DiagLog.log("[TUNNEL] awaitPendingLoad: late completion still absent after \(seconds)s")
+            return
+        }
+        guard let managers = try? await task.value, let first = managers.first else { return }
+        manager = first
+        isEnabled = first.isEnabled
+        status = first.connection.status
+        DiagLog.log("[TUNNEL] awaitPendingLoad: adopted late config, enabled=\(first.isEnabled)")
     }
 
     /// Install or update the VPN configuration profile.
