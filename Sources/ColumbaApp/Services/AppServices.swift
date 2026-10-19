@@ -2969,6 +2969,23 @@ public final class AppServices {
         #endif
     }
 
+    /// Foreground mode: the node lease is a flock on an App Group file, and
+    /// iOS SIGKILLs (0xdead10cc) any app suspended while holding it (the
+    /// reporter's crash: backgrounded during a slow startup, lease held).
+    /// Drop it on background; re-take it on foreground. Safe because the
+    /// extension's startup re-checks the selected host before initializing
+    /// RNS, so a free lease during suspension cannot admit a competing node.
+    public func releaseNodeLeaseForBackground() {
+        guard NodeHostingMode.current == .foreground else { return }
+        PythonNodeEngine.shared.releaseLeaseForBackground()
+    }
+
+    public func reacquireNodeLeaseAfterForeground() {
+        guard NodeHostingMode.current == .foreground else { return }
+        guard !PythonNodeEngine.shared.reacquireLeaseAfterForeground() else { return }
+        DiagLog.log("[LEASE] foreground re-acquire failed; another process owns the node lease")
+    }
+
     /// Directory holding the running Python instance's RNS config, derived from
     /// the identity the backend was started with. Returns nil if the backend
     /// was never started (no cached identity). Creates the directory if needed.

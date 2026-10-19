@@ -946,6 +946,9 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             let phaseValue = newPhase
             if phaseValue == .active {
+                // Re-take the node lease dropped at .background (0xdead10cc
+                // guard); no-op outside foreground hosting.
+                appServices.reacquireNodeLeaseAfterForeground()
                 appServices.propagationManager?.refreshLastSyncTime()
                 if let repository = messageRepository {
                     Task {
@@ -967,6 +970,12 @@ struct RootView: View {
             }
             #if os(iOS)
             if newPhase == .background {
+                // The node lease is a flock on an App Group file; iOS
+                // SIGKILLs (0xdead10cc) the app if it suspends while held.
+                // Drop it before suspension can happen, ahead of the
+                // best-effort persist below (which needs the GIL and can
+                // block behind a slow startup).
+                appServices.releaseNodeLeaseForBackground()
                 // Flush RNS's path table + known destinations to disk now —
                 // iOS won't run RNS's clean-exit persist, so without this a
                 // cold start can't recall previously-heard peers.
