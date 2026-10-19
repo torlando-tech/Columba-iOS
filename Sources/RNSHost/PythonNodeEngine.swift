@@ -362,8 +362,10 @@ final class PythonNodeEngine: @unchecked Sendable {
         let running = isRunning
         stateLock.unlock()
         guard running else {
-            // No live node: only clear the refusal flag so a later start()
-            // can acquire normally.
+            // No live node in THIS snapshot. The lease still self-restores
+            // if it was held at background time (a start() in flight
+            // acquired it before isRunning flips); otherwise this only
+            // clears the refusal flag so a later start() can acquire.
             return processLease.resumeFromBackground(reacquireAt: nil)
         }
         guard let root = AppGroupPaths.containerURL() else { return false }
