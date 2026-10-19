@@ -47,6 +47,38 @@ public enum ExtensionDiagLog {
         return containerURL.appendingPathComponent("ext-diag.log")
     }()
 
+    /// Maximum size of a single `ext-diag.log` file before rotation (5 MB),
+    /// mirroring the app-side `DiagLog` cap. The NE runs for days without a
+    /// process restart; without a bound the file grew to 427 MB on a device
+    /// in ~2.5 days.
+    public static let maxLogFileBytes: Int = 5 * 1024 * 1024
+
+    #if DEBUG
+    /// Test seam: lower the cap so rotation is exercisable without writing 5 MB.
+    static var maxLogFileBytesOverride: Int?
+    #endif
+
+    private static var capBytes: Int {
+        #if DEBUG
+        return maxLogFileBytesOverride ?? maxLogFileBytes
+        #else
+        return maxLogFileBytes
+        #endif
+    }
+
+    /// Previous log generation (`ext-diag.log.1`); rotation replaces it.
+    private static func rotatedURL(for url: URL) -> URL {
+        URL(fileURLWithPath: url.path + ".1")
+    }
+
+    /// Rotate the current log to `ext-diag.log.1`, replacing any previous
+    /// rotated file. Caller must hold `lock`.
+    private static func rotateLocked(for url: URL) {
+        let rotated = rotatedURL(for: url)
+        try? FileManager.default.removeItem(at: rotated)
+        try? FileManager.default.moveItem(at: url, to: rotated)
+    }
+
     /// Serializes appends/reads/clears so concurrent NE callbacks (TCP receive,
     /// Darwin-notification config reloads, NWConnection state handlers — all on
     /// different queues) can't interleave a write. A lock (not a serial queue) so
@@ -73,6 +105,16 @@ public enum ExtensionDiagLog {
         defer { lock.unlock() }
 
         if FileManager.default.fileExists(atPath: fileURL.path) {
+            // Bound the file: the NE runs for days; past the cap the current
+            // generation moves to `ext-diag.log.1` and a fresh file starts.
+            // Checked BEFORE the append so a single write can't outrun the cap
+            // by more than one line.
+            if let size = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int,
+               size > capBytes {
+                rotateLocked(for: fileURL)
+            }
+        }
+        if FileManager.default.fileExists(atPath: fileURL.path) {
             if let fh = try? FileHandle(forWritingTo: fileURL) {
                 fh.seekToEndOfFile()
                 fh.write(data)
@@ -96,12 +138,14 @@ public enum ExtensionDiagLog {
         )
     }
 
-    /// Truncate the log to empty. Used by the host before a fresh capture run.
+    /// Truncate the log (both generations) to empty. Used by the host before
+    /// a fresh capture run.
     public static func clear() {
         guard let fileURL else { return }
         lock.lock()
         defer { lock.unlock() }
         try? Data().write(to: fileURL, options: .atomic)
+        try? FileManager.default.removeItem(at: rotatedURL(for: fileURL))
         try? FileManager.default.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: fileURL.path
