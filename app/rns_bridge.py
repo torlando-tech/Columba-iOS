@@ -280,6 +280,16 @@ def _install_native_stamp_generator_unless_stopping() -> bool:
     return True
 
 
+# Per-stage startup timings in milliseconds, recorded by start() and read back
+# by Swift via startup_timing() for the [STARTUP] ext-diag markers
+# (issue #229: localize the import/GC stall on low-RAM devices).
+STARTUP_TIMING: dict[str, float] = {}
+
+
+def startup_timing() -> dict[str, float]:
+    """Return the per-stage startup timings recorded by start()."""
+    return dict(STARTUP_TIMING)
+
 _lock = threading.Lock()
 _propagation_sync_cancellation_lock = threading.Condition()
 _active_propagation_sync_cancellation: threading.Event | None = None
@@ -1677,9 +1687,12 @@ def start(
         _orig_signal = _signal.signal
         _signal.signal = lambda *_a, **_kw: None
         try:
+            _t0 = time.perf_counter()
             reticulum = RNS.Reticulum(config_dir)
             _state["reticulum"] = reticulum
+            STARTUP_TIMING["reticulum_ms"] = (time.perf_counter() - _t0) * 1000
 
+            _t0 = time.perf_counter()
             if identity_bytes is not None and len(identity_bytes) > 0:
                 identity = RNS.Identity.from_bytes(identity_bytes)
                 if identity is None:
@@ -1692,15 +1705,19 @@ def start(
                 identity = RNS.Identity()
                 identity.to_file(identity_path)
             _state["identity"] = identity
+            STARTUP_TIMING["identity_ms"] = (time.perf_counter() - _t0) * 1000
 
+            _t0 = time.perf_counter()
             storage_path = os.path.join(config_dir, "lxmf-storage")
             os.makedirs(storage_path, exist_ok=True)
             router = LXMF.LXMRouter(identity=identity, storagepath=storage_path)
             router.register_delivery_callback(_delivery_callback)
             _state["router"] = router
+            STARTUP_TIMING["router_ms"] = (time.perf_counter() - _t0) * 1000
         finally:
             _signal.signal = _orig_signal
 
+        _t0 = time.perf_counter()
         delivery_destination = router.register_delivery_identity(
             identity, display_name=display_name
         )
@@ -1722,6 +1739,7 @@ def start(
         # hash (last write wins). Only the four tracked aspects above feed the
         # network list now.
         _state["handler"] = handlers  # list now, was singleton — stop() handles both
+        STARTUP_TIMING["register_ms"] = (time.perf_counter() - _t0) * 1000
 
         # Register the lxst.telephony destination on our identity so
         # incoming voice calls have somewhere to land. Inbound RNS.Link
