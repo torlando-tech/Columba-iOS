@@ -151,13 +151,21 @@ final class PythonNodeEngine: @unchecked Sendable {
         defer { lifecycleLock.unlock() }
         guard NodeHostingMode.current == host, let root = AppGroupPaths.containerURL() else { return nil }
         let leaseURL = root.appendingPathComponent("rns-owner.lock")
+        let tLease = CFAbsoluteTimeGetCurrent()
         guard processLease.acquire(at: leaseURL) else {
             ExtensionDiagLog.log("[RNS-HOST] another process owns the node")
             return nil
         }
+        PythonNodeRuntime.shared.startupMark("lease", since: tLease)
         var started = false
         var attemptedStart = false
         defer {
+            // The bridge `start` call ran the import chain under the startup
+            // GC freeze (issue #229); restore collection once it has settled,
+            // success or failure alike.
+            if attemptedStart {
+                PythonNodeRuntime.shared.reenableGC()
+            }
             if !started && !isRunning {
                 // A failed Python start may have allocated interfaces. Release
                 // ownership only after Python confirms its cleanup completed.
@@ -231,6 +239,12 @@ final class PythonNodeEngine: @unchecked Sendable {
         }
         stateLock.lock(); isRunning = true; stateLock.unlock()
         ExtensionDiagLog.log("[NE-PY-RNS] start OK: \(result ?? "")")
+        // Python-side stage breakdown (reticulum/identity/router/register) for
+        // the [STARTUP] markers - localizes the low-RAM stall (issue #229).
+        if let timing = PythonNodeRuntime.shared.callBridge("startup_timing", payload: "{}"),
+           let (tok, tres, _) = Self.parse(timing), tok {
+            ExtensionDiagLog.log("[STARTUP] python stages: \(tres ?? "")")
+        }
         // Restore the saved relay before recovering sends, including when iOS
         // relaunches the extension while the app is suspended.
         if let config = PropagationSeamConfig.loadFromAppGroup(), let hash = config.propagationNodeHash {

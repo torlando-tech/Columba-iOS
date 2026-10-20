@@ -53,6 +53,7 @@ final class PythonNodeRuntime: @unchecked Sendable {
 
     private func performInit() -> Result<String, Error> {
         ExtensionDiagLog.log("[NE-PY] init begin")
+        let tInit = CFAbsoluteTimeGetCurrent()
 
         guard let payloadURL = try? NodePythonBundleLayout.resourceBundleURL(for: Bundle.main.bundleURL),
               let payload = Bundle(url: payloadURL), let executable = payload.executableURL else {
@@ -115,6 +116,7 @@ final class PythonNodeRuntime: @unchecked Sendable {
         if PyStatus_Exception(pyStatus) != 0 {
             return failed("Py_InitializeFromConfig: \(message(pyStatus))")
         }
+        startupMark("Py_Initialize", since: tInit)
 
         if !addSiteDir("app_packages") {
             return failed("failed to add app_packages site dir (\(resourcePath)/app_packages)")
@@ -123,6 +125,15 @@ final class PythonNodeRuntime: @unchecked Sendable {
             return failed("failed to prepend app dir to sys.path (\(resourcePath)/app)")
         }
 
+        // Issue #229 mitigation: the import chain (rns_bridge -> RNS -> LXMF ->
+        // cryptography/cffi) allocates heavily and the reporter's 3 GB device
+        // sampled mid-GC inside it. Disable collection and freeze the stdlib
+        // baseline for the duration; PythonNodeEngine.start() re-enables after
+        // the node is up (or the attempt fails). Standard CPython startup
+        // technique; harmless if the node never starts (idle interpreter).
+        if PyRun_SimpleString("import gc; gc.disable(); gc.freeze()") == 0 {
+            ExtensionDiagLog.log("[STARTUP] gc disabled+frozen for import chain")
+        }
         guard let version = readSysVersion() else {
             return failed("could not read sys.version after init (stdlib missing at \(pythonHome)?)")
         }
@@ -131,6 +142,7 @@ final class PythonNodeRuntime: @unchecked Sendable {
         savedThreadState = OpaquePointer(PyEval_SaveThread())
 
         state = .running
+        startupMark("py-init total", since: tInit)
         ExtensionDiagLog.log("[NE-PY] init OK sys.version=\(version)")
         return .success(version)
     }
@@ -198,6 +210,9 @@ final class PythonNodeRuntime: @unchecked Sendable {
             print("reticulum=" + ("up" if _r is not None else "none") + " ifaces=" + str(_n))
             """
         }
+        // The probe imports RNS/LXMF under the disabled GC like the real start
+        // path; restore collection when it finishes.
+        reenableGC()
     }
 
     /// Run one Python statement block under the GIL, logging its captured
@@ -325,7 +340,14 @@ final class PythonNodeRuntime: @unchecked Sendable {
         return withGIL {
             let rc = PyRun_SimpleString(snippet)
             guard rc == 0 else { return nil }
-            return readMainAttr("_call_out")
+            let out = readMainAttr("_call_out")
+            // [STARTUP] marker for the heavy first call (import chain) - the
+            // snippet only sets _call_timing for `start` or slow imports so
+            // routine bridge calls stay out of ext-diag (issue #229).
+            if let timing = readMainAttr("_call_timing"), !timing.isEmpty {
+                ExtensionDiagLog.log("[STARTUP] bridge: \(timing)")
+            }
+            return out
         }
     }
 
@@ -340,8 +362,12 @@ final class PythonNodeRuntime: @unchecked Sendable {
         let payloadLit = pyLiteral(payload)
         return """
         import json, base64, traceback
-        import rns_bridge
         import __main__
+        import time as _time
+        __main__._call_timing = ""
+        _t0 = _time.perf_counter()
+        import rns_bridge
+        _t1 = _time.perf_counter()
         def _dec(v):
             if isinstance(v, dict) and set(v) == {'__b64__'}:
                 return base64.b64decode(v['__b64__'] or b'')
@@ -361,6 +387,10 @@ final class PythonNodeRuntime: @unchecked Sendable {
             __main__._call_out = json.dumps({'ok': True, 'result': _out})
         except BaseException:
             __main__._call_out = json.dumps({'ok': False, 'error': traceback.format_exc()})
+        _import_ms = (_t1 - _t0) * 1000
+        _call_ms = (_time.perf_counter() - _t1) * 1000
+        if _fn == 'start' or _import_ms >= 100:
+            __main__._call_timing = 'import_rns_bridge=%.0fms %s=%.0fms' % (_import_ms, _fn, _call_ms)
         """
     }
 
@@ -379,6 +409,26 @@ final class PythonNodeRuntime: @unchecked Sendable {
         let gilState = PyGILState_Ensure()
         defer { PyGILState_Release(gilState) }
         return try body()
+    }
+
+    /// Log one `[STARTUP]` stage marker (elapsed since `since`) to ext-diag.
+    /// Shared by both process hosts: `ExtensionDiagLog` writes the App Group
+    /// file from either side (issue #229 startup localization).
+    func startupMark(_ stage: String, since: CFAbsoluteTime) {
+        let ms = Int((CFAbsoluteTimeGetCurrent() - since) * 1000)
+        ExtensionDiagLog.log("[STARTUP] \(stage) +\(ms)ms")
+    }
+
+    /// Undo the startup `gc.disable()+gc.freeze()` (see `performInit`):
+    /// unfreeze the baseline and re-enable collection once the import chain
+    /// and Reticulum init are done. Safe to call repeatedly / before init.
+    func reenableGC() {
+        guard state == .running else { return }
+        withGIL {
+            if PyRun_SimpleString("import gc; gc.unfreeze(); gc.enable()") == 0 {
+                ExtensionDiagLog.log("[STARTUP] gc unfrozen+enabled")
+            }
+        }
     }
 
     private func readSysVersion() -> String? {
