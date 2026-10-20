@@ -268,6 +268,7 @@
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
 		RMLT002 /* RuntimeActivityMonitorLeaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */; };
+		EDLR002 /* ExtensionDiagLogRotationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLR001 /* ExtensionDiagLogRotationTests.swift */; };
 		RQP02 /* ReplyQuoteParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RQP01 /* ReplyQuoteParityTests.swift */; };
 		SIDSBN /* SentIdStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIDSF /* SentIdStore.swift */; };
 		SPLASHBLD1 /* Splash in Frameworks */ = {isa = PBXBuildFile; productRef = SPLASHPROD1 /* Splash */; };
@@ -563,6 +564,7 @@
 		RDRF01 /* ProxyDrainRaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ProxyDrainRaceTests.swift; sourceTree = SOURCE_ROOT; };
 		RFT001 /* RuntimeFlavorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/RuntimeFlavorTests.swift; sourceTree = SOURCE_ROOT; };
 		RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/RuntimeActivityMonitorLeaseTests.swift; sourceTree = SOURCE_ROOT; };
+		EDLR001 /* ExtensionDiagLogRotationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ExtensionDiagLogRotationTests.swift; sourceTree = SOURCE_ROOT; };
 		RQP01 /* ReplyQuoteParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ReplyQuoteParityTests.swift; sourceTree = SOURCE_ROOT; };
 		SIDSF /* SentIdStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/SentIdStore.swift; sourceTree = SOURCE_ROOT; };
 		TMP001 /* ThemeManagerPersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ThemeManagerPersistenceTests.swift; sourceTree = SOURCE_ROOT; };
@@ -1114,6 +1116,7 @@
 				6C8CFC274AF9EF63E9A75238 /* PythonConfigWriterTests.swift */,
 				RFT001 /* RuntimeFlavorTests.swift */,
 				RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */,
+				EDLR001 /* ExtensionDiagLogRotationTests.swift */,
 				TMP001 /* ThemeManagerPersistenceTests.swift */,
 				MAFLD01 /* MessageAudioFieldTests.swift */,
 				VMRCD01 /* VoiceMessageRecorderTests.swift */,
@@ -1611,6 +1614,7 @@
 				26D564FAEE8E3C750E8E2442 /* PythonConfigWriterTests.swift in Sources */,
 				RFT002 /* RuntimeFlavorTests.swift in Sources */,
 				RMLT002 /* RuntimeActivityMonitorLeaseTests.swift in Sources */,
+				EDLR002 /* ExtensionDiagLogRotationTests.swift in Sources */,
 				TMP002 /* ThemeManagerPersistenceTests.swift in Sources */,
 				MAFLD02 /* MessageAudioFieldTests.swift in Sources */,
 				VMRCD02 /* VoiceMessageRecorderTests.swift in Sources */,
