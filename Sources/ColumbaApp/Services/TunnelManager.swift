@@ -40,6 +40,12 @@ public final class TunnelManager: @unchecked Sendable {
     /// The parked load task after a timeout; consumed once by
     /// `awaitPendingLoad()` (single writer: the startup call chain).
     private var pendingLoadTask: Task<[NETunnelProviderManager], any Error>?
+
+    /// A timed-out `install()` save, retained so the next `install()` adopts
+    /// its success (e.g. the user tapped Allow on the VPN prompt late)
+    /// instead of racing a duplicate save. Same parked-task contract as
+    /// `pendingLoadTask`.
+    private var pendingInstall: (manager: NETunnelProviderManager, task: Task<Void, any Error>)?
     /// True once a config handle exists (loaded eagerly or adopted late).
     public var hasConfigHandle: Bool { manager != nil }
     /// The loaded tunnel provider manager
@@ -112,6 +118,25 @@ public final class TunnelManager: @unchecked Sendable {
             try? await Task.sleep(nanoseconds: min(stepNs, deadlineNs - nowNs))
         }
         return true
+    }
+
+    /// Runs one NE-preferences operation under a bounded await. On timeout
+    /// the operation's task stays parked (never cancelled — the suspended
+    /// job keeps the framework continuation alive) and the caller receives
+    /// `preferencesTimedOut` instead of hanging the Settings start/stop or
+    /// background-delivery paths forever. Same contract as the bounded
+    /// awaits in `load()`/`disable()`/`awaitPendingLoad()`.
+    static func boundedPreferences<T: Sendable>(
+        name: String,
+        seconds: Double = 5,
+        _ op: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let task = Task { try await op() }
+        guard await awaitCompleted(task, seconds: seconds) else {
+            DiagLog.log("[TUNNEL] \(name): preferences XPC timed out after \(seconds)s (task parked)")
+            throw TunnelManagerError.preferencesTimedOut
+        }
+        return try await task.value
     }
 
     // MARK: - Lifecycle
@@ -204,7 +229,27 @@ public final class TunnelManager: @unchecked Sendable {
     }
 
     /// Install or update the VPN configuration profile.
-    public func install() async throws {
+    ///
+    /// `seconds` bounds the preferences save. The FIRST save of a new tunnel
+    /// config is what surfaces the iOS VPN-approval prompt, and the await
+    /// spans the user's decision — approval flows must pass a generous
+    /// deadline (see `AppServices`' 120 s call sites); a 5 s cap would throw
+    /// `preferencesTimedOut` while the prompt is still on screen. On timeout
+    /// the save task stays parked and is retained: a later `install()`
+    /// adopts its success (the user tapped Allow late) instead of racing a
+    /// second save.
+    public func install(seconds: Double = 5) async throws {
+        if let pending = pendingInstall {
+            pendingInstall = nil
+            if await Self.awaitCompleted(pending.task, seconds: 2), (try? await pending.task.value) != nil {
+                manager = pending.manager
+                isEnabled = true
+                status = pending.manager.connection.status
+                DiagLog.log("[TUNNEL] install: adopted late save from a timed-out install")
+                return
+            }
+        }
+
         let mgr: NETunnelProviderManager
         if let existing = manager {
             mgr = existing
@@ -229,8 +274,16 @@ public final class TunnelManager: @unchecked Sendable {
         mgr.isOnDemandEnabled = true
         mgr.onDemandRules = [NEOnDemandRuleConnect()]
 
-        try await mgr.saveToPreferences()
-        try await mgr.loadFromPreferences()
+        let saveTask = Task { try await mgr.saveToPreferences() }
+        guard await Self.awaitCompleted(saveTask, seconds: seconds) else {
+            pendingInstall = (mgr, saveTask)
+            DiagLog.log("[TUNNEL] install: saveToPreferences timed out after \(seconds)s (task parked; a later install adopts it)")
+            throw TunnelManagerError.preferencesTimedOut
+        }
+        try await saveTask.value
+        try await Self.boundedPreferences(name: "install.reload", seconds: seconds) {
+            try await mgr.loadFromPreferences()
+        }
 
         manager = mgr
         isEnabled = true
@@ -238,17 +291,21 @@ public final class TunnelManager: @unchecked Sendable {
         logger.info("Tunnel config installed (on-demand connect enabled)")
     }
 
-    /// Start the tunnel extension.
-    public func start() async throws {
+    /// Start the tunnel extension. `seconds` bounds a fallback install (first
+    /// config save = approval prompt); the re-enable save cannot prompt and
+    /// keeps the tight default.
+    public func start(seconds: Double = 5) async throws {
         guard let manager else {
-            try await install()
-            try await start()
+            try await install(seconds: seconds)
+            try await start(seconds: seconds)
             return
         }
 
         if !manager.isEnabled {
             manager.isEnabled = true
-            try await manager.saveToPreferences()
+            try await Self.boundedPreferences(name: "start.save") {
+                try await manager.saveToPreferences()
+            }
         }
 
         try manager.connection.startVPNTunnel()
@@ -407,7 +464,9 @@ public final class TunnelManager: @unchecked Sendable {
     /// Remove the VPN configuration entirely.
     public func uninstall() async throws {
         guard let manager else { return }
-        try await manager.removeFromPreferences()
+        try await Self.boundedPreferences(name: "uninstall.remove") {
+            try await manager.removeFromPreferences()
+        }
         self.manager = nil
         isEnabled = false
         status = .disconnected
