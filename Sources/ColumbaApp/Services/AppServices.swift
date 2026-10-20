@@ -1900,12 +1900,34 @@ public final class AppServices {
             await ensureBackgroundDeliveryTunnel()
         }
         if NodeHostingMode.current == .foreground {
+            DiagLog.log("[TUNNEL] foreground teardown begin")
             await ensureTunnelManager()
-            try await tunnelManager?.disable()
+            // Bounded recovery after a timed-out load: await the parked
+            // loadAllFromPreferences task on THIS (startup) task so a late
+            // config handle is adopted without a second concurrent writer;
+            // without this, disable() would no-op while a live extension
+            // keeps holding the node lease.
+            if tunnelManager?.loadTimedOut == true {
+                await tunnelManager?.awaitPendingLoad(seconds: 5)
+                DiagLog.log("[TUNNEL] load-timeout recovery: configHandle=\(tunnelManager?.hasConfigHandle == true)")
+            }
+            do {
+                try await tunnelManager?.disable()
+            } catch {
+                // Best-effort: the NE preferences XPC can lose its completion
+                // while a session is active (TunnelManager bounds the await
+                // and parks it). Blocking startup on the teardown was the
+                // "Connecting to network… forever" hang after switching back
+                // from background mode. A surviving armed config is safe: the
+                // NE re-checks the selected host before initializing RNS, and
+                // the flock lease serializes the node either way.
+                DiagLog.log("[TUNNEL] foreground teardown incomplete: \(error); proceeding")
+            }
             for _ in 0..<100 {
                 if tunnelManager?.status == .disconnected || tunnelManager?.status == .invalid { break }
                 try await Task.sleep(for: .milliseconds(100))
             }
+            DiagLog.log("[TUNNEL] foreground teardown end status=\(String(describing: tunnelManager?.status))")
         }
         hostingMode = NodeHostingMode.current
         let backend = BackendFactory.make(mode: NodeHostingMode.current, proxySend: proxySend)
