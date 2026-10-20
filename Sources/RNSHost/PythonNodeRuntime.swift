@@ -360,37 +360,45 @@ final class PythonNodeRuntime: @unchecked Sendable {
         // executable code).
         let fnLit = pyLiteral(fn)
         let payloadLit = pyLiteral(payload)
+        // Everything except the two `__main__` result slots lives INSIDE
+        // `_call_entry`: `start` releases the GIL while RNS init waits, and a
+        // nested `callBridge` (e.g. a BLE callback) runs its own snippet in
+        // the SAME `__main__` dict during that window - module-level timer
+        // names would be clobbered mid-call and the [STARTUP] marker would
+        // report the nested call's timestamps (greploop #235 P2).
         return """
         import json, base64, traceback
         import __main__
         import time as _time
-        __main__._call_timing = ""
-        _t0 = _time.perf_counter()
-        import rns_bridge
-        _t1 = _time.perf_counter()
-        def _dec(v):
-            if isinstance(v, dict) and set(v) == {'__b64__'}:
-                return base64.b64decode(v['__b64__'] or b'')
-            if isinstance(v, dict):
-                return {k: _dec(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [_dec(x) for x in v]
-            return v
-        _p = _dec(json.loads(\(payloadLit)))
-        _fn = \(fnLit)
-        try:
-            _res = getattr(rns_bridge, _fn)(*(_p.get('args') or []), **(_p.get('kwargs') or {}))
+        def _call_entry():
+            __main__._call_timing = ""
+            _t0 = _time.perf_counter()
+            import rns_bridge
+            _t1 = _time.perf_counter()
+            def _dec(v):
+                if isinstance(v, dict) and set(v) == {'__b64__'}:
+                    return base64.b64decode(v['__b64__'] or b'')
+                if isinstance(v, dict):
+                    return {k: _dec(x) for k, x in v.items()}
+                if isinstance(v, list):
+                    return [_dec(x) for x in v]
+                return v
+            _p = _dec(json.loads(\(payloadLit)))
+            _fn = \(fnLit)
             try:
-                _out = json.dumps(_res)
-            except TypeError:
-                _out = json.dumps({'__repr__': repr(_res)})
-            __main__._call_out = json.dumps({'ok': True, 'result': _out})
-        except BaseException:
-            __main__._call_out = json.dumps({'ok': False, 'error': traceback.format_exc()})
-        _import_ms = (_t1 - _t0) * 1000
-        _call_ms = (_time.perf_counter() - _t1) * 1000
-        if _fn == 'start' or _import_ms >= 100:
-            __main__._call_timing = 'import_rns_bridge=%.0fms %s=%.0fms' % (_import_ms, _fn, _call_ms)
+                _res = getattr(rns_bridge, _fn)(*(_p.get('args') or []), **(_p.get('kwargs') or {}))
+                try:
+                    _out = json.dumps(_res)
+                except TypeError:
+                    _out = json.dumps({'__repr__': repr(_res)})
+                __main__._call_out = json.dumps({'ok': True, 'result': _out})
+            except BaseException:
+                __main__._call_out = json.dumps({'ok': False, 'error': traceback.format_exc()})
+            _import_ms = (_t1 - _t0) * 1000
+            _call_ms = (_time.perf_counter() - _t1) * 1000
+            if _fn == 'start' or _import_ms >= 100:
+                __main__._call_timing = 'import_rns_bridge=%.0fms %s=%.0fms' % (_import_ms, _fn, _call_ms)
+        _call_entry()
         """
     }
 
