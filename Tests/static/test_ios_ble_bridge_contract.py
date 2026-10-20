@@ -328,10 +328,12 @@ class IOSBLEBridgeContracts(unittest.TestCase):
         self.assertIn('label: "Max GATT payload"', view)
 
     def test_wheel_fetch_uses_modern_packaging_and_requires_ble_runtime(self) -> None:
-        script = FETCH_WHEELS.read_text()
-        # The pip pin must stay interpreter-forward-compatible (25.1.x
-        # crashes on Python 3.15) and the bootstrap must never execute the
-        # interpreter's ensurepip pip - zipapp bootstrap + pinned install.
+        # The bootstrap moved into support/bootstrap-pip.sh (host-version
+        # aware; behavior covered by Tests/static/
+        # test_fetch_wheels_pip_bootstrap.py). The packaging pins must
+        # survive the split: never the interpreter's ensurepip pip - venv
+        # without pip + explicit bootstrap + pinned install.
+        script = FETCH_WHEELS.read_text() + (ROOT / "support/bootstrap-pip.sh").read_text()
         self.assertIn('"pip==26.2.1"', script)
         self.assertIn('"setuptools==80.9.0"', script)
         self.assertIn("-m venv --without-pip", script)
