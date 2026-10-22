@@ -897,9 +897,15 @@ def _ingress_retry_path() -> str | None:
 
 
 def _ingress_retry_fields(message: Any) -> dict | None:
-    """Extract the fields `_write_inbound_to_grdb` needs, in JSONL-serializable
-    form. Returns None when the message has no persistable row (no packed wire or
-    no hashes) - nothing to retain. Best-effort; never raises."""
+    """Extract the fields `_write_inbound_to_grdb` needs, in raw (pre-hex) form,
+    for `_store_ingress_retry_artifact` to serialise into the durable JSONL.
+    Returns None when the message has no persistable row (no packed wire or no
+    hashes) - nothing to retain. Best-effort; never raises.
+
+    The blobs stay BYTES here on purpose: hex-encoding a multi-megabyte `packed`
+    up front triples its footprint exactly when the process is already under
+    pressure (this capture runs after a failed GRDB write). The writer hexes in
+    bounded chunks instead."""
     try:
         packed = bytes(getattr(message, "packed", None) or b"")
         if not packed:
@@ -912,14 +918,14 @@ def _ingress_retry_fields(message: Any) -> dict | None:
         stamp = getattr(message, "stamp", None)
         stamp_b = bytes(stamp) if stamp is not None else None
         return {
-            "packed_hex": packed.hex(),
-            "message_id_hex": message_id.hex(),
-            "source_hash_hex": source_hash.hex(),
-            "destination_hash_hex": destination_hash.hex(),
-            "title_hex": bytes(getattr(message, "title", None) or b"").hex(),
-            "content_hex": bytes(getattr(message, "content", None) or b"").hex(),
-            "signature_hex": bytes(getattr(message, "signature", None) or b"").hex(),
-            "stamp_hex": stamp_b.hex() if stamp_b else None,
+            "packed": packed,
+            "message_id": message_id,
+            "source_hash": source_hash,
+            "destination_hash": destination_hash,
+            "title": bytes(getattr(message, "title", None) or b""),
+            "content": bytes(getattr(message, "content", None) or b""),
+            "signature": bytes(getattr(message, "signature", None) or b""),
+            "stamp": stamp_b,
             "timestamp": float(getattr(message, "timestamp", None) or time.time()),
             "method": int(getattr(message, "method", None) or 0),
             "rssi": getattr(message, "rssi", None),
@@ -934,15 +940,59 @@ def _ingress_retry_fields(message: Any) -> dict | None:
 
 def _store_ingress_retry_artifact(fields: dict) -> None:
     """Append one retained inbound artifact to the durable JSONL file. Best-effort;
-    never raises (called from the LXMF delivery callback)."""
+    never raises (called from the LXMF delivery callback).
+
+    The line is written incrementally (hex blobs in bounded chunks, scalars via
+    json.dumps) so a multi-megabyte `packed` never materialises as one giant
+    hex/JSON string — this capture runs exactly when the process is already
+    under memory pressure. The on-disk line format is byte-for-byte what the
+    reader expects: `_retry_pending_ingress` still parses each line with
+    `json.loads` and `_reconstruct_ingress_message` reads the same `*_hex`
+    keys. A failed write truncates back to the pre-write size so a half line
+    can never poison the file (the reader drops unparseable lines, which would
+    silently discard the retained message)."""
     path = _ingress_retry_path()
     if path is None:
         return
+    # Chunk size bounds the transient hex-string allocation: a whole-message
+    # `packed.hex()` on a 6 MB attachment allocates 12 MB in one go.
+    chunk = 1 << 20
     try:
         with _ingress_retry_lock:
+            start = os.path.getsize(path) if os.path.exists(path) else 0
             with open(path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(fields) + "\n")
-        RNS.log(f"rns_bridge: inbound retained for ingress retry id={fields['message_id_hex'][:8]}", RNS.LOG_ERROR)
+                try:
+                    fh.write("{")
+                    hex_fields = (
+                        ("packed_hex", "packed"),
+                        ("message_id_hex", "message_id"),
+                        ("source_hash_hex", "source_hash"),
+                        ("destination_hash_hex", "destination_hash"),
+                        ("title_hex", "title"),
+                        ("content_hex", "content"),
+                        ("signature_hex", "signature"),
+                    )
+                    for i, (key, src) in enumerate(hex_fields):
+                        if i:
+                            fh.write(",")
+                        fh.write(json.dumps(key))
+                        fh.write(':"')
+                        blob = fields[src]
+                        for off in range(0, len(blob), chunk):
+                            fh.write(blob[off:off + chunk].hex())
+                        fh.write('"')
+                    fh.write(',"stamp_hex":')
+                    fh.write("null" if fields["stamp"] is None else json.dumps(fields["stamp"].hex()))
+                    for key in ("timestamp", "method", "rssi", "snr", "q", "skip_conversation"):
+                        fh.write("," + json.dumps(key) + ":" + json.dumps(fields[key]))
+                    fh.write("}\n")
+                except Exception:
+                    try:
+                        fh.truncate(start)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    raise
+        RNS.log(f"rns_bridge: inbound retained for ingress retry id={fields['message_id'].hex()[:8]}", RNS.LOG_ERROR)
     except Exception as e:  # noqa: BLE001
         RNS.log(f"rns_bridge: ingress-retry store failed: {e}", RNS.LOG_ERROR)
 
@@ -1004,13 +1054,20 @@ def _retry_pending_ingress() -> int:
         return 0
     if not raw_lines:
         return 0
-    # Canonical key per line (json round-trip, sorted keys) so a line appended
-    # with the same content as one we read is deduped, not doubled.
+    # Canonical key per line: the message_id hex, located without parsing the
+    # line (a full json round-trip would re-materialise multi-megabyte hex
+    # payloads during the retry pass). The id is content-addressed, so one id
+    # means one artifact content — a line appended with the same content as one
+    # we read is deduped, not doubled (and the store's INSERT OR REPLACE is
+    # keyed by message_id too).
     def _key(line: str) -> str:
-        try:
-            return json.dumps(json.loads(line), sort_keys=True, separators=(",", ":"))
-        except Exception:  # noqa: BLE001
+        marker = '"message_id_hex":"'
+        start = line.find(marker)
+        if start == -1:
             return line
+        start += len(marker)
+        end = line.find('"', start)
+        return line[start:end] if end != -1 else line
     snapshot = [ln for ln in (l.strip() for l in raw_lines) if ln]
     snapshot_keys = {_key(ln) for ln in snapshot}
     _retrying_ingress = True
@@ -1527,17 +1584,6 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
         title = message.title_as_string()
     except Exception:
         title = ""
-    # Carry the inbound LXMF field map (telemetry / attachments / reactions /
-    # replies / icon / cease) to Swift as MessagePack-packed hex. Swift decodes
-    # it via LxmfFieldCodec → IncomingMessageHandler. Empty when there are no
-    # fields or packing fails (graceful — content/title still flow).
-    fields_hex = ""
-    try:
-        if getattr(message, "fields", None):
-            from RNS.vendor import umsgpack
-            fields_hex = umsgpack.packb(message.fields).hex()
-    except Exception:
-        fields_hex = ""
     src = message.source_hash.hex() if message.source_hash else ""
     # Preserve the canonical LXMF hash. Reactions identify their target by this
     # exact hash; synthesising a different app-local id makes peers receive the
@@ -1605,6 +1651,24 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
             _publish_inbound_banner(message)
         _post_darwin(_DARWIN_NEW_MESSAGE)
         return
+    # Carry the inbound LXMF field map (telemetry / attachments / reactions /
+    # replies / icon / cease) to Swift as MessagePack-packed hex. Swift decodes
+    # it via LxmfFieldCodec → IncomingMessageHandler. Empty when there are no
+    # fields or packing fails (graceful — content/title still flow).
+    #
+    # Built ONLY for this in-process path. The durable (NE) branch returned
+    # above: it persists the LXMF wire (`message.packed`) directly and never
+    # reads this hex, so computing packb+hex there would transiently allocate
+    # ~3x the attachment size for a dead value — inside the extension's jetsam
+    # budget that amplification is what killed the process on multi-megabyte
+    # attachments (background-transport crash report, 6 MB file).
+    fields_hex = ""
+    try:
+        if getattr(message, "fields", None):
+            from RNS.vendor import umsgpack
+            fields_hex = umsgpack.packb(message.fields).hex()
+    except Exception:
+        fields_hex = ""
     _put(
         "inbound",
         source_hash=src,

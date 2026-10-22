@@ -117,6 +117,19 @@ memory** and drive load from a desktop peer — no debugger needed.
 > and read the sampler line just before/after the transfer. The controlled
 > desktop-peer harness is only needed for the clean 5-run numbers in the verdict.
 
+> **2026-10-22 (user report: NE killed by 6 MB inbound attachment):** two
+> payload-proportional amplifications landed fixed. (1) `_delivery_callback` no
+> longer computes the MessagePack-hex field map in durable (NE) mode — the NE
+> persists the LXMF wire directly and never read the hex (~3x payload saved).
+> (2) RNS `Resource.assemble()` (fork pin 45913921) releases the parts list
+> after the join, slices the random hash with a zero-copy memoryview, and hashes
+> incrementally instead of concatenating (~1.8x payload saved on a measured
+> 6 MB assembly: 67 MB -> 56 MB peak RSS host-side). The retained-artifact
+> writer (`ingress-retry.jsonl`) now hexes in 1 MiB chunks with truncate-on-
+> failure. Re-run 3b with a 6 MB attachment expecting PASS; the 24–32 MB
+> stressor still needs Track L streaming (the delivery window still holds the
+> wire + parsed field map simultaneously, so the peak remains payload-bounded).
+
 ---
 
 ## 4. Known-open / deferred (track, not blockers for the above)

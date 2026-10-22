@@ -108,6 +108,9 @@ class InboundSignalMetricsTests(unittest.TestCase):
                 Transport=types.SimpleNamespace(path_table=path_table),
             ),
             "_put": lambda kind, **payload: events.append((kind, payload)),
+            # These tests exercise the legacy in-process `_put` path; the
+            # durable (NE) branch is covered in test_inbound_delivery_memory.py.
+            "_durable_mode": False,
         }
         module = ast.Module(
             body=[

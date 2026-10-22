@@ -43,14 +43,17 @@ source "$POC_ROOT/support/bootstrap-pip.sh"
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
 #
-# Pinned to the branch `rebase/columba-1.5.5` (head 3759488e): RNS 1.5.5 plus the
+# Pinned to the branch `rebase/columba-1.5.5` (head d3014998): RNS 1.5.5 plus the
 # SAME six columba embedded-runtime hardening commits the previous pin
-# (754654fe, RNS 1.5.2 + 6) carried, re-applied on top of 1.5.5. 1.5.5 adds live
-# interface attach/detach/reload (RNS.Reticulum.attach_interface /
+# (754654fe, RNS 1.5.2 + 6) carried, re-applied on top of 1.5.5, plus the
+# Resource.assemble receive-path memory bound (d3014998: parts released after
+# join, zero-copy random-hash slice, incremental hashing — the peak that jetsam
+# -killed the Network Extension on multi-megabyte inbound attachments). 1.5.5
+# adds live interface attach/detach/reload (RNS.Reticulum.attach_interface /
 # detach_interface / reload_interface) and a real AutoInterface.detach() teardown
 # — the teardown the in-NE node relies on for hot interface swaps. Bump
 # deliberately; the commit is on the same remote this script pulls from.
-RETICULUM_REF="${RETICULUM_REF:-3759488eba880489562268d9a1a993f443d1b8bd}"
+RETICULUM_REF="${RETICULUM_REF:-d3014998582ca040be27a3355e1c9e98803ed65d}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
