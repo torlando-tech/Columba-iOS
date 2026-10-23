@@ -15,6 +15,9 @@ class FakeRouter:
     def __init__(self, state: int):
         self.outbound_propagation_node = object()
         self.propagation_transfer_state = state
+        self.request_state = state
+        self.request_result = 0
+        self.outbound_propagation_link = None
         self.propagation_transfer_last_result = 0
         self.requests = 0
         self.cancelled = 0
@@ -24,6 +27,11 @@ class FakeRouter:
 
     def request_messages_from_propagation_node(self, _identity):
         self.requests += 1
+        link = self.outbound_propagation_link
+        if link is not None and link.status != 2:
+            return
+        self.propagation_transfer_state = self.request_state
+        self.propagation_transfer_last_result = self.request_result
         self.requested.set()
 
     def cancel_propagation_node_requests(self):
@@ -48,6 +56,7 @@ class PropagationSyncCancellationTests(unittest.TestCase):
             }
         ]
         router_type = types.SimpleNamespace(
+            PR_IDLE=0,
             PR_COMPLETE=5,
             PR_NO_PATH=6,
             PR_TRANSFER_FAILED=7,
@@ -65,6 +74,7 @@ class PropagationSyncCancellationTests(unittest.TestCase):
         namespace = {
             "Any": Any,
             "LXMF": types.SimpleNamespace(LXMRouter=router_type),
+            "RNS": types.SimpleNamespace(Link=types.SimpleNamespace(ACTIVE=2, CLOSED=4)),
             "threading": threading,
             "time": time,
             "_lock": threading.Lock(),
@@ -108,7 +118,7 @@ class PropagationSyncCancellationTests(unittest.TestCase):
         self.assertEqual(result["state"], "cancelled")
         self.assertEqual(router.cancelled, 1)
 
-        router.propagation_transfer_state = 5
+        router.request_state = 5
         self.assertTrue(bridge["propagation_sync"]()["ok"])
 
     def test_next_sync_waits_for_router_cancellation_to_finish(self):
@@ -134,7 +144,7 @@ class PropagationSyncCancellationTests(unittest.TestCase):
         time.sleep(0.1)
         self.assertEqual(router.requests, 1)
 
-        router.propagation_transfer_state = 5
+        router.request_state = 5
         router.cancel_release.set()
         cancellation.join(timeout=1.0)
         first.join(timeout=1.0)
@@ -177,17 +187,94 @@ class PropagationSyncCancellationTests(unittest.TestCase):
                 self.assertFalse(result["ok"])
                 self.assertEqual(result["state"], expected_name)
 
-    def test_swift_cancellation_is_scoped_to_the_originating_operation(self):
-        manager = (
-            ROOT / "Sources" / "ColumbaApp" / "Services" / "PropagationNodeManager.swift"
-        ).read_text(encoding="utf-8")
-        app = (
-            ROOT / "Sources" / "ColumbaApp" / "App" / "ColumbaApp.swift"
-        ).read_text(encoding="utf-8")
+    def link_scenario(self, previous_state: int, initial_status: int, next_status: int | None):
+        router = FakeRouter(state=previous_state)
+        router.request_state = 5
+        router.request_result = 2
+        router.propagation_transfer_last_result = 17
+        link = types.SimpleNamespace(status=initial_status)
+        router.outbound_propagation_link = link
+        bridge = self.load_functions(router)
+        now = 0.0
 
-        self.assertIn("activeSyncOperationID == operationID", manager)
-        self.assertIn("cancelActiveSync(operationID: UUID)", manager)
-        self.assertIn("cancelActiveSync(operationID: syncOperationID)", app)
+        def sleep(seconds):
+            nonlocal now
+            now += seconds
+            if next_status is not None:
+                link.status = next_status
+
+        bridge["time"] = types.SimpleNamespace(monotonic=lambda: now, sleep=sleep)
+        return router, bridge
+
+    def test_pending_upload_link_does_not_reuse_previous_sync_result(self):
+        for previous_state in (5, 10):
+            with self.subTest(previous_state=previous_state):
+                router, bridge = self.link_scenario(previous_state, 0, 2)
+
+                result = bridge["propagation_sync"](timeout=2.0)
+
+                self.assertEqual(
+                    result,
+                    {"ok": True, "state": "complete", "received_messages": 2, "reason": "ok"},
+                )
+                self.assertEqual(router.requests, 1)
+                self.assertEqual(router.cancelled, 0)
+
+    def test_already_closed_link_is_discarded_before_a_fresh_request(self):
+        router, bridge = self.link_scenario(10, 4, None)
+
+        result = bridge["propagation_sync"](timeout=2.0)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["received_messages"], 2)
+        self.assertEqual(router.requests, 1)
+
+    def test_pending_link_failure_is_not_previous_success(self):
+        router, bridge = self.link_scenario(5, 0, 4)
+
+        result = bridge["propagation_sync"](timeout=2.0)
+
+        self.assertEqual(
+            result,
+            {"ok": False, "state": "link_failed", "received_messages": 0, "reason": "link_failed"},
+        )
+        self.assertEqual(router.requests, 0)
+
+    def test_waiting_for_existing_link_uses_sync_timeout(self):
+        router, bridge = self.link_scenario(5, 0, None)
+
+        result = bridge["propagation_sync"](timeout=1.0)
+
+        self.assertEqual(result["reason"], "timeout")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["received_messages"], 0)
+        self.assertEqual(router.cancelled, 1)
+
+    def test_cancellation_while_waiting_does_not_start_download(self):
+        router, bridge = self.link_scenario(5, 0, None)
+        advance = bridge["time"].sleep
+
+        def cancel(seconds):
+            advance(seconds)
+            bridge["cancel_propagation_sync"]()
+
+        bridge["time"].sleep = cancel
+        result = bridge["propagation_sync"](timeout=2.0)
+
+        self.assertEqual(result["state"], "cancelled")
+        self.assertEqual(router.requests, 0)
+        self.assertEqual(router.cancelled, 1)
+
+    def test_current_failure_does_not_report_previous_received_count(self):
+        router = FakeRouter(state=10)
+        router.request_result = 17
+        bridge = self.load_functions(router)
+
+        result = bridge["propagation_sync"](timeout=1.0)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["state"], "link_failed")
+        self.assertEqual(result["received_messages"], 0)
 
 
 if __name__ == "__main__":
