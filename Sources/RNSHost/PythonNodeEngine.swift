@@ -405,6 +405,11 @@ final class PythonNodeEngine: @unchecked Sendable {
         call("status", kwargs: [:])
     }
 
+    /// `rns_bridge.next_hop_interface(dest_hash_hex)` → `{ok, interface}`.
+    func nextHopInterface(destHashHex: String) -> [String: Any]? {
+        Self.dict(from: call("next_hop_interface", kwargs: ["dest_hash_hex": destHashHex]))
+    }
+
     /// `rns_bridge.local_info()` → `{identity_hash, destination_hash}`.
     func localInfo() -> String? {
         call("local_info", kwargs: [:])

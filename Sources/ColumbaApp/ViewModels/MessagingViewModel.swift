@@ -180,6 +180,17 @@ public final class MessagingViewModel {
                         method: displayProof.method
                     )) == true
                 }
+                // Second-chance interface capture on terminal success
+                // (Android parity): recipient delivery, or relay acceptance
+                // of a propagated send. Runs before the visibility guard so
+                // the durable row is enriched even when the bubble is gone.
+                if displayProof.state == .delivered
+                    || (displayProof.state == .sent && displayProof.method == .propagated) {
+                    await self.enrichSentInterfaceOnDelivery(
+                        canonicalHash: hashData,
+                        propagated: displayProof.method == .propagated
+                    )
+                }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
                 if wasAliased && displayProofPersisted {
                     self.messages[index] = Self.canonicalizedMessage(
@@ -817,6 +828,46 @@ public final class MessagingViewModel {
         }
     }
 
+    /// Best-effort snapshot of the interface RNS would transmit over
+    /// (Android `getNextHopInterfaceName` call-site parity): for propagated
+    /// sends the OUTBOUND RELAY's hash is queried instead of the recipient's
+    /// — the message physically travels over whatever interface reaches the
+    /// relay, and the recipient hash has no direct next hop. Nil means
+    /// "no path known"; the details card stays hidden rather than guessing.
+    @MainActor
+    private func sentInterfaceSnapshot(method: LXDeliveryMethod) async -> String? {
+        guard let backend = appServices.backend else { return nil }
+        var lookupHex = Self.hexString(conversationHash)
+        if method == .propagated, let propHash = appServices.propagationManager?.selectedNodeHash {
+            lookupHex = Self.hexString(propHash)
+        }
+        return await backend.nextHopInterface(destHashHex: lookupHex)
+    }
+
+    /// Delivery-time second-chance capture (Android parity): fires only on
+    /// terminal success, because the routing table then still reflects the
+    /// actual send path (failed / retrying states carry too much routing
+    /// ambiguity). Fills `sentInterface` only while the row's value is still
+    /// NULL — the send-time snapshot is never overwritten.
+    @MainActor
+    private func enrichSentInterfaceOnDelivery(canonicalHash: Data, propagated: Bool) async {
+        guard let name = await sentInterfaceSnapshot(
+            method: propagated ? .propagated : .direct
+        ) else { return }
+        let updated = (try? await repository.updateSentInterface(
+            messageId: canonicalHash, interfaceName: name
+        )) == true
+        guard updated else { return }
+        let visibleID = Self.visibleMessageID(
+            for: Self.hexString(canonicalHash),
+            aliases: pendingOutboundAliases
+        )
+        if let index = messages.firstIndex(where: { $0.id == visibleID }),
+           messages[index].sentInterface == nil {
+            messages[index].sentInterface = name
+        }
+    }
+
     static func deliveryPlan(
         defaultMethod: String,
         retryViaRelay: Bool
@@ -1031,6 +1082,9 @@ public final class MessagingViewModel {
             // `.queued` means the local router accepted ownership. It does not
             // prove packet transmission, relay storage, or recipient delivery.
             lxMessage.state = .sending
+            // Snapshot the outbound interface while the routing table still
+            // reflects the just-queued send (best-effort, never guessed).
+            lxMessage.sentInterface = await sentInterfaceSnapshot(method: selectedDeliveryMethod)
             registerPendingOutboundAlias(
                 canonicalHash: sentHash,
                 optimisticID: optimisticId
@@ -1120,6 +1174,7 @@ public final class MessagingViewModel {
                     retryMessage.hash = retryHash
                     retryMessage.state = .sending
                     retryMessage.method = .propagated
+                    retryMessage.sentInterface = await sentInterfaceSnapshot(method: .propagated)
                     registerPendingOutboundAlias(
                         canonicalHash: retryHash,
                         optimisticID: optimisticId

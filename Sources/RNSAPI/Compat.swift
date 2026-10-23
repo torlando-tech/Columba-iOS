@@ -603,6 +603,11 @@ public final class LXMessage: @unchecked Sendable {
     public var snr: Double?
     public var q: Double?
     public var receivingInterface: String?
+
+    /// Interface name snapshotted at send time (outbound only): the
+    /// next-hop interface RNS reported when the message was queued /
+    /// delivered. Nil for inbound messages and pre-feature rows.
+    public var sentInterface: String?
     public var desiredMethod: LXDeliveryMethod
 
     public init(
@@ -1447,9 +1452,11 @@ public struct MessageRecord: Identifiable, Equatable, Sendable, Codable {
     public var receivingInterface: String?
     public var replyToId: String?
     public var reactionsJson: String?
+    /// Interface name snapshotted at send time (outbound only). See
+    /// `LXMessage.sentInterface`.
+    public var sentInterface: String?
     /// MessagePack-encoded LXMF field map (the `[UInt8: Any]` produced by
     /// `LxmfFieldCodec.pack`). Carries attachment payloads — FIELD_IMAGE
-    /// (0x06) `[format, bytes]`, FIELD_FILE_ATTACHMENTS (0x05), the icon
     /// appearance (0x04), reply hash (0x30), etc. — so they survive a DB
     /// reload. Empty `Data()` when the message has no fields. Named
     /// `packedLxmf` historically (the intent was the full LXMF wire) but the
@@ -1472,12 +1479,12 @@ public struct MessageRecord: Identifiable, Equatable, Sendable, Codable {
         rssi: Double? = nil,
         snr: Double? = nil,
         receivingInterface: String? = nil,
+        sentInterface: String? = nil,
         replyToId: String? = nil,
         reactionsJson: String? = nil,
         packedLxmf: Data = Data()
     ) {
         self.id = id
-        self.conversationHash = conversationHash
         self.content = content
         self.timestamp = timestamp
         self.direction = direction
@@ -1488,13 +1495,12 @@ public struct MessageRecord: Identifiable, Equatable, Sendable, Codable {
         self.rssi = rssi
         self.snr = snr
         self.receivingInterface = receivingInterface
+        self.sentInterface = sentInterface
         self.replyToId = replyToId
         self.reactionsJson = reactionsJson
         self.packedLxmf = packedLxmf
     }
 }
-
-// MARK: - Transport
 
 public final class ReticulumTransport: @unchecked Sendable {
     public var hwMtu: Int { 500 }

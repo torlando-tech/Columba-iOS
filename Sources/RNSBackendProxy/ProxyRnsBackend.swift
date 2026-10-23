@@ -515,6 +515,18 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         return try? JSONDecoder().decode(StatusSnapshot.self, from: payload)
     }
 
+    public func nextHopInterface(destHashHex: String) async -> String? {
+        // Best-effort: a failed round-trip / missing node yields nil (the
+        // caller hides the card rather than guessing). The payload is a
+        // JSON `String?` — `null` decodes to a nil inner value.
+        guard let response = try? await roundTrip(
+            .nextHopInterface(destHashHex: destHashHex), op: "nextHopInterface"),
+            case .ok(let payload) = response, let payload else {
+            return nil
+        }
+        return (try? JSONDecoder().decode(String?.self, from: payload)) ?? nil
+    }
+
     public func bleConnections() async -> [BLEConnectionInfo] {
         // Native Model B BLE peers live in the NE's reticulum-swift `BLEInterface`.
         // Round-trip the snapshot DTO and map it onto the UI `BLEConnectionInfo`

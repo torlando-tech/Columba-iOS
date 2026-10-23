@@ -2721,6 +2721,60 @@ def resolve_path(dest_hash_hex: str, timeout_seconds: float = 10.0) -> dict[str,
     return {"ok": False, "reason": "timeout"}
 
 
+def next_hop_interface(dest_hash_hex: str) -> dict[str, Any]:
+    """Best-effort snapshot of the interface RNS would use to reach a destination.
+
+    Mirrors Android Columba's ``PythonRnsCore.getNextHopInterfaceName``:
+
+    1. ``RNS.Transport.next_hop_interface(dest)`` — the path-table next hop,
+       i.e. the interface the destination's last announce arrived on (the
+       same interface RNS routes outbound packets over, Transport.py:1389).
+    2. Fallback for the configured outbound propagation node: the live
+       ``outbound_propagation_link.attached_interface`` — propagated packets
+       physically travel over that interface even when the node's path-table
+       entry is empty.
+
+    Display-name resolution matches Android's ``pyInterfaceName``:
+    ``iface.name`` (the config section name) → ``str(iface)`` → class name,
+    because spawned peers like ``AutoInterfacePeer`` carry ``name=None`` and
+    only ``__str__`` identifies them.
+
+    Returns ``{ok, interface}``; ``interface`` is None when no path is known
+    — the caller must treat that as "unknown", never guess an interface.
+    """
+    with _lock:
+        started = _state["started"]
+        router = _state["router"]
+    if not started:
+        return {"ok": False, "interface": None, "reason": "not-started"}
+    try:
+        dest_hash = bytes.fromhex(dest_hash_hex)
+    except (TypeError, ValueError):
+        return {"ok": False, "interface": None, "reason": "bad-hash"}
+
+    iface = None
+    try:
+        iface = RNS.Transport.next_hop_interface(dest_hash)
+    except Exception:
+        iface = None
+    if iface is None and router is not None:
+        try:
+            if getattr(router, "outbound_propagation_node", None) == dest_hash:
+                link = getattr(router, "outbound_propagation_link", None)
+                if link is not None:
+                    iface = getattr(link, "attached_interface", None)
+        except Exception:
+            iface = None
+
+    name: str | None = None
+    if iface is not None:
+        try:
+            name = getattr(iface, "name", None) or str(iface) or type(iface).__name__
+        except Exception:
+            name = None
+    return {"ok": True, "interface": name}
+
+
 def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                        method: str = "opportunistic",
                        failure_fallback_method: str = "") -> dict[str, Any]:

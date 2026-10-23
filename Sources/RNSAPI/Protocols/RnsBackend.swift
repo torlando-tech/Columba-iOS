@@ -294,6 +294,15 @@ public protocol RnsCore: AnyObject, Sendable {
     /// `ProxyRnsBackend` overrides it to query the NE over the proxy IPC.
     func bleConnections() async -> [BLEConnectionInfo]
 
+    /// Best-effort snapshot of the interface the transport would use to
+    /// reach `destHashHex` (Android `RnsCore.getNextHopInterfaceName`
+    /// parity): the path-table next hop — the interface the destination's
+    /// last announce arrived on and the one outbound packets route over.
+    /// Returns nil when no path is known; callers must treat nil as
+    /// "unknown" and never substitute a configured interface. Backends
+    /// without a live transport return nil (default below).
+    func nextHopInterface(destHashHex: String) async -> String?
+
     /// Disconnect a Model B BLE peer by its identity hash (the NE owns the
     /// radio, so the link is dropped NE-side). Returns true when a connected
     /// peer with that identity existed. Backends without a native BLE interface
@@ -315,6 +324,9 @@ public extension RnsCore {
 
     @discardableResult
     func rememberPeerIdentity(destHashHex: String, publicKey: Data) async -> Bool { false }
+
+    /// Default: no live transport to query.
+    func nextHopInterface(destHashHex: String) async -> String? { nil }
 }
 
 /// RNS.Link operations backing LXST voice (the Swift state machine drives these;
