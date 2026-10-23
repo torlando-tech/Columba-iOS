@@ -51,6 +51,10 @@ final class MessageStoreTests: XCTestCase {
             "rssi", "snr", "q", "ratchet_id", "packed_lxmf",
             "receiving_interface", "reply_to_id", "reactions_json",
             "created_at", "updated_at",
+            // App-owned extension: the send-time outgoing-interface snapshot.
+            // The NE writer never touches it (inbound rows keep it NULL), so
+            // it is absent from the NE INSERT column list by design.
+            "sent_interface",
         ]
         XCTAssertEqual(Set(columns), expected,
                        "messages schema drifted from the NE writer contract")
@@ -71,7 +75,7 @@ final class MessageStoreTests: XCTestCase {
             "incoming": "INTEGER", "rssi": "DOUBLE", "snr": "DOUBLE", "q": "DOUBLE",
             "ratchet_id": "BLOB", "packed_lxmf": "BLOB", "created_at": "DOUBLE",
             "updated_at": "DOUBLE", "receiving_interface": "TEXT", "reply_to_id": "TEXT",
-            "reactions_json": "TEXT",
+            "reactions_json": "TEXT", "sent_interface": "TEXT",
         ]
         XCTAssertEqual(types, expectedTypes, "messages column types drifted")
 
