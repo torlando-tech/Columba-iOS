@@ -1485,6 +1485,7 @@ public struct MessageRecord: Identifiable, Equatable, Sendable, Codable {
         packedLxmf: Data = Data()
     ) {
         self.id = id
+        self.conversationHash = conversationHash
         self.content = content
         self.timestamp = timestamp
         self.direction = direction
