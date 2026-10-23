@@ -95,6 +95,12 @@ public struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     /// Human-readable name of the interface that received this message
     public var receivingInterface: String?
 
+    /// Interface name snapshotted at send time for outbound messages —
+    /// the next-hop interface RNS reported when the message was queued /
+    /// delivered (Android-parity `sentInterface`). Null for received
+    /// messages and for rows written before the feature.
+    public var sentInterface: String?
+
     /// ID of the message this is a reply to (optional)
     public var replyToId: String?
 
@@ -133,6 +139,7 @@ public struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         case q
         case ratchetId = "ratchet_id"
         case receivingInterface = "receiving_interface"
+        case sentInterface = "sent_interface"
         case replyToId = "reply_to_id"
         case reactionsJson = "reactions_json"
         case packedLxmf = "packed_lxmf"
@@ -167,6 +174,7 @@ public struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         q: Double?,
         ratchetId: Data?,
         receivingInterface: String?,
+        sentInterface: String? = nil,
         replyToId: String?,
         reactionsJson: String?,
         packedLxmf: Data,
@@ -193,6 +201,7 @@ public struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.q = q
         self.ratchetId = ratchetId
         self.receivingInterface = receivingInterface
+        self.sentInterface = sentInterface
         self.replyToId = replyToId
         self.reactionsJson = reactionsJson
         self.packedLxmf = packedLxmf

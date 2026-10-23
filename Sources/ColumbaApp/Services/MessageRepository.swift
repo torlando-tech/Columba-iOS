@@ -834,6 +834,25 @@ public actor MessageRepository {
         }
     }
 
+    /// Fill the send-time interface snapshot for an outbound row, but only
+    /// while it is still empty (Android parity: delivery-time enrichment
+    /// never overwrites the send-time capture). Returns true when the row
+    /// was updated.
+    @discardableResult
+    public func updateSentInterface(messageId: Data, interfaceName: String) async throws -> Bool {
+        try await replacementPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE messages
+                    SET sent_interface = ?, updated_at = ?
+                    WHERE message_id = ? AND incoming = 0 AND sent_interface IS NULL
+                    """,
+                arguments: [interfaceName, Date().timeIntervalSince1970, messageId]
+            )
+            return db.changesCount > 0
+        }
+    }
+
     /// Persist an authoritative backend delivery proof. If canonical message
     /// persistence previously failed during a retry, atomically resolve the
     /// durable storage-key row through its canonical uncertainty marker and
@@ -1102,6 +1121,7 @@ extension MessageRepository {
             rssi: r.rssi,
             snr: r.snr,
             receivingInterface: r.receivingInterface,
+            sentInterface: r.sentInterface,
             replyToId: r.replyToId,
             reactionsJson: r.reactionsJson,
             packedLxmf: normalizedFieldMap(r.packedLxmf)
@@ -1131,6 +1151,7 @@ extension MessageRepository {
         msg.snr = r.snr
         msg.q = r.q
         msg.receivingInterface = r.receivingInterface
+        msg.sentInterface = r.sentInterface
         // Keep `packed` as the field map (matching `msg.fields` and the A0
         // bridge contract): wire rows are normalized so this stays coherent.
         msg.packed = normalizedFieldMap(r.packedLxmf)
@@ -1173,6 +1194,7 @@ extension MessageRepository {
             q: m.q,
             ratchetId: nil,
             receivingInterface: m.receivingInterface,
+            sentInterface: m.sentInterface,
             replyToId: replyToId,
             reactionsJson: nil,
             packedLxmf: packed,

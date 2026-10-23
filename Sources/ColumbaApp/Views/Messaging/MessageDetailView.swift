@@ -12,21 +12,13 @@ import RNSAPI
 /// Message detail screen showing delivery metadata in card-based layout.
 ///
 /// Shows different cards based on message direction:
-/// - **Sent**: Timestamp, Status, Delivery Method, Sending Interface (current
-///   path), Error (if failed), Message ID.
+/// - **Sent**: Timestamp, Status, Delivery Method, Sending Interface
+///   (snapshotted at send time), Error (if failed), Message ID.
 /// - **Received**: Timestamp, Delivery Method, Receiving Interface, RSSI, SNR,
 ///   Message ID.
 @available(iOS 17.0, macOS 14.0, *)
 struct MessageDetailView: View {
     let message: Message
-
-    /// Destination hash of the conversation peer. Used to resolve the current
-    /// outgoing path's interface for outgoing messages.
-    let destinationHash: Data?
-
-    /// Path table for resolving the current next-hop interface to the
-    /// destination. Optional so existing callers and previews can omit it.
-    let pathTable: PathTable?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -36,19 +28,6 @@ struct MessageDetailView: View {
     /// avoids a first-render flicker where the receiving-interface card would
     /// briefly fall through to the orphan branch.
     @State private var interfaceRepository: InterfaceRepository = InterfaceRepository()
-
-    /// Interface UUID currently used to reach the destination, resolved
-    /// asynchronously from the path table on appear. `nil` means either the
-    /// lookup hasn't run yet, no path is known, or the path has expired.
-    @State private var currentSendingInterfaceId: String?
-
-    /// Convenience initializer that omits the path-table dependency. Used by
-    /// previews and any caller that doesn't have a path table handy.
-    init(message: Message, destinationHash: Data? = nil, pathTable: PathTable? = nil) {
-        self.message = message
-        self.destinationHash = destinationHash
-        self.pathTable = pathTable
-    }
 
     var body: some View {
         NavigationStack {
@@ -91,38 +70,6 @@ struct MessageDetailView: View {
             #endif
         }
         .preferredColorScheme(.dark)
-        // Only kick off the path lookup for outgoing messages. Incoming
-        // messages don't need a sending-interface card, so don't waste a
-        // PathTable lookup. SwiftUI runs .task on the main actor, so the
-        // assignment in loadSendingInterface() is already main-actor isolated
-        // — no MainActor.run needed.
-        .task {
-            guard message.isFromMe else { return }
-            await loadSendingInterface()
-        }
-    }
-
-    /// Resolve the current next-hop interface for the destination so the
-    /// outgoing message details can show which configured interface is
-    /// presently used to reach this peer.
-    ///
-    /// This is a *lookup at display time* — it reflects the path as it stands
-    /// now, not necessarily the interface used at the original send time. The
-    /// path table can change between send and view (new announces, expiry,
-    /// network changes), so the displayed interface is best-effort. If no path
-    /// is known the card is omitted entirely rather than guessing.
-    @MainActor
-    private func loadSendingInterface() async {
-        guard message.isFromMe,
-              let destinationHash,
-              let pathTable
-        else { return }
-
-        // SwiftUI invokes .task on the main actor and this method is
-        // @MainActor-isolated, so the @State assignment after the await is
-        // already on the main actor — no MainActor.run wrapper needed.
-        let entry = await pathTable.lookup(destinationHash: destinationHash)
-        self.currentSendingInterfaceId = entry?.interfaceId
     }
 
     // MARK: - Message Preview
@@ -180,9 +127,10 @@ struct MessageDetailView: View {
             deliveryMethodCard(method)
         }
 
-        // Sending interface (current next-hop for the destination).
-        // Hidden when no path is known so we never show stale or made-up data.
-        if let iface = currentSendingInterfaceId {
+        // Sending interface (next-hop interface snapshotted at send /
+        // delivery time). Hidden when the snapshot found no path, so we
+        // never show stale or made-up data.
+        if let iface = message.sentInterface {
             interfaceCard(title: "Sending Interface", interfaceId: iface)
         }
 
@@ -323,9 +271,8 @@ struct MessageDetailView: View {
     /// configured friendly name (e.g. "beleth") and connection target
     /// (e.g. "example.com:4242") instead of raw UUID substrings. Used for both
     /// the receiving-interface card (the interface a packet arrived on) and
-    /// the sending-interface card (the *current* next-hop interface for the
-    /// destination, as-of-now — not necessarily the original transmit
-    /// interface).
+    /// the sending-interface card (the next-hop interface RNS reported when
+    /// the message was sent — a send-time snapshot, not the current path).
     private func interfaceCard(title: String, interfaceId: String) -> some View {
         let entity = resolveInterfaceEntity(for: interfaceId)
         let (icon, name, subtitle) = interfaceCardDisplay(for: entity, fallbackId: interfaceId)
@@ -354,23 +301,47 @@ struct MessageDetailView: View {
     /// rendered.
     ///
     /// Resolution order:
-    /// 1. Direct lookup — covers TCP and any future IDs that happen to
-    ///    match the entity ID exactly.
-    /// 2. Parent-segment strip — covers the unlikely case where someone
+    /// 1. Direct lookup — IDs that match the entity ID exactly (including
+    ///    Python section names for interfaces whose display name sanitizes
+    ///    to empty).
+    /// 2. Section-name match — the Python backend reports interfaces by
+    ///    their RNS config section name, `<sanitized name>-<6-char entity
+    ///    id prefix>` (`PythonConfigWriter.sectionName`). Strip the suffix
+    ///    and match the sanitized entity name — the same round-trip the
+    ///    interface status poll uses.
+    /// 3. Parent-segment strip — covers the unlikely case where someone
     ///    wires the entity with the transport's parent string ("ble0").
-    /// 3. Type-prefix match — the load-bearing case: any entity whose
-    ///    `type` matches the leading `ble-` / `auto-` / `rnode-` /
-    ///    `mpc-` prefix. With the standard "one BLE / one Auto / one
-    ///    RNode" config, this returns the right entity unambiguously.
+    /// 4. Type-prefix match — any entity whose `type` matches the leading
+    ///    `ble-` / `auto-` / `rnode-` / `mpc-` prefix. With the standard
+    ///    "one BLE / one Auto / one RNode" config, this returns the right
+    ///    entity unambiguously.
     private func resolveInterfaceEntity(for interfaceId: String) -> InterfaceEntity? {
         if let direct = interfaceRepository.getInterface(id: interfaceId) {
             return direct
         }
 
+        // 2. Section-name match — Python reports interfaces by their RNS
+        //    config section name, `<sanitized name>-<6-char entity id
+        //    prefix>` (PythonConfigWriter.sectionName). Strip the suffix and
+        //    match the sanitized entity name; prefer enabled entities so a
+        //    disabled duplicate name doesn't shadow the active interface.
+        if let dash = interfaceId.lastIndex(of: "-") {
+            let suffix = interfaceId[interfaceId.index(after: dash)...]
+            if suffix.count == 6, suffix.allSatisfy({ $0.isHexDigit }) {
+                let candidate = String(interfaceId[..<dash])
+                let matches = interfaceRepository.interfaces.filter {
+                    PythonConfigWriter.sanitize($0.name) == candidate
+                }
+                if let match = matches.first(where: { $0.enabled }) ?? matches.first {
+                    return match
+                }
+            }
+        }
+
         let parts = interfaceId.split(separator: "-", maxSplits: 2)
         let prefix = parts.first.map(String.init)
 
-        // 2. Parent-segment strip — works only for the legacy/explicit
+        // 3. Parent-segment strip — works only for the legacy/explicit
         //    "id matches transport parent" wiring.
         if parts.count == 3,
            let p = prefix,
@@ -379,7 +350,7 @@ struct MessageDetailView: View {
             return parent
         }
 
-        // 3. Type-prefix match — fall back to any entity whose `type`
+        // 4. Type-prefix match — fall back to any entity whose `type`
         //    matches the prefix segment. Prefer enabled entities so a
         //    disabled-and-still-stored interface doesn't shadow the
         //    active one.

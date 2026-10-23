@@ -284,6 +284,14 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// Response payload: a Bool (JSON) — `ok` from the NE.
     case detachInterface(name: String)
 
+    /// Snapshot the interface RNS would use to reach a destination
+    /// (mirrors `RnsCore.nextHopInterface`, Android's
+    /// `getNextHopInterfaceName`). The NE's `rns_bridge.next_hop_interface`
+    /// reads `RNS.Transport.next_hop_interface` with the outbound
+    /// propagation-link fallback. Response payload: a JSON `String?` —
+    /// the interface display name, or null when no path is known.
+    case nextHopInterface(destHashHex: String)
+
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
@@ -305,7 +313,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case drainEvents, bleConnections, bleDisconnect, nomadnetFetch
         case openLink, linkSend, linkIdentify, linkTeardown
         case ackInbox
-        case attachInterface, detachInterface
+        case attachInterface, detachInterface, nextHopInterface
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -397,6 +405,9 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case .detachInterface(let name):
             try c.encode(Op.detachInterface, forKey: .op)
             try c.encode(name, forKey: .interfaceName)
+        case .nextHopInterface(let destHashHex):
+            try c.encode(Op.nextHopInterface, forKey: .op)
+            try c.encode(destHashHex, forKey: .destHashHex)
         }
     }
 
@@ -475,6 +486,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .attachInterface(name: try c.decode(String.self, forKey: .interfaceName))
         case .detachInterface:
             self = .detachInterface(name: try c.decode(String.self, forKey: .interfaceName))
+        case .nextHopInterface:
+            self = .nextHopInterface(destHashHex: try c.decode(String.self, forKey: .destHashHex))
         }
     }
 }
