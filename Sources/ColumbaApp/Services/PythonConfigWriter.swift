@@ -201,7 +201,7 @@ enum PythonConfigWriter {
 
     /// Strip characters ConfigObj doesn't like in section names (brackets,
     /// equals, whitespace runs).
-    static func sanitize(_ raw: String) -> String {
+    private static func sanitize(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let bad: Set<Character> = ["[", "]", "=", "#", "\n", "\r"]
         var out = ""

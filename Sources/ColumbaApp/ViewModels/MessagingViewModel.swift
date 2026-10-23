@@ -849,11 +849,24 @@ public final class MessagingViewModel {
     /// actual send path (failed / retrying states carry too much routing
     /// ambiguity). Fills `sentInterface` only while the row's value is still
     /// NULL — the send-time snapshot is never overwritten.
+    ///
+    /// The delivery notification reaches EVERY live chat view model, so the
+    /// lookup destination is resolved from the stored row (or the outbound
+    /// relay), never from this conversation: a proof for a message in
+    /// another chat must not borrow this chat's route.
     @MainActor
     private func enrichSentInterfaceOnDelivery(canonicalHash: Data, propagated: Bool) async {
-        guard let name = await sentInterfaceSnapshot(
-            method: propagated ? .propagated : .direct
-        ) else { return }
+        guard let backend = appServices.backend else { return }
+        var lookupHex: String? = propagated
+            ? appServices.propagationManager?.selectedNodeHash.map { Self.hexString($0) }
+            : nil
+        if lookupHex == nil {
+            guard let row = try? await repository.getMessage(id: canonicalHash),
+                  !row.destinationHash.isEmpty else { return }
+            lookupHex = Self.hexString(row.destinationHash)
+        }
+        guard let lookupHex,
+              let name = await backend.nextHopInterface(destHashHex: lookupHex) else { return }
         let updated = (try? await repository.updateSentInterface(
             messageId: canonicalHash, interfaceName: name
         )) == true

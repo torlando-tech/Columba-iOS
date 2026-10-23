@@ -305,10 +305,10 @@ struct MessageDetailView: View {
     ///    Python section names for interfaces whose display name sanitizes
     ///    to empty).
     /// 2. Section-name match — the Python backend reports interfaces by
-    ///    their RNS config section name, `<sanitized name>-<6-char entity
-    ///    id prefix>` (`PythonConfigWriter.sectionName`). Strip the suffix
-    ///    and match the sanitized entity name — the same round-trip the
-    ///    interface status poll uses.
+    ///    their RNS config section name (`PythonConfigWriter.sectionName(for:)`,
+    ///    `<sanitized name>-<6-char entity id prefix>`). Match the COMPLETE
+    ///    section name: two entities sharing a display name (or names that
+    ///    collide after sanitizing) are distinguished by the id suffix.
     /// 3. Parent-segment strip — covers the unlikely case where someone
     ///    wires the entity with the transport's parent string ("ble0").
     /// 4. Type-prefix match — any entity whose `type` matches the leading
@@ -321,21 +321,13 @@ struct MessageDetailView: View {
         }
 
         // 2. Section-name match — Python reports interfaces by their RNS
-        //    config section name, `<sanitized name>-<6-char entity id
-        //    prefix>` (PythonConfigWriter.sectionName). Strip the suffix and
-        //    match the sanitized entity name; prefer enabled entities so a
-        //    disabled duplicate name doesn't shadow the active interface.
-        if let dash = interfaceId.lastIndex(of: "-") {
-            let suffix = interfaceId[interfaceId.index(after: dash)...]
-            if suffix.count == 6, suffix.allSatisfy({ $0.isHexDigit }) {
-                let candidate = String(interfaceId[..<dash])
-                let matches = interfaceRepository.interfaces.filter {
-                    PythonConfigWriter.sanitize($0.name) == candidate
-                }
-                if let match = matches.first(where: { $0.enabled }) ?? matches.first {
-                    return match
-                }
-            }
+        //    config section name. Match the full `sectionName(for:)` output
+        //    so the 6-char entity-id suffix disambiguates entities whose
+        //    display names are (or sanitize to) the same string.
+        if let match = interfaceRepository.interfaces.first(where: {
+            PythonConfigWriter.sectionName(for: $0) == interfaceId
+        }) {
+            return match
         }
 
         let parts = interfaceId.split(separator: "-", maxSplits: 2)

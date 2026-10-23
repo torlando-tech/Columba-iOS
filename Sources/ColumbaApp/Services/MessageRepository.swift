@@ -703,7 +703,7 @@ public actor MessageRepository {
                 sql: """
                     UPDATE messages
                     SET message_id = ?, state = ?, method = ?, timestamp = ?,
-                        receiving_interface = ?, updated_at = ?
+                        receiving_interface = ?, sent_interface = ?, updated_at = ?
                     WHERE message_id = ?
                     """,
                 arguments: StatementArguments([
@@ -712,6 +712,10 @@ public actor MessageRepository {
                     Self.mapMethodToGRDB(message.method),
                     message.timestamp,
                     retryMarker,
+                    // A replacement IS a new send attempt (relay retry after a
+                    // failed direct route): the new attempt's snapshot — or its
+                    // absence — supersedes the old route, never keeps it.
+                    message.sentInterface,
                     Date().timeIntervalSince1970,
                     oldId,
                 ] as [DatabaseValueConvertible?])
