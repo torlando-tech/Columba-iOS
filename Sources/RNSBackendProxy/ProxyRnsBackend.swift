@@ -461,6 +461,13 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                     t: Date(timeIntervalSince1970: e.t),
                     publicKeyHex: e.publicKeyHex
                 ))
+            case "health":
+                eventContinuation.yield(.health(
+                    pending: e.pending ?? -1,
+                    hbAgeSeconds: e.hbAge ?? -1,
+                    threads: e.threads,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
             default:
                 // Unknown kind (forward-compatible): drop, don't crash.
                 continue

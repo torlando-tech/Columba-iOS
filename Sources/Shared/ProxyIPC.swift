@@ -719,6 +719,14 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
     /// `.ackInbox` so unacked rows survive a lost reply / app death. Absent on the
     /// in-process (Model A) path and on non-durable events.
     public let seq: Int?
+    /// Router health probe (diagnostic build, kind "health"): outbound
+    /// messages still in the LXMF router's pending queue + seconds since the
+    /// jobloop last started a tick. `threads` is a faulthandler dump
+    /// captured when the age exceeds 90s - stack frames only, no locals
+    /// (PII-free by construction).
+    public let pending: Int?
+    public let hbAge: Double?
+    public let threads: String?
 
     public init(
         kind: String, t: Double,
@@ -728,7 +736,8 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         title: String? = nil, fieldsHex: String? = nil, method: String? = nil,
         state: String? = nil, reason: String? = nil, rssi: Double? = nil, snr: Double? = nil,
         linkId: Int? = nil, dataHex: String? = nil, identityHashHex: String? = nil, inbound: Bool? = nil,
-        publicKeyHex: String? = nil, seq: Int? = nil
+        publicKeyHex: String? = nil, seq: Int? = nil,
+        pending: Int? = nil, hbAge: Double? = nil, threads: String? = nil
     ) {
         self.kind = kind
         self.t = t
@@ -754,6 +763,9 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         self.inbound = inbound
         self.publicKeyHex = publicKeyHex
         self.seq = seq
+        self.pending = pending
+        self.hbAge = hbAge
+        self.threads = threads
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -767,5 +779,7 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         case inbound
         case publicKeyHex = "public_key"
         case seq
+        case pending, threads
+        case hbAge = "hb_age"
     }
 }

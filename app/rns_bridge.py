@@ -1713,6 +1713,18 @@ def start(
             router = LXMF.LXMRouter(identity=identity, storagepath=storage_path)
             router.register_delivery_callback(_delivery_callback)
             _state["router"] = router
+            # DIAG(router-health): `jobs()` runs on the router's job thread;
+            # stamping its start time lets `drain_events` report jobloop
+            # staleness to the app over the event bus. A stalled tick (e.g.
+            # process_outbound blocked in a half-open propagation socket)
+            # shows as a monotonically growing age.
+            _job_hb: dict[str, float] = {"t": time.time()}
+            _state["job_hb"] = _job_hb
+            _orig_jobs = router.jobs
+            def _jobs_with_heartbeat(_orig=_orig_jobs, _hb=_job_hb):
+                _hb["t"] = time.time()
+                return _orig()
+            router.jobs = _jobs_with_heartbeat
             STARTUP_TIMING["router_ms"] = (time.perf_counter() - _t0) * 1000
         finally:
             _signal.signal = _orig_signal
@@ -2893,6 +2905,11 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             return ""
 
         def _emit_lifecycle(m: "LXMF.LXMessage", state: str, reason: str) -> None:
+            # DIAG(router-health): every lifecycle callback firing, BEFORE the
+            # dedup below, so a swallowed event is still visible in the OS log
+            # (stdout is routed to NSLog by the bridge's _SysLogStream).
+            # No message identifiers: state + reason only.
+            print(f"[LIFECYCLE] state={state} reason={reason}", flush=True)
             with callback_lock:
                 current = callback_state["outcome"]
                 if state == "retrying_propagated":
@@ -3474,6 +3491,18 @@ def drain_events() -> list[dict[str, Any]]:
     `start()`), so events survive an NE jetsam/restart and are caught up on the
     app's next drain (triggered by the Darwin ping or on foreground). Otherwise
     (in-process Python backend) it drains the in-memory queue as before."""
+    # DIAG(router-health): piggyback the liveness probe on the app's regular
+    # drain cadence (no extra IPC op). Throttled; never raises.
+    try:
+        now = time.time()
+        if now - _last_health_emit[0] >= _HEALTH_EVERY_SECONDS:
+            _last_health_emit[0] = now
+            health = _router_health()
+            if health is not None:
+                print(f"[ROUTER-HEALTH] pending={health['pending']} hb_age={health['hb_age']}", flush=True)
+                _put("health", **health)
+    except Exception:
+        pass
     if _durable_mode:
         return drain_inbox()
     out: list[dict[str, Any]] = []
@@ -3483,6 +3512,40 @@ def drain_events() -> list[dict[str, Any]]:
         except queue.Empty:
             break
     return out
+# DIAG(router-health): periodic router liveness probe, emitted as a `health`
+# event on the same bus as delivery events. The app logs it to diag.log, so
+# the bus itself is the transport: health flowing but no delivery event =>
+# router/callback problem; health stopping too => the event bus died.
+# PII-free: counts + ages + stack frames only (faulthandler prints file:line
+# and function names, never locals).
+_HEALTH_EVERY_SECONDS = 30.0
+_HEALTH_STALL_DUMP_SECONDS = 90.0
+_last_health_emit = [0.0]
+
+
+def _router_health() -> dict[str, Any] | None:
+    router = _state.get("router")
+    if router is None:
+        return None
+    hb = _state.get("job_hb") or {}
+    age = time.time() - float(hb.get("t", 0.0))
+    payload: dict[str, Any] = {
+        "pending": len(router.pending_outbound),
+        "hb_age": round(age, 1),
+    }
+    if age > _HEALTH_STALL_DUMP_SECONDS:
+        # Jobloop stalled: capture every thread's stack once per probe so the
+        # stall site (e.g. process_outbound blocked in a propagation socket)
+        # is visible without a rebuild.
+        try:
+            import faulthandler
+            import io
+            buf = io.StringIO()
+            faulthandler.dump_traceback(file=buf, all_threads=True)
+            payload["threads"] = buf.getvalue()[:6000]
+        except Exception:
+            pass
+    return payload
 
 
 # ────────────────────────────────────────────────────────────────────

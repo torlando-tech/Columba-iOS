@@ -337,7 +337,11 @@ enum NodeCommandDispatcher {
             identityHashHex: e["identity_hash"] as? String,
             inbound: e["inbound"] as? Bool,
             publicKeyHex: e["public_key"] as? String,
-            seq: e["seq"] as? Int
+            seq: e["seq"] as? Int,
+            // router health probe (diagnostic build)
+            pending: e["pending"] as? Int,
+            hbAge: e["hb_age"] as? Double,
+            threads: e["threads"] as? String
         )
     }
 

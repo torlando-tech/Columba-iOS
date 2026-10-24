@@ -79,6 +79,11 @@ public enum BackendEvent: Equatable, Sendable {
     /// `<identity>.lxmf.delivery` contact hash. `nil` when the backend can't
     /// provide it (the identity hash is still usable for a degraded lookup).
     case linkIdentified(linkId: Int, identityHashHex: String, t: Date, publicKeyHex: String?)
+    /// Router health probe (diagnostic build): `pending` = outbound messages
+    /// still queued in the LXMF router, `hbAgeSeconds` = seconds since the
+    /// router jobloop last started a tick, `threads` = stack dump captured
+    /// when the loop stalls (>90s). Logged to diag.log only.
+    case health(pending: Int, hbAgeSeconds: Double, threads: String?, t: Date)
 }
 
 /// Outcome of a blocking propagation-node sync.
