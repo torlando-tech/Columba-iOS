@@ -881,11 +881,34 @@ public final class MessagingViewModel {
         }
     }
 
+    /// Content-size threshold under which an attachment-free send is upgraded
+    /// to LXMF OPPORTUNISTIC. Mirrors Android Columba's
+    /// `OPPORTUNISTIC_MAX_BYTES_HELPER` (determineDeliveryMethod).
+    static let opportunisticMaxBytes = 295
+
+    /// Maps the configured default method + message shape to the wire method.
+    ///
+    /// Android parity (`determineDeliveryMethod`, MessagingViewModel.kt): any
+    /// configured method other than "propagated" is upgraded to
+    /// OPPORTUNISTIC for small attachment-free sends. This matters on the
+    /// wire: DIRECT forces a link attempt (the recipient's LXMF infers
+    /// "direct" from the link arrival), while OPPORTUNISTIC travels as a raw
+    /// packet — the recipient infers "opportunistic" — and lets LXMF itself
+    /// request a path and fall back to the relay when none exists.
     static func deliveryPlan(
         defaultMethod: String,
-        retryViaRelay: Bool
+        retryViaRelay: Bool,
+        contentSize: Int,
+        hasAttachments: Bool
     ) -> (method: LXDeliveryMethod, failureFallbackMethod: LXDeliveryMethod?) {
-        let method: LXDeliveryMethod = defaultMethod == "propagated" ? .propagated : .direct
+        let method: LXDeliveryMethod
+        if defaultMethod == "propagated" {
+            method = .propagated
+        } else if !hasAttachments && contentSize <= opportunisticMaxBytes {
+            method = .opportunistic
+        } else {
+            method = .direct
+        }
         let failureFallbackMethod: LXDeliveryMethod? =
             retryViaRelay && method != .propagated ? .propagated : nil
         return (method, failureFallbackMethod)
@@ -940,7 +963,11 @@ public final class MessagingViewModel {
         let retryViaRelay = await settingsRepository.getRetryViaRelay()
         let deliveryPlan = Self.deliveryPlan(
             defaultMethod: settingsMethod,
-            retryViaRelay: retryViaRelay
+            retryViaRelay: retryViaRelay,
+            contentSize: trimmedText.utf8.count,
+            hasAttachments: imageData != nil
+                || !(attachments?.isEmpty ?? true)
+                || audioAttachment != nil
         )
         let selectedDeliveryMethod = deliveryPlan.method
 
