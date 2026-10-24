@@ -2775,7 +2775,13 @@ def next_hop_interface(dest_hash_hex: str) -> dict[str, Any]:
             try:
                 entry = transport.path_table.get(dest_hash)
                 if entry is not None:
-                    iface = entry[transport.IDX_PT_RVCD_IF]
+                    # IDX_PT_RVCD_IF is a module-level constant in
+                    # RNS/Transport.py; RNS.Transport is the class, which
+                    # does NOT re-export it — resolve it from the defining
+                    # module (attribute access on the class raises
+                    # AttributeError, which once silently hid the card).
+                    idx_rvcd_if = sys.modules[transport.__module__].IDX_PT_RVCD_IF
+                    iface = entry[idx_rvcd_if]
             finally:
                 transport.path_table_lock.release()
     except Exception:
