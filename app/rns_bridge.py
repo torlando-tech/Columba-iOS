@@ -3539,10 +3539,22 @@ def _router_health() -> dict[str, Any] | None:
         # is visible without a rebuild.
         try:
             import faulthandler
-            import io
-            buf = io.StringIO()
-            faulthandler.dump_traceback(file=buf, all_threads=True)
-            payload["threads"] = buf.getvalue()[:6000]
+            import os
+            import tempfile
+            # faulthandler writes through a REAL file descriptor; an
+            # io.StringIO has no fileno() and raises UnsupportedOperation
+            # (greptile P2 #238), so dump to a temp file and read it back.
+            fd, path = tempfile.mkstemp(prefix="rns-stall-", suffix=".txt")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    faulthandler.dump_traceback(file=f, all_threads=True)
+                with open(path, "r", errors="replace") as f:
+                    payload["threads"] = f.read()[:6000]
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
         except Exception:
             pass
     return payload
