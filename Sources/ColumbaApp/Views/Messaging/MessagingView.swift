@@ -708,11 +708,7 @@ struct MessagingView: View {
         }
         .sheet(item: $detailMessage) { message in
             let currentMessage = viewModel?.currentMessage(for: message) ?? message
-            MessageDetailView(
-                message: currentMessage,
-                destinationHash: conversation.destinationHash,
-                pathTable: appServices.pathTable
-            )
+            MessageDetailView(message: currentMessage)
         }
         .sheet(item: $textSelection) { selection in
             SelectableMessageTextSheet(selection: selection)

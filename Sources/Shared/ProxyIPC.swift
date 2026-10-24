@@ -284,6 +284,14 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// Response payload: a Bool (JSON) — `ok` from the NE.
     case detachInterface(name: String)
 
+    /// Snapshot the interface RNS would use to reach a destination
+    /// (mirrors `RnsCore.nextHopInterface`, Android's
+    /// `getNextHopInterfaceName`). The NE's `rns_bridge.next_hop_interface`
+    /// reads `RNS.Transport.next_hop_interface` with the outbound
+    /// propagation-link fallback. Response payload: a JSON `String?` —
+    /// the interface display name, or null when no path is known.
+    case nextHopInterface(destHashHex: String)
+
     // MARK: Codable (discriminated union)
 
     private enum CodingKeys: String, CodingKey {
@@ -305,7 +313,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case drainEvents, bleConnections, bleDisconnect, nomadnetFetch
         case openLink, linkSend, linkIdentify, linkTeardown
         case ackInbox
-        case attachInterface, detachInterface
+        case attachInterface, detachInterface, nextHopInterface
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -397,6 +405,9 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
         case .detachInterface(let name):
             try c.encode(Op.detachInterface, forKey: .op)
             try c.encode(name, forKey: .interfaceName)
+        case .nextHopInterface(let destHashHex):
+            try c.encode(Op.nextHopInterface, forKey: .op)
+            try c.encode(destHashHex, forKey: .destHashHex)
         }
     }
 
@@ -475,6 +486,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
             self = .attachInterface(name: try c.decode(String.self, forKey: .interfaceName))
         case .detachInterface:
             self = .detachInterface(name: try c.decode(String.self, forKey: .interfaceName))
+        case .nextHopInterface:
+            self = .nextHopInterface(destHashHex: try c.decode(String.self, forKey: .destHashHex))
         }
     }
 }
@@ -706,6 +719,14 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
     /// `.ackInbox` so unacked rows survive a lost reply / app death. Absent on the
     /// in-process (Model A) path and on non-durable events.
     public let seq: Int?
+    /// Router health probe (diagnostic build, kind "health"): outbound
+    /// messages still in the LXMF router's pending queue + seconds since the
+    /// jobloop last started a tick. `threads` is a faulthandler dump
+    /// captured when the age exceeds 90s - stack frames only, no locals
+    /// (PII-free by construction).
+    public let pending: Int?
+    public let hbAge: Double?
+    public let threads: String?
 
     public init(
         kind: String, t: Double,
@@ -715,7 +736,8 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         title: String? = nil, fieldsHex: String? = nil, method: String? = nil,
         state: String? = nil, reason: String? = nil, rssi: Double? = nil, snr: Double? = nil,
         linkId: Int? = nil, dataHex: String? = nil, identityHashHex: String? = nil, inbound: Bool? = nil,
-        publicKeyHex: String? = nil, seq: Int? = nil
+        publicKeyHex: String? = nil, seq: Int? = nil,
+        pending: Int? = nil, hbAge: Double? = nil, threads: String? = nil
     ) {
         self.kind = kind
         self.t = t
@@ -741,6 +763,9 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         self.inbound = inbound
         self.publicKeyHex = publicKeyHex
         self.seq = seq
+        self.pending = pending
+        self.hbAge = hbAge
+        self.threads = threads
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -754,5 +779,7 @@ public struct ProxyEvent: Codable, Sendable, Equatable {
         case inbound
         case publicKeyHex = "public_key"
         case seq
+        case pending, threads
+        case hbAge = "hb_age"
     }
 }

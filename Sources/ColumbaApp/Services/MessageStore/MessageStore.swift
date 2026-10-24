@@ -186,6 +186,16 @@ public actor MessageStore {
             try db.create(index: "idx_messages_reply_to", on: "messages", columns: ["reply_to_id"])
         }
 
+        // v7: Add sent_interface column to messages (Android-parity
+        // `sentInterface`): the next-hop interface snapshotted at send /
+        // delivery time for OUTBOUND messages. Nullable; the Python inbound
+        // writer never touches it (its INSERT lists columns explicitly).
+        migrator.registerMigration("v7_add_sent_interface") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "sent_interface", .text)
+            }
+        }
+
         // Only the writer runs migrations: GRDB's migrator issues an internal
         // `write {}` to atomically check/apply schema versions, which returns
         // SQLITE_READONLY (throws) on a read-only pool. Under Model B the writer (the

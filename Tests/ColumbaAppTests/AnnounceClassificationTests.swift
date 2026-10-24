@@ -529,21 +529,58 @@ final class TruthfulPropagationLifecycleTests: XCTestCase {
     func testDefaultDeliveryMethodControlsInitialWireMethodAndRelayRetry() {
         let propagated = MessagingViewModel.deliveryPlan(
             defaultMethod: "propagated",
-            retryViaRelay: true
+            retryViaRelay: true,
+            contentSize: 2,
+            hasAttachments: false
         )
         XCTAssertEqual(propagated.method, .propagated)
         XCTAssertNil(propagated.failureFallbackMethod)
 
-        let directWithRetry = MessagingViewModel.deliveryPlan(
+        // Android parity: attachment-free text within the opportunistic
+        // threshold goes OPPORTUNISTIC on the wire (raw packet; recipient
+        // infers "opportunistic"), not a forced DIRECT link.
+        let smallTextWithRetry = MessagingViewModel.deliveryPlan(
             defaultMethod: "direct",
-            retryViaRelay: true
+            retryViaRelay: true,
+            contentSize: 2,
+            hasAttachments: false
         )
-        XCTAssertEqual(directWithRetry.method, .direct)
-        XCTAssertEqual(directWithRetry.failureFallbackMethod, .propagated)
+        XCTAssertEqual(smallTextWithRetry.method, .opportunistic)
+        XCTAssertEqual(smallTextWithRetry.failureFallbackMethod, .propagated)
+
+        let smallTextWithoutRetry = MessagingViewModel.deliveryPlan(
+            defaultMethod: "direct",
+            retryViaRelay: false,
+            contentSize: 2,
+            hasAttachments: false
+        )
+        XCTAssertEqual(smallTextWithoutRetry.method, .opportunistic)
+        XCTAssertNil(smallTextWithoutRetry.failureFallbackMethod)
+
+        // Over the threshold, or with any attachment payload, DIRECT remains.
+        let largeText = MessagingViewModel.deliveryPlan(
+            defaultMethod: "direct",
+            retryViaRelay: true,
+            contentSize: MessagingViewModel.opportunisticMaxBytes + 1,
+            hasAttachments: false
+        )
+        XCTAssertEqual(largeText.method, .direct)
+        XCTAssertEqual(largeText.failureFallbackMethod, .propagated)
+
+        let smallWithAttachment = MessagingViewModel.deliveryPlan(
+            defaultMethod: "direct",
+            retryViaRelay: true,
+            contentSize: 2,
+            hasAttachments: true
+        )
+        XCTAssertEqual(smallWithAttachment.method, .direct)
+        XCTAssertEqual(smallWithAttachment.failureFallbackMethod, .propagated)
 
         let directWithoutRetry = MessagingViewModel.deliveryPlan(
             defaultMethod: "direct",
-            retryViaRelay: false
+            retryViaRelay: false,
+            contentSize: 4096,
+            hasAttachments: false
         )
         XCTAssertEqual(directWithoutRetry.method, .direct)
         XCTAssertNil(directWithoutRetry.failureFallbackMethod)

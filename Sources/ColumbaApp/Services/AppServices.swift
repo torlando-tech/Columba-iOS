@@ -3766,6 +3766,18 @@ public final class AppServices {
                 ]
             )
             await self.dispatchLinkIdentified(linkId: UInt64(linkId), identityHashHex: identityHashHex)
+        case .health(let pending, let hbAge, let threads, _):
+            // DIAG(router-health): the NE's router liveness probe. Health
+            // lines flowing but no delivery events => router/callback issue;
+            // health stopping too => the NE->app event bus itself died.
+            DiagLog.log("[RNS] health pending=\(pending) hb_age=\(hbAge)s")
+            if let threads {
+                // Stall dump: one DiagLog line per stack frame (capped) so the
+                // blocked jobloop's exact call site is visible.
+                for line in threads.split(separator: "\n").prefix(80) {
+                    DiagLog.log("[RNS] health-threads \(line)")
+                }
+            }
         }
     }
 
