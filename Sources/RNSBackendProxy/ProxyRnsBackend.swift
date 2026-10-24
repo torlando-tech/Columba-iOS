@@ -519,8 +519,11 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         // Best-effort: a failed round-trip / missing node yields nil (the
         // caller hides the card rather than guessing). The payload is a
         // JSON `String?` — `null` decodes to a nil inner value.
+        // Hard 2 s bound: this runs inline on the send path and the delivery
+        // observer, so a wedged NE must degrade to "unknown" (card hidden),
+        // never stall the caller waiting on an indefinite IPC reply.
         guard let response = try? await roundTrip(
-            .nextHopInterface(destHashHex: destHashHex), op: "nextHopInterface"),
+            .nextHopInterface(destHashHex: destHashHex), op: "nextHopInterface", deadline: 2),
             case .ok(let payload) = response, let payload else {
             return nil
         }

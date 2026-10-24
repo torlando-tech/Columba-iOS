@@ -2724,15 +2724,23 @@ def resolve_path(dest_hash_hex: str, timeout_seconds: float = 10.0) -> dict[str,
 def next_hop_interface(dest_hash_hex: str) -> dict[str, Any]:
     """Best-effort snapshot of the interface RNS would use to reach a destination.
 
-    Mirrors Android Columba's ``PythonRnsCore.getNextHopInterfaceName``:
+    Mirrors Android Columba's ``PythonRnsCore.getNextHopInterfaceName``: the
+    path-table next hop (the interface the destination's last announce
+    arrived on — the same interface RNS routes outbound packets over,
+    Transport.py:1389), with the configured propagation node's live
+    ``outbound_propagation_link.attached_interface`` as fallback (propagated
+    packets physically travel over that interface even when the node's
+    path-table entry is empty).
 
-    1. ``RNS.Transport.next_hop_interface(dest)`` — the path-table next hop,
-       i.e. the interface the destination's last announce arrived on (the
-       same interface RNS routes outbound packets over, Transport.py:1389).
-    2. Fallback for the configured outbound propagation node: the live
-       ``outbound_propagation_link.attached_interface`` — propagated packets
-       physically travel over that interface even when the node's path-table
-       entry is empty.
+    GIL SAFETY — every lock here MUST be taken non-blocking. Bridge calls
+    run with the GIL held (``PythonNodeRuntime.callBridge``); the holders of
+    ``_lock`` and ``Transport.path_table_lock`` are Python threads that need
+    the GIL to release those locks. Blocking on either from this thread is a
+    guaranteed deadlock that freezes the entire embedded runtime (observed
+    on-device: the send's snapshot call wedged the bridge and delivery proof
+    events stopped reaching the app). A busy lock therefore means
+    "unknown", exactly like a missing path — the caller hides the card and
+    never guesses.
 
     Display-name resolution matches Android's ``pyInterfaceName``:
     ``iface.name`` (the config section name) → ``str(iface)`` → class name,
@@ -2742,9 +2750,13 @@ def next_hop_interface(dest_hash_hex: str) -> dict[str, Any]:
     Returns ``{ok, interface}``; ``interface`` is None when no path is known
     — the caller must treat that as "unknown", never guess an interface.
     """
-    with _lock:
+    if not _lock.acquire(blocking=False):
+        return {"ok": False, "interface": None, "reason": "busy"}
+    try:
         started = _state["started"]
         router = _state["router"]
+    finally:
+        _lock.release()
     if not started:
         return {"ok": False, "interface": None, "reason": "not-started"}
     try:
@@ -2754,7 +2766,18 @@ def next_hop_interface(dest_hash_hex: str) -> dict[str, Any]:
 
     iface = None
     try:
-        iface = RNS.Transport.next_hop_interface(dest_hash)
+        transport = RNS.Transport
+        # Read the path table directly under a non-blocking grab of
+        # path_table_lock. Transport.next_hop_interface() takes the same
+        # lock blocking, and threading.Lock is not reentrant — acquiring it
+        # here and delegating would self-deadlock.
+        if transport.path_table_lock.acquire(blocking=False):
+            try:
+                entry = transport.path_table.get(dest_hash)
+                if entry is not None:
+                    iface = entry[transport.IDX_PT_RVCD_IF]
+            finally:
+                transport.path_table_lock.release()
     except Exception:
         iface = None
     if iface is None and router is not None:
