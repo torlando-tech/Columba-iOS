@@ -367,6 +367,9 @@ public struct Message: Identifiable, Equatable {
     /// Whether reply/reaction protocols may safely target `messageHash`.
     public var isTargetSafe: Bool = false
     public var receivedInterface: String?
+    /// Interface name snapshotted at send time (outbound only); nil for
+    /// received messages, pre-feature rows, and sends with no known path.
+    public var sentInterface: String?
 
     // Reply & reactions
     public var replyToId: String?
@@ -508,6 +511,7 @@ public struct Message: Identifiable, Equatable {
             self.replyToId = replyTo
         }
         self.reactions = []  // Accumulated separately
+        self.sentInterface = lxMessage.sentInterface
     }
 
     /// Create from MessageRecord.
@@ -574,6 +578,7 @@ public struct Message: Identifiable, Equatable {
 
         // Receiving interface from DB
         self.receivedInterface = record.receivingInterface
+        self.sentInterface = record.sentInterface
 
         // Reply
         self.replyToId = record.replyToId

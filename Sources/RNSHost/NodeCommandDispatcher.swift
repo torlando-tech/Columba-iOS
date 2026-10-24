@@ -110,6 +110,14 @@ enum NodeCommandDispatcher {
             let ok = (res["ok"] as? Bool) ?? false
             return .ok(try? JSONEncoder().encode(ok))
 
+        case .nextHopInterface(let destHashHex):
+            // Best-effort next-hop snapshot for the "Sending Interface"
+            // details card. Forward the interface name (or null when no
+            // path is known) as a JSON String? — the app never guesses.
+            let res = engine.nextHopInterface(destHashHex: destHashHex)
+            let name = res?["interface"] as? String
+            return .ok(try? JSONEncoder().encode(name))
+
         case .heardAnnounces:
             // rns_bridge.drain_events() returns the event queue (snake_case
             // keys); keep the announce events and map them onto the
@@ -329,7 +337,11 @@ enum NodeCommandDispatcher {
             identityHashHex: e["identity_hash"] as? String,
             inbound: e["inbound"] as? Bool,
             publicKeyHex: e["public_key"] as? String,
-            seq: e["seq"] as? Int
+            seq: e["seq"] as? Int,
+            // router health probe (diagnostic build)
+            pending: e["pending"] as? Int,
+            hbAge: e["hb_age"] as? Double,
+            threads: e["threads"] as? String
         )
     }
 

@@ -461,6 +461,13 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
                     t: Date(timeIntervalSince1970: e.t),
                     publicKeyHex: e.publicKeyHex
                 ))
+            case "health":
+                eventContinuation.yield(.health(
+                    pending: e.pending ?? -1,
+                    hbAgeSeconds: e.hbAge ?? -1,
+                    threads: e.threads,
+                    t: Date(timeIntervalSince1970: e.t)
+                ))
             default:
                 // Unknown kind (forward-compatible): drop, don't crash.
                 continue
@@ -513,6 +520,21 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
             return nil
         }
         return try? JSONDecoder().decode(StatusSnapshot.self, from: payload)
+    }
+
+    public func nextHopInterface(destHashHex: String) async -> String? {
+        // Best-effort: a failed round-trip / missing node yields nil (the
+        // caller hides the card rather than guessing). The payload is a
+        // JSON `String?` — `null` decodes to a nil inner value.
+        // Hard 2 s bound: this runs inline on the send path and the delivery
+        // observer, so a wedged NE must degrade to "unknown" (card hidden),
+        // never stall the caller waiting on an indefinite IPC reply.
+        guard let response = try? await roundTrip(
+            .nextHopInterface(destHashHex: destHashHex), op: "nextHopInterface", deadline: 2),
+            case .ok(let payload) = response, let payload else {
+            return nil
+        }
+        return (try? JSONDecoder().decode(String?.self, from: payload)) ?? nil
     }
 
     public func bleConnections() async -> [BLEConnectionInfo] {

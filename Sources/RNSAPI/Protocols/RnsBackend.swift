@@ -79,6 +79,11 @@ public enum BackendEvent: Equatable, Sendable {
     /// `<identity>.lxmf.delivery` contact hash. `nil` when the backend can't
     /// provide it (the identity hash is still usable for a degraded lookup).
     case linkIdentified(linkId: Int, identityHashHex: String, t: Date, publicKeyHex: String?)
+    /// Router health probe (diagnostic build): `pending` = outbound messages
+    /// still queued in the LXMF router, `hbAgeSeconds` = seconds since the
+    /// router jobloop last started a tick, `threads` = stack dump captured
+    /// when the loop stalls (>90s). Logged to diag.log only.
+    case health(pending: Int, hbAgeSeconds: Double, threads: String?, t: Date)
 }
 
 /// Outcome of a blocking propagation-node sync.
@@ -294,6 +299,15 @@ public protocol RnsCore: AnyObject, Sendable {
     /// `ProxyRnsBackend` overrides it to query the NE over the proxy IPC.
     func bleConnections() async -> [BLEConnectionInfo]
 
+    /// Best-effort snapshot of the interface the transport would use to
+    /// reach `destHashHex` (Android `RnsCore.getNextHopInterfaceName`
+    /// parity): the path-table next hop — the interface the destination's
+    /// last announce arrived on and the one outbound packets route over.
+    /// Returns nil when no path is known; callers must treat nil as
+    /// "unknown" and never substitute a configured interface. Backends
+    /// without a live transport return nil (default below).
+    func nextHopInterface(destHashHex: String) async -> String?
+
     /// Disconnect a Model B BLE peer by its identity hash (the NE owns the
     /// radio, so the link is dropped NE-side). Returns true when a connected
     /// peer with that identity existed. Backends without a native BLE interface
@@ -315,6 +329,9 @@ public extension RnsCore {
 
     @discardableResult
     func rememberPeerIdentity(destHashHex: String, publicKey: Data) async -> Bool { false }
+
+    /// Default: no live transport to query.
+    func nextHopInterface(destHashHex: String) async -> String? { nil }
 }
 
 /// RNS.Link operations backing LXST voice (the Swift state machine drives these;

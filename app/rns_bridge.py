@@ -1713,6 +1713,18 @@ def start(
             router = LXMF.LXMRouter(identity=identity, storagepath=storage_path)
             router.register_delivery_callback(_delivery_callback)
             _state["router"] = router
+            # DIAG(router-health): `jobs()` runs on the router's job thread;
+            # stamping its start time lets `drain_events` report jobloop
+            # staleness to the app over the event bus. A stalled tick (e.g.
+            # process_outbound blocked in a half-open propagation socket)
+            # shows as a monotonically growing age.
+            _job_hb: dict[str, float] = {"t": time.time()}
+            _state["job_hb"] = _job_hb
+            _orig_jobs = router.jobs
+            def _jobs_with_heartbeat(_orig=_orig_jobs, _hb=_job_hb):
+                _hb["t"] = time.time()
+                return _orig()
+            router.jobs = _jobs_with_heartbeat
             STARTUP_TIMING["router_ms"] = (time.perf_counter() - _t0) * 1000
         finally:
             _signal.signal = _orig_signal
@@ -2721,6 +2733,89 @@ def resolve_path(dest_hash_hex: str, timeout_seconds: float = 10.0) -> dict[str,
     return {"ok": False, "reason": "timeout"}
 
 
+def next_hop_interface(dest_hash_hex: str) -> dict[str, Any]:
+    """Best-effort snapshot of the interface RNS would use to reach a destination.
+
+    Mirrors Android Columba's ``PythonRnsCore.getNextHopInterfaceName``: the
+    path-table next hop (the interface the destination's last announce
+    arrived on — the same interface RNS routes outbound packets over,
+    Transport.py:1389), with the configured propagation node's live
+    ``outbound_propagation_link.attached_interface`` as fallback (propagated
+    packets physically travel over that interface even when the node's
+    path-table entry is empty).
+
+    GIL SAFETY — every lock here MUST be taken non-blocking. Bridge calls
+    run with the GIL held (``PythonNodeRuntime.callBridge``); the holders of
+    ``_lock`` and ``Transport.path_table_lock`` are Python threads that need
+    the GIL to release those locks. Blocking on either from this thread is a
+    guaranteed deadlock that freezes the entire embedded runtime (observed
+    on-device: the send's snapshot call wedged the bridge and delivery proof
+    events stopped reaching the app). A busy lock therefore means
+    "unknown", exactly like a missing path — the caller hides the card and
+    never guesses.
+
+    Display-name resolution matches Android's ``pyInterfaceName``:
+    ``iface.name`` (the config section name) → ``str(iface)`` → class name,
+    because spawned peers like ``AutoInterfacePeer`` carry ``name=None`` and
+    only ``__str__`` identifies them.
+
+    Returns ``{ok, interface}``; ``interface`` is None when no path is known
+    — the caller must treat that as "unknown", never guess an interface.
+    """
+    if not _lock.acquire(blocking=False):
+        return {"ok": False, "interface": None, "reason": "busy"}
+    try:
+        started = _state["started"]
+        router = _state["router"]
+    finally:
+        _lock.release()
+    if not started:
+        return {"ok": False, "interface": None, "reason": "not-started"}
+    try:
+        dest_hash = bytes.fromhex(dest_hash_hex)
+    except (TypeError, ValueError):
+        return {"ok": False, "interface": None, "reason": "bad-hash"}
+
+    iface = None
+    try:
+        transport = RNS.Transport
+        # Read the path table directly under a non-blocking grab of
+        # path_table_lock. Transport.next_hop_interface() takes the same
+        # lock blocking, and threading.Lock is not reentrant — acquiring it
+        # here and delegating would self-deadlock.
+        if transport.path_table_lock.acquire(blocking=False):
+            try:
+                entry = transport.path_table.get(dest_hash)
+                if entry is not None:
+                    # IDX_PT_RVCD_IF is a module-level constant in
+                    # RNS/Transport.py; RNS.Transport is the class, which
+                    # does NOT re-export it — resolve it from the defining
+                    # module (attribute access on the class raises
+                    # AttributeError, which once silently hid the card).
+                    idx_rvcd_if = sys.modules[transport.__module__].IDX_PT_RVCD_IF
+                    iface = entry[idx_rvcd_if]
+            finally:
+                transport.path_table_lock.release()
+    except Exception:
+        iface = None
+    if iface is None and router is not None:
+        try:
+            if getattr(router, "outbound_propagation_node", None) == dest_hash:
+                link = getattr(router, "outbound_propagation_link", None)
+                if link is not None:
+                    iface = getattr(link, "attached_interface", None)
+        except Exception:
+            iface = None
+
+    name: str | None = None
+    if iface is not None:
+        try:
+            name = getattr(iface, "name", None) or str(iface) or type(iface).__name__
+        except Exception:
+            name = None
+    return {"ok": True, "interface": name}
+
+
 def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
                        method: str = "opportunistic",
                        failure_fallback_method: str = "") -> dict[str, Any]:
@@ -2810,6 +2905,11 @@ def send_opportunistic(dest_hash_hex: str, content: str, fields_hex: str = "",
             return ""
 
         def _emit_lifecycle(m: "LXMF.LXMessage", state: str, reason: str) -> None:
+            # DIAG(router-health): every lifecycle callback firing, BEFORE the
+            # dedup below, so a swallowed event is still visible in the OS log
+            # (stdout is routed to NSLog by the bridge's _SysLogStream).
+            # No message identifiers: state + reason only.
+            print(f"[LIFECYCLE] state={state} reason={reason}", flush=True)
             with callback_lock:
                 current = callback_state["outcome"]
                 if state == "retrying_propagated":
@@ -3391,6 +3491,18 @@ def drain_events() -> list[dict[str, Any]]:
     `start()`), so events survive an NE jetsam/restart and are caught up on the
     app's next drain (triggered by the Darwin ping or on foreground). Otherwise
     (in-process Python backend) it drains the in-memory queue as before."""
+    # DIAG(router-health): piggyback the liveness probe on the app's regular
+    # drain cadence (no extra IPC op). Throttled; never raises.
+    try:
+        now = time.time()
+        if now - _last_health_emit[0] >= _HEALTH_EVERY_SECONDS:
+            _last_health_emit[0] = now
+            health = _router_health()
+            if health is not None:
+                print(f"[ROUTER-HEALTH] pending={health['pending']} hb_age={health['hb_age']}", flush=True)
+                _put("health", **health)
+    except Exception:
+        pass
     if _durable_mode:
         return drain_inbox()
     out: list[dict[str, Any]] = []
@@ -3400,6 +3512,52 @@ def drain_events() -> list[dict[str, Any]]:
         except queue.Empty:
             break
     return out
+# DIAG(router-health): periodic router liveness probe, emitted as a `health`
+# event on the same bus as delivery events. The app logs it to diag.log, so
+# the bus itself is the transport: health flowing but no delivery event =>
+# router/callback problem; health stopping too => the event bus died.
+# PII-free: counts + ages + stack frames only (faulthandler prints file:line
+# and function names, never locals).
+_HEALTH_EVERY_SECONDS = 30.0
+_HEALTH_STALL_DUMP_SECONDS = 90.0
+_last_health_emit = [0.0]
+
+
+def _router_health() -> dict[str, Any] | None:
+    router = _state.get("router")
+    if router is None:
+        return None
+    hb = _state.get("job_hb") or {}
+    age = time.time() - float(hb.get("t", 0.0))
+    payload: dict[str, Any] = {
+        "pending": len(router.pending_outbound),
+        "hb_age": round(age, 1),
+    }
+    if age > _HEALTH_STALL_DUMP_SECONDS:
+        # Jobloop stalled: capture every thread's stack once per probe so the
+        # stall site (e.g. process_outbound blocked in a propagation socket)
+        # is visible without a rebuild.
+        try:
+            import faulthandler
+            import os
+            import tempfile
+            # faulthandler writes through a REAL file descriptor; an
+            # io.StringIO has no fileno() and raises UnsupportedOperation
+            # (greptile P2 #238), so dump to a temp file and read it back.
+            fd, path = tempfile.mkstemp(prefix="rns-stall-", suffix=".txt")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    faulthandler.dump_traceback(file=f, all_threads=True)
+                with open(path, "r", errors="replace") as f:
+                    payload["threads"] = f.read()[:6000]
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+    return payload
 
 
 # ────────────────────────────────────────────────────────────────────

@@ -180,6 +180,17 @@ public final class MessagingViewModel {
                         method: displayProof.method
                     )) == true
                 }
+                // Second-chance interface capture on terminal success
+                // (Android parity): recipient delivery, or relay acceptance
+                // of a propagated send. Runs before the visibility guard so
+                // the durable row is enriched even when the bubble is gone.
+                if displayProof.state == .delivered
+                    || (displayProof.state == .sent && displayProof.method == .propagated) {
+                    await self.enrichSentInterfaceOnDelivery(
+                        canonicalHash: hashData,
+                        propagated: displayProof.method == .propagated
+                    )
+                }
                 guard let index = self.messages.firstIndex(where: { $0.id == visibleID }) else { return }
                 if wasAliased && displayProofPersisted {
                     self.messages[index] = Self.canonicalizedMessage(
@@ -817,11 +828,87 @@ public final class MessagingViewModel {
         }
     }
 
+    /// Best-effort snapshot of the interface RNS would transmit over
+    /// (Android `getNextHopInterfaceName` call-site parity): for propagated
+    /// sends the OUTBOUND RELAY's hash is queried instead of the recipient's
+    /// — the message physically travels over whatever interface reaches the
+    /// relay, and the recipient hash has no direct next hop. Nil means
+    /// "no path known"; the details card stays hidden rather than guessing.
+    @MainActor
+    private func sentInterfaceSnapshot(method: LXDeliveryMethod) async -> String? {
+        guard let backend = appServices.backend else { return nil }
+        var lookupHex = Self.hexString(conversationHash)
+        if method == .propagated, let propHash = appServices.propagationManager?.selectedNodeHash {
+            lookupHex = Self.hexString(propHash)
+        }
+        return await backend.nextHopInterface(destHashHex: lookupHex)
+    }
+
+    /// Delivery-time second-chance capture (Android parity): fires only on
+    /// terminal success, because the routing table then still reflects the
+    /// actual send path (failed / retrying states carry too much routing
+    /// ambiguity). Fills `sentInterface` only while the row's value is still
+    /// NULL — the send-time snapshot is never overwritten.
+    ///
+    /// The delivery notification reaches EVERY live chat view model, so the
+    /// lookup destination is resolved from the stored row (or the outbound
+    /// relay), never from this conversation: a proof for a message in
+    /// another chat must not borrow this chat's route.
+    @MainActor
+    private func enrichSentInterfaceOnDelivery(canonicalHash: Data, propagated: Bool) async {
+        guard let backend = appServices.backend else { return }
+        var lookupHex: String? = propagated
+            ? appServices.propagationManager?.selectedNodeHash.map { Self.hexString($0) }
+            : nil
+        if lookupHex == nil {
+            guard let row = try? await repository.getMessage(id: canonicalHash),
+                  !row.destinationHash.isEmpty else { return }
+            lookupHex = Self.hexString(row.destinationHash)
+        }
+        guard let lookupHex,
+              let name = await backend.nextHopInterface(destHashHex: lookupHex) else { return }
+        let updated = (try? await repository.updateSentInterface(
+            messageId: canonicalHash, interfaceName: name
+        )) == true
+        guard updated else { return }
+        let visibleID = Self.visibleMessageID(
+            for: Self.hexString(canonicalHash),
+            aliases: pendingOutboundAliases
+        )
+        if let index = messages.firstIndex(where: { $0.id == visibleID }),
+           messages[index].sentInterface == nil {
+            messages[index].sentInterface = name
+        }
+    }
+
+    /// Content-size threshold under which an attachment-free send is upgraded
+    /// to LXMF OPPORTUNISTIC. Mirrors Android Columba's
+    /// `OPPORTUNISTIC_MAX_BYTES_HELPER` (determineDeliveryMethod).
+    static let opportunisticMaxBytes = 295
+
+    /// Maps the configured default method + message shape to the wire method.
+    ///
+    /// Android parity (`determineDeliveryMethod`, MessagingViewModel.kt): any
+    /// configured method other than "propagated" is upgraded to
+    /// OPPORTUNISTIC for small attachment-free sends. This matters on the
+    /// wire: DIRECT forces a link attempt (the recipient's LXMF infers
+    /// "direct" from the link arrival), while OPPORTUNISTIC travels as a raw
+    /// packet — the recipient infers "opportunistic" — and lets LXMF itself
+    /// request a path and fall back to the relay when none exists.
     static func deliveryPlan(
         defaultMethod: String,
-        retryViaRelay: Bool
+        retryViaRelay: Bool,
+        contentSize: Int,
+        hasAttachments: Bool
     ) -> (method: LXDeliveryMethod, failureFallbackMethod: LXDeliveryMethod?) {
-        let method: LXDeliveryMethod = defaultMethod == "propagated" ? .propagated : .direct
+        let method: LXDeliveryMethod
+        if defaultMethod == "propagated" {
+            method = .propagated
+        } else if !hasAttachments && contentSize <= opportunisticMaxBytes {
+            method = .opportunistic
+        } else {
+            method = .direct
+        }
         let failureFallbackMethod: LXDeliveryMethod? =
             retryViaRelay && method != .propagated ? .propagated : nil
         return (method, failureFallbackMethod)
@@ -876,7 +963,11 @@ public final class MessagingViewModel {
         let retryViaRelay = await settingsRepository.getRetryViaRelay()
         let deliveryPlan = Self.deliveryPlan(
             defaultMethod: settingsMethod,
-            retryViaRelay: retryViaRelay
+            retryViaRelay: retryViaRelay,
+            contentSize: trimmedText.utf8.count,
+            hasAttachments: imageData != nil
+                || !(attachments?.isEmpty ?? true)
+                || audioAttachment != nil
         )
         let selectedDeliveryMethod = deliveryPlan.method
 
@@ -1031,6 +1122,9 @@ public final class MessagingViewModel {
             // `.queued` means the local router accepted ownership. It does not
             // prove packet transmission, relay storage, or recipient delivery.
             lxMessage.state = .sending
+            // Snapshot the outbound interface while the routing table still
+            // reflects the just-queued send (best-effort, never guessed).
+            lxMessage.sentInterface = await sentInterfaceSnapshot(method: selectedDeliveryMethod)
             registerPendingOutboundAlias(
                 canonicalHash: sentHash,
                 optimisticID: optimisticId
@@ -1120,6 +1214,7 @@ public final class MessagingViewModel {
                     retryMessage.hash = retryHash
                     retryMessage.state = .sending
                     retryMessage.method = .propagated
+                    retryMessage.sentInterface = await sentInterfaceSnapshot(method: .propagated)
                     registerPendingOutboundAlias(
                         canonicalHash: retryHash,
                         optimisticID: optimisticId
