@@ -1914,16 +1914,14 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
             if outbound is None:
                 return {"ok": False, "state": "no-node", "received_messages": 0, "reason": "no-node-selected"}
 
-            try:
-                router.request_messages_from_propagation_node(identity)
-            except Exception as e:
-                return {"ok": False, "state": "transfer-failed", "received_messages": 0, "reason": f"start-failed: {e}"}
-
-        # Poll the router state outside the lock so the router can update
-        # propagation_transfer_state from its own thread.
+        # Uploads and downloads share one propagation link. LXMF does not start
+        # a download or reset its previous result when that link is pending.
+        # Wait for it here, then explicitly request the download once active.
         deadline = time.monotonic() + timeout
         last_seen_state: Any = None
         terminal_reached = False
+        request_started = False
+        pending_link: Any = None
         terminal_states = {
             getattr(LXMF.LXMRouter, "PR_COMPLETE", 0x07),
             getattr(LXMF.LXMRouter, "PR_NO_PATH", 0xF0),
@@ -1936,6 +1934,34 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
         while time.monotonic() < deadline:
             if cancellation.is_set():
                 return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
+            if not request_started:
+                with _lock:
+                    if cancellation.is_set():
+                        return {"ok": False, "state": "cancelled", "received_messages": 0, "reason": "cancelled"}
+                    link = pending_link or getattr(router, "outbound_propagation_link", None)
+                    if link is not None and link.status == RNS.Link.CLOSED:
+                        if pending_link is not None:
+                            last_seen_state = LXMF.LXMRouter.PR_LINK_FAILED
+                            terminal_reached = True
+                            break
+                        # A retry must not wait for the router's periodic link
+                        # cleaner to discard an already-closed previous link.
+                        if router.outbound_propagation_link is link:
+                            router.outbound_propagation_link = None
+                        link = None
+                    if link is None or link.status == RNS.Link.ACTIVE:
+                        try:
+                            router.propagation_transfer_state = LXMF.LXMRouter.PR_IDLE
+                            router.propagation_transfer_last_result = None
+                            router.request_messages_from_propagation_node(identity)
+                        except Exception as e:
+                            return {"ok": False, "state": "transfer-failed", "received_messages": 0, "reason": f"start-failed: {e}"}
+                        request_started = True
+                    else:
+                        pending_link = link
+                if not request_started:
+                    time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+                    continue
             try:
                 state_val = getattr(router, "propagation_transfer_state", None)
                 last_seen_state = state_val
@@ -1944,7 +1970,7 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
                     break
             except Exception:
                 pass
-            time.sleep(0.5)
+            time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
 
         if not terminal_reached:
             cancellation.set()
@@ -1956,14 +1982,14 @@ def propagation_sync(timeout: float = 60.0) -> dict[str, Any]:
                 "reason": "timeout",
             }
 
-        received = 0
-        try:
-            received = int(getattr(router, "propagation_transfer_last_result", 0) or 0)
-        except Exception:
-            pass
-
         state_name = _propagation_state_name(last_seen_state)
         ok = state_name == "complete"
+        received = 0
+        if ok:
+            try:
+                received = int(getattr(router, "propagation_transfer_last_result", 0) or 0)
+            except Exception:
+                pass
         return {
             "ok": ok,
             "state": state_name,

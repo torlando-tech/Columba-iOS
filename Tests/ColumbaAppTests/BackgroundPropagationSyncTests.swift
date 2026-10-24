@@ -46,6 +46,42 @@ final class BackgroundPropagationSyncTests: XCTestCase {
         XCTAssertFalse(manager.hasInProcessPeriodicSyncTaskForTesting)
     }
 
+    func testCancellationOnlyAffectsTheMatchingActiveSync() async {
+        let request = ControlledPropagationSync()
+        let manager = PropagationNodeManager(
+            appServices: AppServices(),
+            propagationSyncRequest: { timeout in await request.run(timeout: timeout) },
+            propagationSyncCancellation: { request.cancel() }
+        )
+        manager.selectedNodeHash = Data(repeating: 0x42, count: 16)
+        let firstID = UUID()
+        let secondID = UUID()
+
+        let firstStarted = expectation(description: "first sync started")
+        request.started = firstStarted
+        let first = Task { await manager.syncNow(operationID: firstID) }
+        await fulfillment(of: [firstStarted], timeout: 2)
+        await manager.cancelActiveSync(operationID: firstID)
+        let firstResult = await first.value
+        XCTAssertFalse(firstResult)
+        XCTAssertEqual(manager.syncState.errorDescription, "cancelled")
+        XCTAssertEqual(request.cancellations, 1)
+
+        let secondStarted = expectation(description: "second sync started")
+        request.started = secondStarted
+        let second = Task { await manager.syncNow(operationID: secondID) }
+        await fulfillment(of: [secondStarted], timeout: 2)
+        await manager.cancelActiveSync(operationID: firstID)
+        XCTAssertEqual(request.cancellations, 1)
+        request.complete()
+        let secondResult = await second.value
+        XCTAssertTrue(secondResult, "A late cancellation must not interrupt a newer sync")
+        XCTAssertEqual(manager.syncState.receivedMessages, 3)
+
+        await manager.cancelActiveSync(operationID: secondID)
+        XCTAssertEqual(request.cancellations, 1, "Completed operations must not cancel the backend")
+    }
+
     func testNodeRetrievalScheduleTracksSelectionIntervalAndDisable() {
         var schedule = NodePropagationSchedule()
         let start = Date(timeIntervalSince1970: 1000)
@@ -652,5 +688,34 @@ private final class AsyncGate {
     func open() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+@MainActor
+private final class ControlledPropagationSync {
+    var started: XCTestExpectation?
+    private var continuation: CheckedContinuation<PropagationSyncResult, Never>?
+    private(set) var cancellations = 0
+
+    func run(timeout: TimeInterval) async -> PropagationSyncResult {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            started?.fulfill()
+        }
+    }
+
+    func cancel() {
+        cancellations += 1
+        finish(PropagationSyncResult(ok: false, state: .cancelled, receivedMessages: 0, reason: "cancelled"))
+    }
+
+    func complete() {
+        finish(PropagationSyncResult(ok: true, state: .complete, receivedMessages: 3, reason: "ok"))
+    }
+
+    private func finish(_ result: PropagationSyncResult) {
+        let pending = continuation
+        continuation = nil
+        pending?.resume(returning: result)
     }
 }

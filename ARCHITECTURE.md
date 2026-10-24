@@ -36,6 +36,10 @@ Python projects inbound messages into the shared store. `NodeInboundReplay` runs
 
 The persisted propagation configuration is restored before recovering outbox sends when iOS starts the extension without the app. Live relay selection, sync/cancellation, discovery, transfer limits, and peer identity retention cross typed commands through the same dispatcher in either mode.
 
+Propagation uploads and downloads share the router's outbound relay link. The Python sync bridge waits for a pre-existing pending link within the sync deadline, then explicitly starts retrieval; it never treats the previous sync's terminal state as the current result. Already-closed links are discarded on retry, while a link that closes during the wait reports `link_failed`. Failed operations report zero received messages rather than a previous sync's count.
+
+The Swift propagation manager scopes cancellation to the active sync's operation ID. Expiration of an older operation, or cancellation after completion, must not cancel a newer backend request. Hosted Swift tests exercise this ownership across consecutive syncs with controllable request and cancellation dependencies.
+
 ## Project maintenance and validation
 
 Run `ruby support/configure-unified-hosting.rb` to reconcile the shared source graph. The old configure/embed/isolation entry points delegate to it and cannot recreate alternate app flavors. `support/verify-flavor-artifact.py unified <app>` checks both host payloads, the embedded extension, native ABI exports, framework linkage, and signing entitlements. Its legacy modes remain for inspecting historical artifacts.

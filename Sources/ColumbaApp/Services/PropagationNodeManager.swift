@@ -93,6 +93,8 @@ public final class PropagationNodeManager {
     private let settingsRepository = SettingsRepository()
     typealias PropagationNodeSetter = @MainActor (String, Int) async throws -> Bool
     private let propagationNodeSetter: PropagationNodeSetter?
+    private let propagationSyncRequest: (@MainActor (TimeInterval) async throws -> PropagationSyncResult)?
+    private let propagationSyncCancellation: (@MainActor () async -> Void)?
     private let logger = Logger(subsystem: "network.columba.Columba", category: "PropagationNodeManager")
 
     /// Task for listening to path table updates.
@@ -116,14 +118,20 @@ public final class PropagationNodeManager {
     public init(appServices: AppServices) {
         self.appServices = appServices
         self.propagationNodeSetter = nil
+        self.propagationSyncRequest = nil
+        self.propagationSyncCancellation = nil
     }
 
     init(
         appServices: AppServices,
-        propagationNodeSetter: PropagationNodeSetter?
+        propagationNodeSetter: PropagationNodeSetter? = nil,
+        propagationSyncRequest: (@MainActor (TimeInterval) async throws -> PropagationSyncResult)? = nil,
+        propagationSyncCancellation: (@MainActor () async -> Void)? = nil
     ) {
         self.appServices = appServices
         self.propagationNodeSetter = propagationNodeSetter
+        self.propagationSyncRequest = propagationSyncRequest
+        self.propagationSyncCancellation = propagationSyncCancellation
     }
 
     // MARK: - Node Discovery
@@ -326,7 +334,7 @@ public final class PropagationNodeManager {
             syncState = PropagationTransferState(state: .linking)
         }
 
-        guard let backend = appServices?.backend else { return false }
+        guard propagationSyncRequest != nil || appServices?.backend != nil else { return false }
         if selectedNodeHash == nil && autoSelectEnabled,
            let best = knownNodes.first(where: { $0.isOnline }) ?? knownNodes.first {
             _ = await selectNode(hash: best.hash)
@@ -337,7 +345,13 @@ public final class PropagationNodeManager {
             return false
         }
         do {
-            let result = try await backend.lxmf.propagationSync(timeout: timeout)
+            let result: PropagationSyncResult
+            if let propagationSyncRequest {
+                result = try await propagationSyncRequest(timeout)
+            } else {
+                guard let backend = appServices?.backend else { return false }
+                result = try await backend.lxmf.propagationSync(timeout: timeout)
+            }
             await appServices?.replayInboundSideEffects?()
             syncState.state = Self.mapPythonState(result.state)
             syncState.receivedMessages = result.receivedMessages
@@ -363,7 +377,11 @@ public final class PropagationNodeManager {
             logger.info("[SYNC] ignored cancellation for inactive propagation sync")
             return
         }
-        await appServices?.backend?.lxmf.cancelPropagationSync()
+        if let propagationSyncCancellation {
+            await propagationSyncCancellation()
+        } else {
+            await appServices?.backend?.lxmf.cancelPropagationSync()
+        }
     }
 
     /// Reapply the persisted relay after the embedded Python backend starts.
