@@ -277,6 +277,24 @@ final class NEMemoryTraceTests: XCTestCase {
         XCTAssertEqual(Set(summary.points.map(\.segment)).count, 3, "three processes, three lines")
     }
 
+    // MARK: - Stop reason names
+
+    /// The `.stop` marker's raw value is displayed verbatim in the Memory Usage
+    /// screen; a mapping drift would show the wrong teardown reason (e.g. call
+    /// device-sleep "user logout"). Spot-check the SDK-ordered values from the
+    /// iPhoneOS 27.1 `NEProvider.h` plus the out-of-range fallback.
+    func testStopReasonNameMapping() {
+        XCTAssertEqual(NEMemoryHistory.stopReasonName(0), "no specific reason")
+        XCTAssertEqual(NEMemoryHistory.stopReasonName(1), "stopped by the user")
+        XCTAssertEqual(NEMemoryHistory.stopReasonName(3), "no network available")
+        XCTAssertEqual(NEMemoryHistory.stopReasonName(4), "unrecoverable network change")
+        XCTAssertEqual(NEMemoryHistory.stopReasonName(15), "device went to sleep")
+        XCTAssertEqual(NEMemoryHistory.stopReasonName(17), "internal error")
+        XCTAssertFalse(NEMemoryHistory.stopReasonName(-1).isEmpty)
+        XCTAssertTrue(NEMemoryHistory.stopReasonName(-1).contains("-1"))
+        XCTAssertTrue(NEMemoryHistory.stopReasonName(99).contains("99"))
+    }
+
     // MARK: - Helpers (trace construction)
 
     /// Build a `Trace` through the real writer so the tests exercise the on-disk
