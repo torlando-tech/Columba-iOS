@@ -211,7 +211,14 @@ public enum NEMemoryTrace {
         ) else {
             return nil
         }
-        return container.appendingPathComponent("ne-memory.bin")
+        // Under `Library/`, not the container root: `devicectl device copy from`
+        // only exposes Library / Documents / tmp inside a container, so a file at
+        // the App-Group root cannot be pulled off a device - and pulling it off the
+        // device is the whole point of keeping it. Verified on iPhone 14 / iOS
+        // 27.0.1, where the root path fails with remoteservices error 11007.
+        return container
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("ne-memory.bin")
     }
 
     #if DEBUG
@@ -529,6 +536,10 @@ public enum NEMemoryTrace {
         // Header + live slot + a zero-filled ring. The zero fill is what makes a
         // never-written slot distinguishable from a corrupt one, and it is written
         // once, at boot, not per sample.
+        // The App-Group `Library/` directory is not guaranteed to exist.
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
         var initial = encodeHeader(Header())
         initial.append(Data(count: recordSize))
         initial.append(Data(count: ringCapacity * recordSize))

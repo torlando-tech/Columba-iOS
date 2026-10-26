@@ -143,8 +143,11 @@ verdict:
 
 > Shortcut now that delivery actually works: you can get a first read **without**
 > the harness — drive real traffic from the Android peer, then open
-> **Settings → Reticulum Hosting → Memory Usage** (or pull
-> `…/AppGroup/ne-memory.bin` and decode it). The controlled desktop-peer harness
+> **Settings → Reticulum Hosting → Memory Usage**, or pull the ring straight off
+> the device: `xcrun devicectl device copy from --device <UDID> --domain-type
+> appGroupDataContainer --domain-identifier group.network.columba.Columba
+> --source Library/ne-memory.bin --destination /tmp/ne-memory.bin`). The
+> controlled desktop-peer harness
 > is only needed for the clean 5-run numbers in the verdict.
 
 ---
