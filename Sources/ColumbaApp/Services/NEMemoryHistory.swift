@@ -115,7 +115,7 @@ enum NEMemoryHistory {
     static func stopReasonName(_ raw: Int) -> String {
         // `rawValue:` returns an optional; bind it first so `case .none` below
         // matches the ENUM's none case and not Optional.none.
-        guard raw >= 0, let reason = NEProviderStopReason(rawValue: UInt(raw)) else {
+        guard let reason = NEProviderStopReason(rawValue: raw) else {
             return "unknown reason code \(raw)"
         }
         switch reason {
