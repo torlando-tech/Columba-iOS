@@ -69,7 +69,10 @@ DTS 769398).
       arrived) for each locked delivery — no send-side timeout.
 
 Capture lock-screen behavior with a photo/video (no unified-log over WiFi). Pull
-the NE log after each run: `devicectl … appDataContainer … Documents/ext-diag.log`.
+the NE log after each run: `devicectl … appDataContainer … Documents/ext-diag.log`
+— that is the app's launch-time mirror. The NE's LIVE copy is in the App-Group
+container at `Library/ext-diag.log` (see cheatsheet); the Documents mirror only
+advances while the app runs, so pull the App-Group copy for post-kill forensics.
 
 ---
 
@@ -178,6 +181,8 @@ verdict:
 - Device: iPhone 14, devicectl id `<device-id>`. Get the
   **current LAN IP** from the NE socket / `lsof`, not memory (DHCP moves it).
 - Pull NE log: `xcrun devicectl device copy from --device <id> --domain-type appDataContainer --domain-identifier network.columba.Columba --source Documents/ext-diag.log --destination /tmp/ext-diag.log`
+- Pull NE log (LIVE, App-Group): same but `--domain-type appGroupDataContainer --domain-identifier group.network.columba.Columba --source Library/ext-diag.log`. The appDataContainer copy above is the app's launch-time snapshot; the App-Group copy is the authoritative post-kill source (devicectl only exposes Library/Documents/tmp inside a container, which is why the log lives under `Library/`).
+- Pull the NE memory ring from the app container (no App-Group access needed): `--domain-type appDataContainer --source Documents/ne-memory.bin` — a launch-time snapshot via `DiagLog.copyMemoryRingToDocuments`; for the live ring pull `Library/ne-memory.bin` from the App Group as in §3.
 - Pull app log: same, `--source Documents/diag.log`.
 - The shared **GRDB DB** can't be pulled live (devicectl `..` bug + the NE holds it
   open). Use the in-app `[DIAG-STORE]` log instead, or copy the DB to Documents
