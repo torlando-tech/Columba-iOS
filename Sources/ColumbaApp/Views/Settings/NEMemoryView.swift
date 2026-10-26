@@ -26,7 +26,6 @@ struct NEMemoryView: View {
 
     @State private var summary = NEMemoryHistory.Summary()
     @State private var range: MemoryRange = .day
-    @State private var hasLoadedOnce = false
 
     enum MemoryRange: String, CaseIterable, Identifiable {
         case hour = "1 h"
@@ -223,7 +222,7 @@ struct NEMemoryView: View {
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                         AxisGridLine()
-                        AxisValueLabel(format: .dateTime.hour().day(), centered: false)
+                        AxisValueLabel(format: .dateTime.hour().day())
                     }
                 }
                 .frame(height: 220)
@@ -288,6 +287,6 @@ struct NEMemoryView: View {
             NEMemoryTrace.readAll()
         }.value
         summary = NEMemoryHistory.analyze(trace, tunnelConnected: connected)
-        hasLoadedOnce = true
+        // Reading the ring is the whole load; there is nothing else to await.
     }
 }

@@ -626,7 +626,9 @@ enum MemoryFootprint {
         guard kr == KERN_SUCCESS else { return Snapshot() }
         return Snapshot(
             footprint: UInt64(info.phys_footprint),
-            lifetimePeak: UInt64(info.ledger_phys_footprint_peak),
+            // bitPattern: the ledger value is an int64 and a trap on a negative
+            // read would take the sampler down inside the NE.
+            lifetimePeak: UInt64(bitPattern: info.ledger_phys_footprint_peak),
             limitRemaining: UInt64(info.limit_bytes_remaining)
         )
     }
