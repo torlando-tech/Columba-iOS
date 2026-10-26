@@ -3,7 +3,8 @@
 //  Columba Shared
 //
 //  Append-only diagnostic logger for the Network Extension, backed by a file in
-//  the App-Group container (`ext-diag.log`). The NE is sandboxed and its
+//  the App-Group container's `Library/` directory (`Library/ext-diag.log`). The
+//  NE is sandboxed and its
 //  unified-log output does not reliably reach the host over WiFi-only devices,
 //  so the NE writes its diagnostics here; the main app copies this file into its
 //  Documents directory on launch (`copyExtensionDiagToDocuments()`), making it
@@ -44,7 +45,13 @@ public enum ExtensionDiagLog {
         ) else {
             return nil
         }
-        return containerURL.appendingPathComponent("ext-diag.log")
+        // Under `Library/`, not the container root: `devicectl device copy from`
+        // only exposes Library / Documents / tmp inside a container, so a log at
+        // the App-Group root cannot be pulled off a device for post-kill analysis
+        // (remoteservices error 11007). Same constraint `NEMemoryTrace` hit.
+        return containerURL
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("ext-diag.log")
     }()
 
     /// Maximum size of a single `ext-diag.log` file before rotation (5 MB),
@@ -121,6 +128,11 @@ public enum ExtensionDiagLog {
                 fh.closeFile()
             }
         } else {
+            // `Library/` is not guaranteed to exist inside the App-Group container.
+            try? FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             // `createFile` lets us stamp file protection atomically with creation
             // so there's no window where the file exists at default protection.
             FileManager.default.createFile(

@@ -546,6 +546,9 @@ final class ColumbaApplicationRuntime {
         // The NE (sandboxed) writes ext-diag.log to the shared container; the host
         // copies the previous background session's log out here on each launch.
         DiagLog.copyExtensionDiagToDocuments()
+        // Same treatment for the NE's memory ring: snapshot it into Documents
+        // once per launch so the post-kill footprint history is pullable.
+        DiagLog.copyMemoryRingToDocuments()
         #if DEBUG
         // Keep that copy LIVE (not just this launch's snapshot) so on-device NE
         // diagnostics can be tailed in real time. DEBUG-only.

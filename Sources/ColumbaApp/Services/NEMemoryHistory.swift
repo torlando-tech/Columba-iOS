@@ -24,6 +24,7 @@
 //
 
 import Foundation
+import NetworkExtension
 
 /// Analysis of the NE memory trace: chart series, generation boundaries, and the
 /// memory figure to report for a process iOS killed.
@@ -101,6 +102,42 @@ enum NEMemoryHistory {
             self.peak24hMB = peak24hMB
             self.restarts24h = restarts24h
             self.lastKill = lastKill
+        }
+    }
+
+    // MARK: - Stop reasons
+
+    /// Human-readable name for the `NEProviderStopReason` raw value a `.stop`
+    /// marker carries. Uses the real enum rather than duplicating the integers,
+    /// so the names cannot drift from the SDK; unknown codes (a newer SDK
+    /// writing an older app's file) fall through to a raw-value string.
+    /// Values from the iPhoneOS 27.1 SDK `NEProvider.h`.
+    static func stopReasonName(_ raw: Int) -> String {
+        // `rawValue:` returns an optional; bind it first so `case .none` below
+        // matches the ENUM's none case and not Optional.none.
+        guard raw >= 0, let reason = NEProviderStopReason(rawValue: UInt(raw)) else {
+            return "unknown reason code \(raw)"
+        }
+        switch reason {
+        case .none: return "no specific reason"
+        case .userInitiated: return "stopped by the user"
+        case .providerFailed: return "provider failed"
+        case .noNetworkAvailable: return "no network available"
+        case .unrecoverableNetworkChange: return "unrecoverable network change"
+        case .providerDisabled: return "provider disabled"
+        case .authenticationCanceled: return "authentication cancelled"
+        case .configurationFailed: return "configuration failed"
+        case .idleTimeout: return "idle timeout"
+        case .configurationDisabled: return "configuration disabled"
+        case .configurationRemoved: return "configuration removed"
+        case .superceded: return "superceded by a higher-priority configuration"
+        case .userLogout: return "user logout"
+        case .userSwitch: return "user switch"
+        case .connectionFailed: return "connection failed"
+        case .sleep: return "device went to sleep"
+        case .appUpdate: return "provider app updating"
+        case .internalError: return "internal error"
+        @unknown default: return "unknown reason code \(raw)"
         }
     }
 

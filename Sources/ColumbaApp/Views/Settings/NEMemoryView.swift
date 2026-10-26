@@ -141,6 +141,11 @@ struct NEMemoryView: View {
                 Text("The background transport is stopped, so nothing is being recorded right now. The history below is what it wrote before it stopped.")
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
+                if let last = summary.events.last, case let .cleanStop(reason) = last.kind {
+                    Text("Teardown reason: \(NEMemoryHistory.stopReasonName(reason)) (\(reason))")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                }
             } else {
                 Text("No data yet").font(.title3.weight(.semibold))
                 Text("Enable background hosting and leave it running for a minute; the first samples appear here.")
