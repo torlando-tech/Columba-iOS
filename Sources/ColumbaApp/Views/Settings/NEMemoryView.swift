@@ -197,6 +197,20 @@ struct NEMemoryView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Chart {
                     ForEach(visiblePoints) { point in
+                        if point.windowMaxMB > point.footprintMB {
+                            // The spike envelope: what the process peaked at INSIDE
+                            // the sample window. Jetsam acts on the peak, not on the
+                            // value the window happened to end at, so a chart of the
+                            // closing value alone would hide the thing that kills it.
+                            AreaMark(
+                                x: .value("Time", point.date),
+                                yStart: .value("Footprint", point.footprintMB),
+                                yEnd: .value("Window max", point.windowMaxMB),
+                                series: .value("Run", "\(point.segment)")
+                            )
+                            .foregroundStyle(Theme.accentColor.opacity(0.22))
+                            .interpolationMethod(.linear)
+                        }
                         LineMark(
                             x: .value("Time", point.date),
                             y: .value("Memory", point.footprintMB),
@@ -231,7 +245,7 @@ struct NEMemoryView: View {
                 .frame(height: 220)
                 .accessibilityIdentifier("ne_memory_chart")
 
-                Text("Gaps mean nothing was recorded — the device was asleep or the process was gone. Lines are never bridged across them.")
+                Text("The line is the footprint at the end of each sample window; the shaded band is the highest it reached inside that window. Gaps mean nothing was recorded — the device was asleep or the process was gone. Lines are never bridged across them.")
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
             }
