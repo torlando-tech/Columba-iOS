@@ -26,6 +26,9 @@ struct NEMemoryView: View {
 
     @State private var summary = NEMemoryHistory.Summary()
     @State private var range: MemoryRange = .day
+    /// The app's OWN footprint — a different process from the one charted, and
+    /// the only half of the picture iOS lets the app measure directly.
+    @State private var appFootprintMB: Double? = nil
 
     enum MemoryRange: String, CaseIterable, Identifiable {
         case hour = "1 h"
@@ -244,9 +247,14 @@ struct NEMemoryView: View {
             Text("Memory is the process footprint iOS charges against its per-process limit, sampled once a second by the background transport itself and kept in a rolling window of a few days. It includes the Reticulum runtime that runs inside that process.")
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
-            Text("The limit line only appears when iOS reports a remaining budget for this process; it does not always.")
+            Text("Recent iOS builds enforce a ceiling of roughly 50 MB on this class of process; the exact number is only visible in the kernel log, so the limit line appears only when iOS also reports a remaining budget, which it does not always do here.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
+            if let appFootprintMB {
+                Text("Columba's own interface process is using \(formatMB(appFootprintMB)) right now. The chart is the background transport process only: iOS keeps the two apart, and an app cannot read another process's memory.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
         }
     }
 
@@ -283,10 +291,12 @@ struct NEMemoryView: View {
     /// not run inside the view's body on the main thread.
     private func reload() async {
         let connected = tunnelConnected
+        // Sampling our own footprint is one syscall; do it on the main actor
+        // rather than paying an hop for it.
+        appFootprintMB = Double(MemoryFootprint.sample().footprint) / 1_048_576
         let trace = await Task.detached(priority: .utility) {
             NEMemoryTrace.readAll()
         }.value
         summary = NEMemoryHistory.analyze(trace, tunnelConnected: connected)
-        // Reading the ring is the whole load; there is nothing else to await.
     }
 }

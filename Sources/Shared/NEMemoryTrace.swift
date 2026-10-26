@@ -223,6 +223,13 @@ public enum NEMemoryTrace {
 
     private static let lock = NSLock()
     private static var samplerRunning = false
+    /// Bumped on every `start()`. A thread only keeps running while its OWN
+    /// generation is current: without this, a `stopTunnel` immediately followed
+    /// by a `startTunnel` (a tunnel reconnect inside one process) would flip the
+    /// shared flag back to true before the old thread checked it, so the old
+    /// thread would never exit and the ring would gain a second permanent writer
+    /// — double-counted records and doubled I/O for the rest of the process life.
+    private static var samplerGeneration = 0
 
     /// Start the sampler. Idempotent: a tunnel restart inside the same process
     /// must not spawn a second writer into the same ring.
@@ -234,12 +241,14 @@ public enum NEMemoryTrace {
         defer { lock.unlock() }
         guard !samplerRunning else { return }
         samplerRunning = true
+        samplerGeneration += 1
+        let generation = samplerGeneration
 
         // Record the generation BEFORE the first sample so a kill during startup
         // still leaves a boot marker for the next launch to attribute against.
         appendMarkerLocked(kind: .boot, reason: 0)
 
-        let thread = Thread { runSamplerLoop() }
+        let thread = Thread { runSamplerLoop(generation: generation) }
         thread.name = "columba.memory-trace"
         // Background QoS: never compete with delivery work, and still run when
         // the main dispatch thread is wedged.
@@ -269,16 +278,16 @@ public enum NEMemoryTrace {
 
     // MARK: - Sampler loop
 
-    private static func runSamplerLoop() {
+    private static func runSamplerLoop(generation: Int) {
         var header = readHeader()
         var windowMax: UInt64 = 0
         var lastLiveUptimeMs: Int64 = 0
         var lastFlushUptimeMs = Clocks.now().uptimeMs
         var lastFlushedFootprint: UInt64 = MemoryFootprint.sample().footprint
 
-        while isRunning() {
+        while isRunning(generation: generation) {
             Thread.sleep(forTimeInterval: sampleIntervalSeconds)
-            guard isRunning() else { return }
+            guard isRunning(generation: generation) else { return }
 
             let snap = MemoryFootprint.sample()
             let now = Clocks.now()
@@ -289,7 +298,7 @@ public enum NEMemoryTrace {
             windowMax = max(windowMax, snap.footprint)
 
             lock.lock()
-            guard samplerRunning else { lock.unlock(); return }
+            guard samplerRunning, samplerGeneration == generation else { lock.unlock(); return }
 
             if shouldWriteLive(sinceLiveMs: now.uptimeMs &- lastLiveUptimeMs, jumped: jumped) {
                 writeLive(Record(
@@ -333,13 +342,12 @@ public enum NEMemoryTrace {
 
     // MARK: - Markers
 
-    /// Flag read under the lock. `NSLock` is not recursive, so every read/write
-    /// of `samplerRunning` goes through a locked accessor rather than a bare
-    /// property read from the sampler thread.
-    private static func isRunning() -> Bool {
+    /// Locked accessor for the loop condition. `NSLock` is not recursive, so the
+    /// thread never reads `samplerRunning` bare.
+    private static func isRunning(generation: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return samplerRunning
+        return samplerRunning && samplerGeneration == generation
     }
 
     /// Append a `.boot` / `.stop` marker. Caller must hold `lock` — `NSLock` is
@@ -491,8 +499,8 @@ public enum NEMemoryTrace {
         return Record(
             kind: kind,
             reason: UInt32(truncatingIfNeeded: readLE(data, offReason, 4)),
-            wallMs: Int64(bitPattern: Int64(readLE(data, offWallMs, 8))),
-            uptimeMs: Int64(bitPattern: Int64(readLE(data, offUptimeMs, 8))),
+            wallMs: Int64(bitPattern: readLE(data, offWallMs, 8)),
+            uptimeMs: Int64(bitPattern: readLE(data, offUptimeMs, 8)),
             footprint: readLE(data, offFootprint, 8),
             windowMax: readLE(data, offWindowMax, 8),
             lifetimePeak: readLE(data, offLifetimePeak, 8),

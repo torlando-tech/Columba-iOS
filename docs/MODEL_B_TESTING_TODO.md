@@ -129,6 +129,12 @@ verdict:
       `os_proc_available_memory()`, which may report 0 regardless — across all 5
       runs, and **zero** generations end without a stop marker → Model B holds
       for that payload class.
+- [ ] Cross-check the app's kill inference against the kernel: `idevicesyslog`
+      emits a `jetsamEvent` line naming the killed process (and the
+      `memorystatus` line right before it states the limit that was exceeded).
+      Every "stopped unexpectedly" card on the Memory Usage screen should have a
+      matching `jetsamEvent`. A kernel kill the chart missed means the stop
+      marker was written too late — a `NEMemoryTrace` bug, not a false positive.
 - [ ] **CONDITIONAL:** small fits but the large attachment breaches → ship small-
       payload delivery now; large-payload delivery gated on finishing Track L
       streaming (L2/L3 landed; verify the peak is window-bounded, not payload-bounded).
