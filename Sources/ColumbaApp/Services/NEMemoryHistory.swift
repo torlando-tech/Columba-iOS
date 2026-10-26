@@ -190,6 +190,10 @@ enum NEMemoryHistory {
                 }
                 previousDate = date
                 previousPid = record.pid
+                // Markers are events, not samples: a marker's `windowMax` holds
+                // the process-LIFETIME peak, so plotting it would draw a spike at
+                // every boot and teardown instead of a window maximum.
+                guard record.kind == .bucket || record.kind == .live else { continue }
                 points.append(Point(
                     id: pointId, date: date,
                     footprintMB: megabytes(record.footprint),

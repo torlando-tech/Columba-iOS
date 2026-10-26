@@ -231,6 +231,52 @@ final class NEMemoryTraceTests: XCTestCase {
         XCTAssertNotEqual(points[0].segment, points[1].segment, "two processes must never be joined by one line")
     }
 
+    // MARK: - End to end through the file
+
+    /// The whole pipeline the Memory Usage screen runs — real writer, real reader,
+    /// real analyzer — over three generations where the middle one was killed
+    /// mid-ramp. Pins the exact figures the kill card and header print.
+    func testMultiGenerationFileProducesTheDisplayedFigures() throws {
+        NEMemoryTrace.ringCapacityOverride = 64
+        NEMemoryTrace.clear()
+
+        NEMemoryTrace.appendRecords([
+            makeRecord(.boot, pid: 100, at: 0),
+            makeRecord(.bucket, pid: 100, at: 60, footprint: megabytes(30), windowMax: megabytes(31)),
+            makeRecord(.stop, pid: 100, at: 120, reason: 1),
+        ])
+        NEMemoryTrace.appendRecords([
+            makeRecord(.boot, pid: 200, at: 300),
+            makeRecord(.bucket, pid: 200, at: 360, footprint: megabytes(41), windowMax: megabytes(42), limit: megabytes(4)),
+            makeRecord(.bucket, pid: 200, at: 420, footprint: megabytes(47), windowMax: megabytes(48), lifetimePeak: megabytes(48), limit: megabytes(2)),
+        ])
+        NEMemoryTrace.appendRecords([makeRecord(.boot, pid: 300, at: 600)])
+        NEMemoryTrace.writeLiveRecord(makeRecord(
+            .live, pid: 300, at: 660,
+            footprint: megabytes(33), windowMax: megabytes(34),
+            lifetimePeak: megabytes(34), limit: megabytes(17)
+        ))
+
+        let trace = try XCTUnwrap(NEMemoryTrace.readAll())
+        XCTAssertEqual(trace.records.count, 7, "the live slot is not part of the ring")
+        XCTAssertEqual(trace.live?.pid, 300)
+
+        let summary = NEMemoryHistory.analyze(trace, tunnelConnected: true, now: base.addingTimeInterval(700))
+
+        XCTAssertEqual(summary.lastKill?.kind, .kill)
+        XCTAssertEqual(summary.lastKill?.date, base.addingTimeInterval(420))
+        XCTAssertEqual(summary.lastKill?.lastSeenMB ?? -1, 47.0, accuracy: 0.001)
+        XCTAssertEqual(summary.lastKill?.peakMB ?? -1, 48.0, accuracy: 0.001)
+        XCTAssertEqual(summary.lastKill?.headroomMB ?? -1, 2.0, accuracy: 0.001)
+        XCTAssertEqual(summary.current?.pid, 300)
+        XCTAssertEqual(summary.current?.footprintMB ?? -1, 33.0, accuracy: 0.001)
+        XCTAssertEqual(summary.peak24hMB ?? -1, 48.0, accuracy: 0.001)
+        XCTAssertEqual(summary.restarts24h, 3)
+        XCTAssertEqual(summary.points.count, 5, "samples only: markers must not be plotted")
+        XCTAssertEqual(Set(summary.points.map(\.pid)).count, 3)
+        XCTAssertEqual(Set(summary.points.map(\.segment)).count, 3, "three processes, three lines")
+    }
+
     // MARK: - Helpers (trace construction)
 
     /// Build a `Trace` through the real writer so the tests exercise the on-disk
