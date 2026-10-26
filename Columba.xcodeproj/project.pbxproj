@@ -153,7 +153,6 @@
 		7CE3523F6D1459A0A5CE76BE /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
 		83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A1380C075A9F67E1B173EA94 /* ReticulumSwift */; };
 		85C01EE558921012E4E057D6 /* NodeHostContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6FA51D689C6EEA75831D2C8 /* NodeHostContractTests.swift */; };
-		B309C475AAFC405051A82829 /* TunnelTeardownTimeoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8080510781074E76A587DA31 /* TunnelTeardownTimeoutTests.swift */; };
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
 		89AF655B749BC8073AE370D7 /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
@@ -190,6 +189,7 @@
 		APVT002 /* MessageAttachmentPreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = APVT001 /* MessageAttachmentPreviewTests.swift */; };
 		B028EFF3B3954B91F4C2A5FB /* BLESeamDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDT /* BLESeamDriverTests.swift */; };
 		B1F0B685186B32F160D7D446 /* ExtensionFrameReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F078 /* ExtensionFrameReader.swift */; };
+		B309C475AAFC405051A82829 /* TunnelTeardownTimeoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8080510781074E76A587DA31 /* TunnelTeardownTimeoutTests.swift */; };
 		B94D42232270A2B0DCF6C3F0 /* NodeInboundReplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB02 /* NodeInboundReplay.swift */; };
 		BB88CE246AEE328C3D7DAC99 /* AutoAnnouncePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C625A513CF7628DC1512541 /* AutoAnnouncePolicyTests.swift */; };
 		BGPSYNCBUILD001 /* BackgroundPropagationSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGPSYNCREF001 /* BackgroundPropagationSync.swift */; };
@@ -238,11 +238,7 @@
 		EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		EDL1B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		EDL2B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
-		NMT1B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
-		NMT2B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
-		NMH1B /* NEMemoryHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMHF /* NEMemoryHistory.swift */; };
-		NMV1B /* NEMemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMVF /* NEMemoryView.swift */; };
-		NMTTB /* NEMemoryTraceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTTSF /* NEMemoryTraceTests.swift */; };
+		EDLR002 /* ExtensionDiagLogRotationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLR001 /* ExtensionDiagLogRotationTests.swift */; };
 		EF7151DBA88C8FA1EC49AE5A /* PythonNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC4 /* PythonNodeBLEBridge.swift */; };
 		F3BB96DDC79D81151A2794F9 /* DiscoveredInterfacesScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6CAE98185D8B2D41D2ACA7E /* DiscoveredInterfacesScreen.swift */; };
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
@@ -263,6 +259,11 @@
 		N0C4 /* PythonNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC4 /* PythonNodeBLEBridge.swift */; };
 		NDDI_NE /* NERNodeDiagLogShim.swift in Sources */ = {isa = PBXBuildFile; fileRef = NDDI /* NERNodeDiagLogShim.swift */; };
 		NMF2B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
+		NMH1B /* NEMemoryHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMHF /* NEMemoryHistory.swift */; };
+		NMT1B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
+		NMT2B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
+		NMTTB /* NEMemoryTraceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTTSF /* NEMemoryTraceTests.swift */; };
+		NMV1B /* NEMemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMVF /* NEMemoryView.swift */; };
 		NRRB_NE /* PythonRNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */; };
 		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		OGFWR02 /* OggOpusFileWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OGFWR01 /* OggOpusFileWriterTests.swift */; };
@@ -273,7 +274,6 @@
 		PXI2B /* ProxyIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = PXIF /* ProxyIPC.swift */; };
 		RFT002 /* RuntimeFlavorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RFT001 /* RuntimeFlavorTests.swift */; };
 		RMLT002 /* RuntimeActivityMonitorLeaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */; };
-		EDLR002 /* ExtensionDiagLogRotationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLR001 /* ExtensionDiagLogRotationTests.swift */; };
 		RQP02 /* ReplyQuoteParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RQP01 /* ReplyQuoteParityTests.swift */; };
 		SIDSBN /* SentIdStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIDSF /* SentIdStore.swift */; };
 		SPLASHBLD1 /* Splash in Frameworks */ = {isa = PBXBuildFile; productRef = SPLASHPROD1 /* Splash */; };
@@ -365,6 +365,7 @@
 		71922EC204982A357F814F23 /* CallControlButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Call/CallControlButton.swift; sourceTree = SOURCE_ROOT; };
 		7529BF99835005DE07E1B65F /* CodecSelectionSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Call/CodecSelectionSheet.swift; sourceTree = SOURCE_ROOT; };
 		7CE6E7F6812429F902DB95E7 /* NodePythonBundleLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NodePythonBundleLayout.swift; path = Sources/RNSHost/NodePythonBundleLayout.swift; sourceTree = SOURCE_ROOT; };
+		8080510781074E76A587DA31 /* TunnelTeardownTimeoutTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TunnelTeardownTimeoutTests.swift; path = Tests/ColumbaAppTests/TunnelTeardownTimeoutTests.swift; sourceTree = SOURCE_ROOT; };
 		853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/MigrationRoundTripTests.swift; sourceTree = SOURCE_ROOT; };
 		86E428836698BA8A8973A92F /* CallManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/CallManager.swift; sourceTree = SOURCE_ROOT; };
 		894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Onboarding/BackgroundDeliveryPage.swift; sourceTree = SOURCE_ROOT; };
@@ -428,10 +429,7 @@
 		EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/RNodeSeamTests.swift; sourceTree = SOURCE_ROOT; };
 		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/PythonConfigWriter.swift; sourceTree = SOURCE_ROOT; };
 		EDLF /* ExtensionDiagLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/ExtensionDiagLog.swift; sourceTree = SOURCE_ROOT; };
-		NMTF /* NEMemoryTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NEMemoryTrace.swift; sourceTree = SOURCE_ROOT; };
-		NMHF /* NEMemoryHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/NEMemoryHistory.swift; sourceTree = SOURCE_ROOT; };
-		NMVF /* NEMemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Settings/NEMemoryView.swift; sourceTree = SOURCE_ROOT; };
-		NMTTSF /* NEMemoryTraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/NEMemoryTraceTests.swift; sourceTree = SOURCE_ROOT; };
+		EDLR001 /* ExtensionDiagLogRotationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ExtensionDiagLogRotationTests.swift; sourceTree = SOURCE_ROOT; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/App/ColumbaApp.swift; sourceTree = SOURCE_ROOT; };
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Theme/Theme.swift; sourceTree = SOURCE_ROOT; };
@@ -534,7 +532,6 @@
 		F0A5 /* ColumbaModelBApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ColumbaModelBApp.entitlements; sourceTree = "<group>"; };
 		F6CAE98185D8B2D41D2ACA7E /* DiscoveredInterfacesScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Settings/DiscoveredInterfacesScreen.swift; sourceTree = SOURCE_ROOT; };
 		F6FA51D689C6EEA75831D2C8 /* NodeHostContractTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NodeHostContractTests.swift; path = Tests/ColumbaAppTests/NodeHostContractTests.swift; sourceTree = SOURCE_ROOT; };
-		8080510781074E76A587DA31 /* TunnelTeardownTimeoutTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TunnelTeardownTimeoutTests.swift; path = Tests/ColumbaAppTests/TunnelTeardownTimeoutTests.swift; sourceTree = SOURCE_ROOT; };
 		FBDS /* BLEDriverSeam.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/BLEDriverSeam.swift; sourceTree = SOURCE_ROOT; };
 		FBDT /* BLESeamDriverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/BLESeamDriverTests.swift; sourceTree = SOURCE_ROOT; };
 		FBST /* AppGroupBLESeamTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/AppGroupBLESeamTransport.swift; sourceTree = SOURCE_ROOT; };
@@ -559,6 +556,10 @@
 		MSTST001 /* MessageStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessageStoreTests.swift; path = Tests/ColumbaAppTests/MessageStoreTests.swift; sourceTree = SOURCE_ROOT; };
 		NDDI /* NERNodeDiagLogShim.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaNetworkExtension/NERNodeDiagLogShim.swift; sourceTree = SOURCE_ROOT; };
 		NMFF /* NomadNetFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NomadNetFetch.swift; sourceTree = SOURCE_ROOT; };
+		NMHF /* NEMemoryHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/NEMemoryHistory.swift; sourceTree = SOURCE_ROOT; };
+		NMTF /* NEMemoryTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NEMemoryTrace.swift; sourceTree = SOURCE_ROOT; };
+		NMTTSF /* NEMemoryTraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/NEMemoryTraceTests.swift; sourceTree = SOURCE_ROOT; };
+		NMVF /* NEMemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Settings/NEMemoryView.swift; sourceTree = SOURCE_ROOT; };
 		OBQF /* OutboxQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/OutboxQueue.swift; sourceTree = SOURCE_ROOT; };
 		OGFWR01 /* OggOpusFileWriterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/OggOpusFileWriterTests.swift; sourceTree = SOURCE_ROOT; };
 		OGGR001 /* OggOpusGranuleTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/OggOpusGranuleTests.swift; sourceTree = SOURCE_ROOT; };
@@ -573,7 +574,6 @@
 		RDRF01 /* ProxyDrainRaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ProxyDrainRaceTests.swift; sourceTree = SOURCE_ROOT; };
 		RFT001 /* RuntimeFlavorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/RuntimeFlavorTests.swift; sourceTree = SOURCE_ROOT; };
 		RMLT001 /* RuntimeActivityMonitorLeaseTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/RuntimeActivityMonitorLeaseTests.swift; sourceTree = SOURCE_ROOT; };
-		EDLR001 /* ExtensionDiagLogRotationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ExtensionDiagLogRotationTests.swift; sourceTree = SOURCE_ROOT; };
 		RQP01 /* ReplyQuoteParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ReplyQuoteParityTests.swift; sourceTree = SOURCE_ROOT; };
 		SIDSF /* SentIdStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/SentIdStore.swift; sourceTree = SOURCE_ROOT; };
 		TMP001 /* ThemeManagerPersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/ThemeManagerPersistenceTests.swift; sourceTree = SOURCE_ROOT; };
@@ -1035,7 +1035,6 @@
 				NMTF /* NEMemoryTrace.swift */,
 				NMHF /* NEMemoryHistory.swift */,
 				NMVF /* NEMemoryView.swift */,
-				NMTTSF /* NEMemoryTraceTests.swift */,
 				AGPF /* AppGroupPaths.swift */,
 				F079 /* OnboardingRestoreSheet.swift */,
 				F07A /* PlatformCompat.swift */,
@@ -1110,6 +1109,7 @@
 				B2E4D1020000000000000002 /* NetworkStatusEndpointTests.swift */,
 				498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */,
 				CHF001 /* CallHistoryFormattingTests.swift */,
+				NMTTSF /* NEMemoryTraceTests.swift */,
 				CHRT01 /* CallHistoryRepositoryTests.swift */,
 				BGPSYNCTESTREF001 /* BackgroundPropagationSyncTests.swift */,
 				FT03 /* MicronParserTests.swift */,

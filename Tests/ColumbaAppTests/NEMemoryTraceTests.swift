@@ -272,7 +272,7 @@ final class NEMemoryTraceTests: XCTestCase {
         XCTAssertEqual(summary.current?.footprintMB ?? -1, 33.0, accuracy: 0.001)
         XCTAssertEqual(summary.peak24hMB ?? -1, 48.0, accuracy: 0.001)
         XCTAssertEqual(summary.restarts24h, 3)
-        XCTAssertEqual(summary.points.count, 5, "samples only: markers must not be plotted")
+        XCTAssertEqual(summary.points.count, 4, "three buckets plus the live slot; the four markers are not samples")
         XCTAssertEqual(Set(summary.points.map(\.pid)).count, 3)
         XCTAssertEqual(Set(summary.points.map(\.segment)).count, 3, "three processes, three lines")
     }
