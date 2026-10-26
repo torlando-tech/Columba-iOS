@@ -238,6 +238,11 @@
 		EDF2F6B945FAA23366617FD6 /* TCPClientWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */; };
 		EDL1B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
 		EDL2B /* ExtensionDiagLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDLF /* ExtensionDiagLog.swift */; };
+		NMT1B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
+		NMT2B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
+		NMH1B /* NEMemoryHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMHF /* NEMemoryHistory.swift */; };
+		NMV1B /* NEMemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMVF /* NEMemoryView.swift */; };
+		NMTTB /* NEMemoryTraceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTTSF /* NEMemoryTraceTests.swift */; };
 		EF7151DBA88C8FA1EC49AE5A /* PythonNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC4 /* PythonNodeBLEBridge.swift */; };
 		F3BB96DDC79D81151A2794F9 /* DiscoveredInterfacesScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6CAE98185D8B2D41D2ACA7E /* DiscoveredInterfacesScreen.swift */; };
 		F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 0FD6A68A52A54D21FDB70324 /* RNSAPI */; };
@@ -423,6 +428,10 @@
 		EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/RNodeSeamTests.swift; sourceTree = SOURCE_ROOT; };
 		EBA4F8C4C9008A06DFF5AC8A /* PythonConfigWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/PythonConfigWriter.swift; sourceTree = SOURCE_ROOT; };
 		EDLF /* ExtensionDiagLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/ExtensionDiagLog.swift; sourceTree = SOURCE_ROOT; };
+		NMTF /* NEMemoryTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NEMemoryTrace.swift; sourceTree = SOURCE_ROOT; };
+		NMHF /* NEMemoryHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/NEMemoryHistory.swift; sourceTree = SOURCE_ROOT; };
+		NMVF /* NEMemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Settings/NEMemoryView.swift; sourceTree = SOURCE_ROOT; };
+		NMTTSF /* NEMemoryTraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/NEMemoryTraceTests.swift; sourceTree = SOURCE_ROOT; };
 		EPROD /* ColumbaNetworkExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ColumbaNetworkExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F001 /* ColumbaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/App/ColumbaApp.swift; sourceTree = SOURCE_ROOT; };
 		F002 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Theme/Theme.swift; sourceTree = SOURCE_ROOT; };
@@ -1023,6 +1032,10 @@
 				F074 /* SharedDefaults.swift */,
 				F076 /* SharedFrameQueue.swift */,
 				EDLF /* ExtensionDiagLog.swift */,
+				NMTF /* NEMemoryTrace.swift */,
+				NMHF /* NEMemoryHistory.swift */,
+				NMVF /* NEMemoryView.swift */,
+				NMTTSF /* NEMemoryTraceTests.swift */,
 				AGPF /* AppGroupPaths.swift */,
 				F079 /* OnboardingRestoreSheet.swift */,
 				F07A /* PlatformCompat.swift */,
@@ -1378,6 +1391,7 @@
 				NRRB_NE /* PythonRNodeBLEBridge.swift in Sources */,
 				NDDI_NE /* NERNodeDiagLogShim.swift in Sources */,
 				EDL2B /* ExtensionDiagLog.swift in Sources */,
+				NMT2B /* NEMemoryTrace.swift in Sources */,
 				AGP2B /* AppGroupPaths.swift in Sources */,
 				AGB2B /* AppGroupBridgeInterface.swift in Sources */,
 				PXI2B /* ProxyIPC.swift in Sources */,
@@ -1516,6 +1530,9 @@
 				074B /* SharedDefaults.swift in Sources */,
 				076B /* SharedFrameQueue.swift in Sources */,
 				EDL1B /* ExtensionDiagLog.swift in Sources */,
+				NMT1B /* NEMemoryTrace.swift in Sources */,
+				NMH1B /* NEMemoryHistory.swift in Sources */,
+				NMV1B /* NEMemoryView.swift in Sources */,
 				AGP1B /* AppGroupPaths.swift in Sources */,
 				079B /* OnboardingRestoreSheet.swift in Sources */,
 				07AB /* PlatformCompat.swift in Sources */,
@@ -1595,6 +1612,7 @@
 				A1F3C0010000000000000001 /* NetworkStatusEndpointTests.swift in Sources */,
 				CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */,
 				CHF002 /* CallHistoryFormattingTests.swift in Sources */,
+				NMTTB /* NEMemoryTraceTests.swift in Sources */,
 				CHRT02 /* CallHistoryRepositoryTests.swift in Sources */,
 				BGPSYNCTESTBUILD001 /* BackgroundPropagationSyncTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,

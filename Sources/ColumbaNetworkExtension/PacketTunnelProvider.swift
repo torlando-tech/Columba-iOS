@@ -61,6 +61,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 userInfo: [NSLocalizedDescriptionKey: "Foreground-only mode is selected"]))
             return
         }
+        // Self-reported memory trajectory. The app cannot measure this process
+        // from outside its own sandbox, and a jetsam kill delivers no callback,
+        // so the NE is the only thing that can record what it was using. The
+        // sampler runs on its own native thread: the main dispatch thread is
+        // blocked during bring-up and announce floods.
+        NEMemoryTrace.start()
 
         // SINGLE RUNTIME: Python RNS is the only Reticulum runtime in the NE.
         // Initialize CPython here (non-blocking - it must never gate tunnel
@@ -130,6 +136,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         ExtensionDiagLog.log("stopTunnel reason=\(reason.rawValue)")
+        // Writing this marker is what lets the app tell a clean teardown from a
+        // kill. A memory kill never reaches here, so its absence is the signal.
+        NEMemoryTrace.recordStop(reason: reason.rawValue)
 
         // Track C3: tear down the in-NE node. Stopping the node drops its TCP
         // relay interface + AppGroupBridge. Fire-and-forget — teardown is

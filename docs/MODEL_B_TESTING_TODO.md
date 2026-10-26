@@ -83,14 +83,33 @@ old PoC only measured *idle* (~13.8 MB). This measures *under load*.
 separate, hard-to-attach process. The trick is to make the **NE log its own
 memory** and drive load from a desktop peer — no debugger needed.
 
-### 3a. Instrument (one-time, ~30 min)
-- [ ] Add a lightweight sampler to the NE: every 250 ms during a receive/reassembly
-      window, log `os_proc_available_memory()` and `mach_task_basic_info().resident_size`
-      to `ext-diag.log` (reuse the old `measureRNSFootprint()` sampler from the PoC;
-      it already exists in git history). 250 ms — the existing 5 s cadence misses
-      the transient peak.
-- [ ] Log `stopTunnel(with:)` `reason`; treat `NEProviderStopReason.memoryLow` (or a
-      silent mid-reassembly log truncation) as a **kill**.
+### 3a. Instrument — DONE (shipped as `NEMemoryTrace`)
+
+The NE samples itself into a fixed 8192-slot ring in the App-Group container
+(`ne-memory.bin`), charted in the app at **Settings → Reticulum Hosting → Memory
+Usage**. Four claims in the original plan were wrong; each is verified against the
+iOS SDK or Apple's docs, and each one would have produced a confident-but-false
+verdict:
+
+- [x] The kill metric is `task_vm_info.phys_footprint`, **not**
+      `mach_task_basic_info().resident_size`. The kernel enforces
+      `memorystatus: … ActiveHard <N> MB` on footprint; RSS also counts shared
+      file-backed pages, so an RSS number is not comparable to the ceiling.
+- [x] `os_proc_available_memory()` cannot serve as the ceiling probe: it returns
+      `0` for any process that "isn't an app", which an app extension may be, so
+      `0` can never be read as "at the limit". The trace records
+      `task_vm_info.limit_bytes_remaining` and treats `0` as *unknown*.
+- [x] There is **no `NEProviderStopReason.memoryLow` case** — the enum has no
+      memory reason at all — and a memory kill is a bare SIGKILL with no
+      `stopTunnel` callback. A kill is detected as a process generation (pid)
+      whose records end with **no `.stop` marker**; `stopTunnel` still writes the
+      reason for every teardown iOS does announce.
+- [x] No `measureRNSFootprint()` sampler has ever existed in this repo's history
+      (`git grep` across every revision finds nothing). `NEMemoryTrace` is new.
+- [x] The sampler runs on a **detached native `Thread`**, not a `Task` or a
+      run-loop `Timer`: the NE's main dispatch thread is blocked during bring-up
+      and announce floods, so a cooperative sampler records nothing and looks
+      exactly like a process that never grew.
 
 ### 3b. Drive load (desktop peer over the relay)
 - [ ] **Small/opportunistic burst:** desktop peer sends N opportunistic messages
@@ -103,9 +122,13 @@ memory** and drive load from a desktop peer — no debugger needed.
 - [ ] Run each scenario **5×** to catch variance.
 
 ### 3c. Verdict (iPhone 14)
-- [ ] **PASS:** peak resident stays **≥ 8 MB below** the `os_proc_available_memory()=0`
-      point across all 5 runs, **zero** memory-reason stops → Model B holds for that
-      payload class.
+- [ ] **PASS:** peak `phys_footprint` (Memory Usage screen, or the
+      `ne-memory.bin` ring) stays **≥ 8 MB below** the ceiling this device
+      actually enforces — read that number from `idevicesyslog`
+      (`memorystatus: … ActiveHard <N> MB`), never from
+      `os_proc_available_memory()`, which may report 0 regardless — across all 5
+      runs, and **zero** generations end without a stop marker → Model B holds
+      for that payload class.
 - [ ] **CONDITIONAL:** small fits but the large attachment breaches → ship small-
       payload delivery now; large-payload delivery gated on finishing Track L
       streaming (L2/L3 landed; verify the peak is window-bounded, not payload-bounded).
@@ -113,9 +136,10 @@ memory** and drive load from a desktop peer — no debugger needed.
       sniff-only + complete-on-open and re-scope.
 
 > Shortcut now that delivery actually works: you can get a first read **without**
-> the harness — drive real traffic from the Android peer, then pull `ext-diag.log`
-> and read the sampler line just before/after the transfer. The controlled
-> desktop-peer harness is only needed for the clean 5-run numbers in the verdict.
+> the harness — drive real traffic from the Android peer, then open
+> **Settings → Reticulum Hosting → Memory Usage** (or pull
+> `…/AppGroup/ne-memory.bin` and decode it). The controlled desktop-peer harness
+> is only needed for the clean 5-run numbers in the verdict.
 
 ---
 

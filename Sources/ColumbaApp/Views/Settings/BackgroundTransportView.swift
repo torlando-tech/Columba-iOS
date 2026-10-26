@@ -10,6 +10,7 @@ struct BackgroundTransportView: View {
     let onDismiss: () -> Void
     @State private var selectedHost = NodeHostingMode.selected
     @State private var showDetail = false
+    @State private var showMemory = false
 
     var body: some View {
         NavigationStack {
@@ -59,6 +60,24 @@ struct BackgroundTransportView: View {
                         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                     }
                     .buttonStyle(.plain)
+
+                    Button {
+                        showMemory = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "chart.xyaxis.line")
+                                .font(.system(size: 14, weight: .medium))
+                            Text(String(localized: "Memory Usage"))
+                                .font(.system(size: 15, weight: .medium))
+                        }
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.backgroundTertiary)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("ne_memory_entry")
                 }
                 .padding(20)
             }
@@ -73,6 +92,12 @@ struct BackgroundTransportView: View {
             }
             .navigationDestination(isPresented: $showDetail) {
                 BackgroundTransportDetail()
+            }
+            .navigationDestination(isPresented: $showMemory) {
+                NEMemoryView(
+                    tunnelConnected: tunnel.status == .connected,
+                    hostingMode: activeHost
+                )
             }
         }
     }
