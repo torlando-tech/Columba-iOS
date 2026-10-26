@@ -227,6 +227,9 @@ enum DiagLog {
     /// is unavailable. NO-PII: the source carries envelope/metadata only — see
     /// `ExtensionDiagLog`'s contract.
     static func copyExtensionDiagToDocuments() {
+        // Recover logs written by a build that stored them at the App-Group
+        // root (unpullable) before this one moved the writer under Library/.
+        ExtensionDiagLog.migrateLegacyRootLog()
         guard let source = ExtensionDiagLog.fileURL,
               FileManager.default.fileExists(atPath: source.path) else {
             return

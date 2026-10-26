@@ -46,6 +46,7 @@ final class NEMemoryTraceTests: XCTestCase {
         _ kind: NEMemoryTrace.Kind,
         pid: UInt32,
         at seconds: TimeInterval,
+        uptime overrideUptime: TimeInterval? = nil,
         footprint: UInt64 = 0,
         windowMax: UInt64 = 0,
         lifetimePeak: UInt64 = 0,
@@ -54,7 +55,7 @@ final class NEMemoryTraceTests: XCTestCase {
     ) -> NEMemoryTrace.Record {
         NEMemoryTrace.Record(
             kind: kind, reason: reason,
-            wallMs: wall(seconds), uptimeMs: Int64(seconds * 1000),
+            wallMs: wall(seconds), uptimeMs: Int64((overrideUptime ?? seconds) * 1000),
             footprint: footprint, windowMax: windowMax,
             lifetimePeak: lifetimePeak, limitRemaining: limit, pid: pid
         )
@@ -119,7 +120,7 @@ final class NEMemoryTraceTests: XCTestCase {
         let trace = NEMemoryTrace.readAll()
         XCTAssertTrue(trace.records.isEmpty)
         XCTAssertNil(trace.live)
-        XCTAssertFalse(NEMemoryHistory.analyze(trace, tunnelConnected: false).hasTrace)
+        XCTAssertFalse(NEMemoryHistory.analyze(trace, tunnelState: .gone).hasTrace)
     }
 
     func testMissingFileYieldsEmptyTrace() {
@@ -152,7 +153,7 @@ final class NEMemoryTraceTests: XCTestCase {
             makeRecord(.boot, pid: 200, at: 30, footprint: megabytes(9), lifetimePeak: megabytes(9)),
             makeRecord(.bucket, pid: 200, at: 40, footprint: megabytes(12), lifetimePeak: megabytes(12)),
         ])
-        let summary = NEMemoryHistory.analyze(trace, tunnelConnected: true, now: base.addingTimeInterval(120))
+        let summary = NEMemoryHistory.analyze(trace, tunnelState: .alive, now: base.addingTimeInterval(120))
 
         let kill = try XCTUnwrap(summary.lastKill)
         XCTAssertEqual(kill.kind, .kill)
@@ -169,7 +170,7 @@ final class NEMemoryTraceTests: XCTestCase {
             makeRecord(.bucket, pid: 100, at: 10, footprint: megabytes(20)),
             makeRecord(.stop, pid: 100, at: 20, footprint: megabytes(21), reason: 1),
         ])
-        let summary = NEMemoryHistory.analyze(trace, tunnelConnected: false, now: base.addingTimeInterval(120))
+        let summary = NEMemoryHistory.analyze(trace, tunnelState: .gone, now: base.addingTimeInterval(120))
 
         XCTAssertNil(summary.lastKill, "a generation that wrote its stop marker was torn down cleanly")
         let stop = summary.events.first { event in
@@ -187,12 +188,12 @@ final class NEMemoryTraceTests: XCTestCase {
         let now = base.addingTimeInterval(120)
 
         // Tunnel up: the missing stop marker just means "still running".
-        let running = NEMemoryHistory.analyze(trace, tunnelConnected: true, now: now)
+        let running = NEMemoryHistory.analyze(trace, tunnelState: .alive, now: now)
         XCTAssertNil(running.lastKill)
         XCTAssertNotNil(running.current)
 
         // Tunnel down: the same bytes now mean the process died without stopping.
-        let dead = NEMemoryHistory.analyze(trace, tunnelConnected: false, now: now)
+        let dead = NEMemoryHistory.analyze(trace, tunnelState: .gone, now: now)
         XCTAssertNotNil(dead.lastKill)
         XCTAssertNil(dead.current, "a corpse is not a live reading")
     }
@@ -215,7 +216,7 @@ final class NEMemoryTraceTests: XCTestCase {
             makeRecord(.bucket, pid: 1, at: 60, footprint: megabytes(11)),
             makeRecord(.bucket, pid: 1, at: 900, footprint: megabytes(12)),
         ])
-        let points = NEMemoryHistory.analyze(trace, tunnelConnected: true, now: base.addingTimeInterval(1_000)).points
+        let points = NEMemoryHistory.analyze(trace, tunnelState: .alive, now: base.addingTimeInterval(1_000)).points
 
         XCTAssertEqual(points.count, 3)
         XCTAssertEqual(points[0].segment, points[1].segment, "60 s apart is continuous")
@@ -227,7 +228,7 @@ final class NEMemoryTraceTests: XCTestCase {
             makeRecord(.bucket, pid: 1, at: 0, footprint: megabytes(10)),
             makeRecord(.bucket, pid: 2, at: 60, footprint: megabytes(11)),
         ])
-        let points = NEMemoryHistory.analyze(trace, tunnelConnected: true, now: base.addingTimeInterval(120)).points
+        let points = NEMemoryHistory.analyze(trace, tunnelState: .alive, now: base.addingTimeInterval(120)).points
         XCTAssertNotEqual(points[0].segment, points[1].segment, "two processes must never be joined by one line")
     }
 
@@ -261,7 +262,7 @@ final class NEMemoryTraceTests: XCTestCase {
         XCTAssertEqual(trace.records.count, 7, "the live slot is not part of the ring")
         XCTAssertEqual(trace.live?.pid, 300)
 
-        let summary = NEMemoryHistory.analyze(trace, tunnelConnected: true, now: base.addingTimeInterval(700))
+        let summary = NEMemoryHistory.analyze(trace, tunnelState: .alive, now: base.addingTimeInterval(700))
 
         XCTAssertEqual(summary.lastKill?.kind, .kill)
         XCTAssertEqual(summary.lastKill?.date, base.addingTimeInterval(420))
@@ -275,6 +276,76 @@ final class NEMemoryTraceTests: XCTestCase {
         XCTAssertEqual(summary.points.count, 4, "three buckets plus the live slot; the four markers are not samples")
         XCTAssertEqual(Set(summary.points.map(\.pid)).count, 3)
         XCTAssertEqual(Set(summary.points.map(\.segment)).count, 3, "three processes, three lines")
+    }
+
+    // MARK: - Greptile round 1 regressions
+
+    /// A page opened during `.connecting` must not show "stopped unexpectedly"
+    /// for a process that is recording right now: the newest generation has no
+    /// stop marker yet, and an undecided tunnel state must leave it that way.
+    func testUndecidedTunnelStateLeavesNewestGenerationAlone() {
+        let trace = traceOf([
+            makeRecord(.boot, pid: 7, at: 0, footprint: megabytes(10)),
+            makeRecord(.bucket, pid: 7, at: 10, footprint: megabytes(11)),
+        ])
+        let summary = NEMemoryHistory.analyze(trace, tunnelState: .undecided, now: base.addingTimeInterval(120))
+
+        XCTAssertNil(summary.lastKill, "mid-connect, a missing stop marker is not a kill")
+        XCTAssertNil(summary.current, "an undecided generation is not a live reading either")
+    }
+
+    /// "Last recorded" must be the last footprint the generation wrote, not the
+    /// maximum it ever reached — the date and headroom come from the last
+    /// record, so a max-based number pairs a stale high with a newer corpse.
+    func testKillLastSeenIsTheLastFootprintNotTheMaximum() throws {
+        let trace = traceOf([
+            makeRecord(.bucket, pid: 9, at: 0, footprint: megabytes(45), lifetimePeak: megabytes(45)),
+            makeRecord(.bucket, pid: 9, at: 60, footprint: megabytes(30), lifetimePeak: megabytes(45)),
+        ])
+        let summary = NEMemoryHistory.analyze(trace, tunnelState: .gone, now: base.addingTimeInterval(120))
+
+        let kill = try XCTUnwrap(summary.lastKill)
+        XCTAssertEqual(kill.lastSeenMB ?? 0, 30.0, accuracy: 0.01)
+        XCTAssertEqual(kill.peakMB ?? 0, 45.0, accuracy: 0.01, "the peak field still reports the maximum")
+    }
+
+    /// Sleep pauses the uptime clock but not wall time: a sub-threshold wall
+    /// gap with a large wall-vs-uptime skew must still break the line, while
+    /// the same wall gap in normal operation (clocks in step) must not.
+    func testClockSkewBreaksTheLineEvenBelowTheWallGapThreshold() {
+        let trace = traceOf([
+            makeRecord(.bucket, pid: 1, at: 0, uptime: 0, footprint: megabytes(10)),
+            makeRecord(.bucket, pid: 1, at: 120, uptime: 2, footprint: megabytes(11)),
+        ])
+        let slept = NEMemoryHistory.analyze(trace, tunnelState: .alive, now: base.addingTimeInterval(240)).points
+        XCTAssertEqual(slept.count, 2)
+        XCTAssertNotEqual(slept[0].segment, slept[1].segment, "118 s of unrecorded wall time is a sleep, not continuity")
+
+        let awake = traceOf([
+            makeRecord(.bucket, pid: 1, at: 0, uptime: 0, footprint: megabytes(10)),
+            makeRecord(.bucket, pid: 1, at: 120, uptime: 120, footprint: megabytes(11)),
+        ])
+        let points = NEMemoryHistory.analyze(awake, tunnelState: .alive, now: base.addingTimeInterval(240)).points
+        XCTAssertEqual(points[0].segment, points[1].segment, "clocks in step at 120 s apart is continuous")
+    }
+
+    /// A relaunched process must preserve its predecessor's freshest reading:
+    /// the live slot is written every 5 s while the ring only every 60 s, and
+    /// the reader ignores a live record whose pid no longer matches the newest
+    /// generation — without the boot-time flush, a kill+relaunch loses up to
+    /// 60 s of the dead process's final memory.
+    func testBootFlushesForeignLiveSlotIntoTheRing() {
+        NEMemoryTrace.clear()
+        NEMemoryTrace.writeLiveRecord(makeRecord(.live, pid: 424_242, at: 30, footprint: megabytes(33)))
+
+        NEMemoryTrace.start()
+        NEMemoryTrace.stopSampling()
+
+        let records = NEMemoryTrace.readAll().records
+        XCTAssertTrue(
+            records.contains { $0.pid == 424_242 && $0.kind == .live },
+            "the dead generation's live record must survive the new boot"
+        )
     }
 
     // MARK: - Stop reason names

@@ -18,9 +18,12 @@ import Charts
 
 @available(iOS 17.0, macOS 14.0, *)
 struct NEMemoryView: View {
-    /// Whether the tunnel is up right now. Decides whether the newest trace
-    /// records are a live reading or the last words of a killed process.
-    let tunnelConnected: Bool
+    /// The tunnel manager, observed live: the kill card and the "now" reading
+    /// must follow the tunnel's actual state while the page is open, not the
+    /// state at construction time (a page opened during `.connecting` must not
+    /// show "stopped unexpectedly" for a process that is recording right now).
+    /// `nil` (no tunnel configured) behaves like a gone tunnel.
+    let tunnel: TunnelManager?
     /// Foreground-only hosting means there is no separate process to measure.
     let hostingMode: NodeHostingMode
 
@@ -65,8 +68,9 @@ struct NEMemoryView: View {
         .foregroundStyle(Theme.textPrimary)
         .navigationTitle(String(localized: "Memory Usage"))
         .navigationBarTitleDisplayMode(.inline)
-        .task { await reload() }
+        .task { await reloadLoop() }
         .refreshable { await reload() }
+        .onChange(of: tunnel?.status) { _, _ in Task { await reload() } }
     }
 
     // MARK: - Sections
@@ -309,13 +313,24 @@ struct NEMemoryView: View {
     /// Ring read off the main actor: it is a 512 KB file read, cheap, but it must
     /// not run inside the view's body on the main thread.
     private func reload() async {
-        let connected = tunnelConnected
+        let state = tunnel.map { NEMemoryHistory.TunnelState($0.status) } ?? .gone
         // Sampling our own footprint is one syscall; do it on the main actor
         // rather than paying an hop for it.
         appFootprintMB = Double(MemoryFootprint.sample().footprint) / 1_048_576
         let trace = await Task.detached(priority: .utility) {
             NEMemoryTrace.readAll()
         }.value
-        summary = NEMemoryHistory.analyze(trace, tunnelConnected: connected)
+        summary = NEMemoryHistory.analyze(trace, tunnelState: state)
+    }
+
+    /// Keep the "now" reading and the kill attribution current while the page
+    /// is visible: the ring grows every second and the tunnel can start, die,
+    /// or restart at any moment. `.refreshable` and `.onChange` cover the
+    /// explicit triggers; this covers everything else.
+    private func reloadLoop() async {
+        while !Task.isCancelled {
+            await reload()
+            try? await Task.sleep(for: .seconds(5))
+        }
     }
 }

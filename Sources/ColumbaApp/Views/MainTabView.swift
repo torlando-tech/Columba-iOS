@@ -209,7 +209,7 @@ struct MainTabView: View {
         .fullScreenCover(isPresented: $debugMemoryPresented) {
             NavigationStack {
                 NEMemoryView(
-                    tunnelConnected: appServices.tunnelManager?.status == .connected,
+                    tunnel: appServices.tunnelManager,
                     hostingMode: appServices.hostingMode
                 )
             }

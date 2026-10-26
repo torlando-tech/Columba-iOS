@@ -95,7 +95,7 @@ struct BackgroundTransportView: View {
             }
             .navigationDestination(isPresented: $showMemory) {
                 NEMemoryView(
-                    tunnelConnected: tunnel.status == .connected,
+                    tunnel: tunnel,
                     hostingMode: activeHost
                 )
             }

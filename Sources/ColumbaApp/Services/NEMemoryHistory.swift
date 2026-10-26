@@ -148,15 +148,43 @@ enum NEMemoryHistory {
     /// not running (device asleep, or the process gone).
     static let gapThresholdSeconds: TimeInterval = 180
 
+    /// How far wall time may run ahead of the uptime clock before the line is
+    /// broken as a device sleep. Sleep pauses `mach_absolute_time` (the source
+    /// of `uptimeMs`) but not `wallMs`, so a 60 s nap between buckets looks like
+    /// a 60 s wall gap with ~1 s of uptime — far below `gapThresholdSeconds`,
+    /// yet nothing was recorded. Normal operation keeps the two clocks in step
+    /// (both advance by the sample interval), so a 30 s skew is decisively
+    /// abnormal and cannot be produced by scheduler jitter.
+    static let sleepSkewSeconds: TimeInterval = 30
+
     static let daySeconds: TimeInterval = 86_400
 
     // MARK: - Analysis
 
-    /// - Parameter tunnelConnected: whether the VPN/NE is up right now. Decides
+    /// Whether the tunnel process is believed alive, gone, or mid-transition.
+    /// Kill attribution needs a stable verdict: `.connecting`/`.connected` mean
+    /// the NE is recording right now (a kill must not be inferred from the
+    /// missing stop marker), `.disconnected`/`.invalid` mean it is gone, and
+    /// `.disconnecting`/`.reasserting` leave the newest generation undecided —
+    /// it is neither a corpse nor a live reading yet.
+    enum TunnelState: Equatable {
+        case alive, gone, undecided
+
+        init(_ status: NEVPNStatus) {
+            switch status {
+            case .connected, .connecting: self = .alive
+            case .disconnected, .invalid: self = .gone
+            case .disconnecting, .reasserting: self = .undecided
+            @unknown default: self = .undecided
+            }
+        }
+    }
+
+    /// - Parameter tunnelState: whether the VPN/NE is alive right now. Decides
     ///   the one ambiguous case — a newest generation with no stop marker.
     static func analyze(
         _ trace: NEMemoryTrace.Trace,
-        tunnelConnected: Bool,
+        tunnelState: TunnelState,
         now: Date = Date()
     ) -> Summary {
         let merged = mergedRecords(trace)
@@ -167,6 +195,7 @@ enum NEMemoryHistory {
         var points: [Point] = []
         var segment = 0
         var previousDate: Date?
+        var previousUptimeMs: Int64?
         var previousPid: UInt32?
         var eventId = 0
         var pointId = 0
@@ -175,10 +204,14 @@ enum NEMemoryHistory {
             let last = generation[generation.count - 1]
             let endedCleanly = last.kind == .stop
             let isLatestGeneration = index == generations.count - 1
-            // No stop marker + (a newer generation exists, or the tunnel is down
-            // now) ⇒ the process was killed. A newer generation is itself proof:
-            // iOS only relaunches the NE after it tore the previous one down.
-            let killed = !endedCleanly && (!isLatestGeneration || !tunnelConnected)
+            // No stop marker + (a newer generation exists, or the tunnel is
+            // believed gone now) ⇒ the process was killed. A newer generation is
+            // itself proof: iOS only relaunches the NE after it tore the previous
+            // one down. A mid-transition state leaves the newest generation
+            // undecided — `.connecting` means it is recording right now, and
+            // showing "stopped unexpectedly" for a live process is the exact
+            // false kill this state exists to prevent.
+            let killed = !endedCleanly && (!isLatestGeneration || tunnelState == .gone)
 
             if let first = generation.first, first.kind == .boot {
                 events.append(Event(
@@ -190,10 +223,12 @@ enum NEMemoryHistory {
 
             if killed {
                 // The best number for "what was it using when it got killed":
-                // the last footprint it wrote, and the peak it reached — the
-                // latter from `ledger_phys_footprint_peak`, which catches spikes
-                // that fell between samples and so is never under-reported.
-                let lastSeen = generation.map { $0.footprint }.max() ?? 0
+                // the LAST footprint it wrote (`last` — the maximum would pair a
+                // stale high reading with this event's date and headroom) and
+                // the peak it reached — the latter from
+                // `ledger_phys_footprint_peak`, which catches spikes that fell
+                // between samples and so is never under-reported.
+                let lastSeen = last.footprint
                 let peak = max(
                     generation.map { $0.lifetimePeak }.max() ?? 0,
                     generation.map { $0.windowMax }.max() ?? 0
@@ -218,14 +253,23 @@ enum NEMemoryHistory {
 
             for record in generation {
                 let date = date(fromMs: record.wallMs)
-                if let previous = previousDate,
-                   date.timeIntervalSince(previous) > gapThresholdSeconds {
-                    segment += 1
+                if let previous = previousDate {
+                    let wallGap = date.timeIntervalSince(previous)
+                    // Sleep detection: wall time ran ahead of the uptime clock
+                    // (which sleep pauses) by more than jitter could explain.
+                    let uptimeGap = previousUptimeMs.map {
+                        TimeInterval(record.uptimeMs - $0) / 1000
+                    }
+                    let slept = uptimeGap.map { wallGap - $0 > sleepSkewSeconds } ?? false
+                    if wallGap > gapThresholdSeconds || slept {
+                        segment += 1
+                    }
                 }
                 if let previous = previousPid, previous != record.pid {
                     segment += 1
                 }
                 previousDate = date
+                previousUptimeMs = record.uptimeMs
                 previousPid = record.pid
                 // Markers are events, not samples: a marker's `windowMax` holds
                 // the process-LIFETIME peak, so plotting it would draw a spike at
@@ -241,10 +285,11 @@ enum NEMemoryHistory {
             }
         }
 
-        // Newest generation is "current" only while the tunnel is actually up;
-        // otherwise the newest records are a corpse, not a reading.
+        // Newest generation is "current" only while the tunnel process is
+        // actually alive; otherwise the newest records are a corpse, not a
+        // reading — and a mid-transition state has not decided yet.
         var current: Current?
-        if tunnelConnected, let generation = generations.last {
+        if tunnelState == .alive, let generation = generations.last {
             let newest = generation[generation.count - 1]
             let first = generation[0]
             current = Current(

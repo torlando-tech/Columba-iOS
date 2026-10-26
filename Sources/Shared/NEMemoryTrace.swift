@@ -253,6 +253,13 @@ public enum NEMemoryTrace {
 
         // Record the generation BEFORE the first sample so a kill during startup
         // still leaves a boot marker for the next launch to attribute against.
+        // But first preserve the PREVIOUS generation's freshest reading: the
+        // live slot is written every 5 s while the ring only every 60 s, and
+        // once a new pid boots the reader ignores a live record whose pid no
+        // longer matches the newest generation. Without this, a kill+relaunch
+        // loses up to 60 s of the dead process's final memory when the new
+        // sampler overwrites the slot below.
+        flushForeignLiveLocked()
         appendMarkerLocked(kind: .boot, reason: 0)
 
         let thread = Thread { runSamplerLoop(generation: generation) }
@@ -357,8 +364,24 @@ public enum NEMemoryTrace {
         return samplerRunning && samplerGeneration == generation
     }
 
-    /// Append a `.boot` / `.stop` marker. Caller must hold `lock` — `NSLock` is
-    /// NOT recursive, so `start()` calls this while already holding it.
+    /// Preserve a dead generation's last known state before a new boot. The
+    /// live slot is the freshest record (written every 5 s; ring buckets flush
+    /// every 60 s) and the reader only merges it while its pid matches the
+    /// newest generation, so a relaunched process must copy its predecessor's
+    /// live record into the ring or that reading is lost when the slot is
+    /// overwritten. Same-pid live slots (in-process tunnel restart) keep
+    /// merging, so only foreign pids are flushed. Caller must hold `lock`.
+    private static func flushForeignLiveLocked() {
+        guard let url = fileURL,
+              let data = try? Data(contentsOf: url),
+              data.count >= Int(liveSlotOffset) + recordSize,
+              let live = decodeRecord(slice(data, Int(liveSlotOffset), recordSize)),
+              live.pid != UInt32(getpid()) else { return }
+        var header = readHeader()
+        append(live, header: &header)
+        writeHeader(header)
+    }
+
     private static func appendMarkerLocked(kind: Kind, reason: UInt32) {
         let snap = MemoryFootprint.sample()
         let now = Clocks.now()
