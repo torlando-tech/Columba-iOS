@@ -42,8 +42,9 @@ enum NEMemoryHistory {
         /// Highest footprint inside the window (MB) — the spike envelope.
         let windowMaxMB: Double
         /// Cumulative bytes this generation had written to disk at this point
-        /// (MB); monotonic within a segment, resets at a process restart.
-        let diskWrittenMB: Double
+        /// (MB); monotonic within a segment, resets at a process restart. nil
+        /// when the probe failed for this record (sentinel counter).
+        let diskWrittenMB: Double?
         /// Disk-write rate over the interval since the previous point in the
         /// same segment (KB/s); nil for a segment's first point. Sustained rate
         /// above `dailyDiskWriteBudgetBytes / 86_400` is what gets the NE
@@ -239,14 +240,14 @@ enum NEMemoryHistory {
                 eventId += 1
             }
 
-            // Per-generation disk total: `last − first` of the cumulative
-            // counter. `first.diskWritten == 0` also covers a pre-v2 ring, where
-            // no record ever carries the counter.
-            let diskTotalMB: Double? = {
-                let firstDisk = generation[0].diskWritten
-                guard last.diskWritten > firstDisk else { return nil }
-                return megabytes(last.diskWritten - firstDisk)
-            }()
+            // The counter is cumulative since process start (rusage counters
+            // begin at 0 at exec), so the generation's lifetime total is simply
+            // the LAST reading — no `last − first` subtraction, which would
+            // drop the run's early writes once the ring overwrites its boot
+            // marker. 0 or the sentinel means no usable counter (pre-v2 ring,
+            // failed probes).
+            let diskTotalMB: Double? = last.diskWritten > 0 && last.diskWritten != NEMemoryTrace.diskWrittenUnavailable
+                ? megabytes(last.diskWritten) : nil
 
             if killed {
                 // The best number for "what was it using when it got killed":
@@ -311,18 +312,26 @@ enum NEMemoryHistory {
                 // every boot and teardown instead of a window maximum.
                 guard record.kind == .bucket || record.kind == .live else { continue }
                 var diskRateKBs: Double?
-                if let previous = previousPlotted, record.diskWritten >= previous.disk {
-                    let interval = date.timeIntervalSince(previous.date)
-                    if interval > 0 {
-                        diskRateKBs = Double(record.diskWritten - previous.disk) / 1024 / interval
+                if record.diskWritten != NEMemoryTrace.diskWrittenUnavailable {
+                    if let previous = previousPlotted, record.diskWritten >= previous.disk {
+                        let interval = date.timeIntervalSince(previous.date)
+                        if interval > 0 {
+                            diskRateKBs = Double(record.diskWritten - previous.disk) / 1024 / interval
+                        }
                     }
+                    previousPlotted = (date, record.diskWritten)
+                } else {
+                    // A failed probe carries no counter: no rate for this point,
+                    // and the next point's rate must not bridge the gap (its
+                    // delta would span the failed interval, not its own).
+                    previousPlotted = nil
                 }
-                previousPlotted = (date, record.diskWritten)
                 points.append(Point(
                     id: pointId, date: date,
                     footprintMB: megabytes(record.footprint),
                     windowMaxMB: megabytes(record.windowMax),
-                    diskWrittenMB: megabytes(record.diskWritten),
+                    diskWrittenMB: record.diskWritten == NEMemoryTrace.diskWrittenUnavailable
+                        ? nil : megabytes(record.diskWritten),
                     diskRateKBs: diskRateKBs,
                     segment: segment, pid: record.pid
                 ))

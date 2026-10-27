@@ -96,6 +96,9 @@ public enum NEMemoryTrace {
     static let offLifetimePeak = 40   // u64
     static let offLimitRemaining = 48 // u64
     static let offDiskWritten = 56    // u64 (cumulative bytes written to disk)
+    /// Sentinel for `diskWritten`: the rusage probe failed, so no disk data
+    /// exists for this record. Never a real counter value — 4 EiB of writes.
+    static let diskWrittenUnavailable = UInt64.max
     static let offPid = 64            // u32
     static let offChecksum = 68       // u32 (FNV-1a over bytes 0..<68)
 
@@ -317,7 +320,9 @@ public enum NEMemoryTrace {
             guard isRunning(generation: generation) else { return }
 
             let snap = MemoryFootprint.sample()
-            let disk = DiskIO.sample()
+            // Probe failure → sentinel, never 0: a zero between real readings
+            // would fake a counter reset and inflate the next interval's rate.
+            let diskWritten = DiskIO.sample()?.writtenBytes ?? diskWrittenUnavailable
             let now = Clocks.now()
             let pid = UInt32(getpid())
             // A jump is measured against what the last bucket recorded, so a
@@ -335,7 +340,7 @@ public enum NEMemoryTrace {
                     footprint: snap.footprint, windowMax: windowMax,
                     lifetimePeak: snap.lifetimePeak,
                     limitRemaining: snap.limitRemaining,
-                    diskWritten: disk.writtenBytes,
+                    diskWritten: diskWritten,
                     pid: pid
                 ))
                 lastLiveUptimeMs = now.uptimeMs
@@ -348,7 +353,7 @@ public enum NEMemoryTrace {
                     footprint: snap.footprint, windowMax: windowMax,
                     lifetimePeak: snap.lifetimePeak,
                     limitRemaining: snap.limitRemaining,
-                    diskWritten: disk.writtenBytes,
+                    diskWritten: diskWritten,
                     pid: pid
                 ), header: &header)
                 writeHeader(header)
@@ -418,7 +423,7 @@ public enum NEMemoryTrace {
 
     private static func appendMarkerLocked(kind: Kind, reason: UInt32) {
         let snap = MemoryFootprint.sample()
-        let disk = DiskIO.sample()
+        let diskWritten = DiskIO.sample()?.writtenBytes ?? diskWrittenUnavailable
         let now = Clocks.now()
         var header = readHeader()
         if kind == .boot { header.bootCount &+= 1 }
@@ -428,7 +433,7 @@ public enum NEMemoryTrace {
             footprint: snap.footprint, windowMax: snap.lifetimePeak,
             lifetimePeak: snap.lifetimePeak,
             limitRemaining: snap.limitRemaining,
-            diskWritten: disk.writtenBytes,
+            diskWritten: diskWritten,
             pid: UInt32(getpid())
         ), header: &header)
         writeHeader(header)
@@ -758,13 +763,18 @@ enum DiskIO {
         return unsafeBitCast(sym, to: ProcPidRusageFn.self)
     }()
 
-    static func sample() -> Snapshot {
-        guard let fn = procPidRusage else { return Snapshot() }
+    /// nil = the probe failed (symbol missing or syscall error). The caller must
+    /// NOT store 0 for this: 0 is a legitimate counter reading, and a zero
+    /// between real readings would fake a counter reset and inflate the next
+    /// interval's rate. The sampler stores the `diskWrittenUnavailable`
+    /// sentinel instead, which the analyzer renders as "no data".
+    static func sample() -> Snapshot? {
+        guard let fn = procPidRusage else { return nil }
         var info = rusage_info_v6()
         let result = withUnsafeMutablePointer(to: &info) { pointer in
             fn(getpid(), RUSAGE_INFO_V6, UnsafeMutableRawPointer(pointer))
         }
-        guard result == 0 else { return Snapshot() }
+        guard result == 0 else { return nil }
         return Snapshot(writtenBytes: info.ri_diskio_byteswritten, logicalWrites: info.ri_logical_writes)
     }
 }

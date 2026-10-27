@@ -270,11 +270,13 @@ struct NEMemoryView: View {
         }
     }
 
-    /// Cumulative disk writes vs the daily budget the OS enforces. The y-value
-    /// is a running total (resets at each process restart, hence one line per
-    /// segment), so the slope IS the write rate — a flat line means nothing is
-    /// being written, and crossing the dashed line is what gets the process
-    /// throttled, then killed.
+    /// Disk-write rate vs the budget the OS enforces, expressed as a rate. The
+    /// y-value is the average over each sample window, so bursts and idle gaps
+    /// are both visible; the dashed line is the rate that stays inside the
+    /// daily write budget when sustained. (A cumulative chart against the fixed
+    /// daily budget was tried first: a multi-day healthy run crosses the line
+    /// and reads as a breach, because the budget renews daily — rate does not
+    /// have that problem.)
     @ViewBuilder private var diskChartCard: some View {
         if !visiblePoints.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
@@ -283,22 +285,22 @@ struct NEMemoryView: View {
                     ForEach(visiblePoints) { point in
                         LineMark(
                             x: .value("Time", point.date),
-                            y: .value("Written", point.diskWrittenMB),
+                            y: .value("Rate", point.diskRateKBs),
                             series: .value("Run", "\(point.segment)")
                         )
                         .foregroundStyle(Theme.accentColor)
                         .interpolationMethod(.linear)
                     }
-                    RuleMark(y: .value("Daily budget", diskBudgetMB))
+                    RuleMark(y: .value("Budget rate", diskBudgetKBs))
                         .foregroundStyle(Color.orange)
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .annotation(position: .top, alignment: .leading) {
-                            Text("daily budget")
+                            Text("daily average")
                                 .font(.caption2)
                                 .foregroundStyle(Color.orange)
                         }
                 }
-                .chartYAxisLabel("MB", position: .leading)
+                .chartYAxisLabel("KB/s", position: .leading)
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                         AxisGridLine()
@@ -308,7 +310,7 @@ struct NEMemoryView: View {
                 .frame(height: 140)
                 .accessibilityIdentifier("ne_disk_chart")
 
-                Text("Cumulative bytes the background transport has written to disk since it started — one line per process run. The dashed line is the per-day write budget iOS enforces; breaching it throttles the process, and continued breaches kill it.")
+                Text("How fast the background transport writes to disk, averaged over each sample window. The dashed line is the average rate that stays inside the per-day write budget iOS enforces (12,137 KB/day); bursts above it are normal — what kills the process is sustaining more than that over a day.")
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -357,9 +359,10 @@ struct NEMemoryView: View {
         return limit > current.footprintMB + 1 ? limit : nil
     }
 
-    /// The daily disk-write budget the OS enforces on this process class, in MB.
-    private var diskBudgetMB: Double {
-        Double(NEMemoryHistory.dailyDiskWriteBudgetBytes) / 1_048_576
+    /// The daily disk-write budget the OS enforces on this process class,
+    /// expressed as an average rate (12,137 KB over 86,400 s ≈ 0.14 KB/s).
+    private var diskBudgetKBs: Double {
+        Double(NEMemoryHistory.dailyDiskWriteBudgetBytes) / 1024 / 86_400
     }
 
     private func formatMB(_ value: Double?) -> String {
