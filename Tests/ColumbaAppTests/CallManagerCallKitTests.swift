@@ -14,6 +14,8 @@
 
 import CallKit
 import Foundation
+import GRDB
+import UIKit
 import RNSAPI
 import XCTest
 
@@ -169,6 +171,95 @@ final class CallManagerCallKitTests: XCTestCase {
     }
 
     // MARK: - Call-history lifecycle finalization (issue #167)
+
+    func testBackgroundCallFailurePersistsOutcomeAndReleasesDatabaseAccess() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("background-call-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let repo = try CallHistoryRepository(grdbPath: directory.appendingPathComponent("history.db").path)
+        let manager = CallManager()
+        manager.callKitManager = MockCallKitReporter()
+        manager.callHistoryRepository = repo
+        let localHash = String(repeating: "b", count: 32)
+        manager.localIdentityHashHex = localHash
+        let center = NotificationCenter.default
+        defer {
+            center.post(name: UIApplication.willEnterForegroundNotification, object: UIApplication.shared)
+            center.post(name: Database.resumeNotification, object: nil)
+        }
+
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: UIApplication.shared)
+        // A background audio callback can fail a call after the UI has gone
+        // away. Both insertion and terminal persistence must be protected.
+        manager.beginCallAttempt(direction: .outgoing, peerDisplayName: "Peer")
+        let attemptID = try XCTUnwrap(manager.currentCallAttemptId)
+        manager.failOutgoingCall("Peer disconnected")
+        await manager.shutdown() // drains the real FIFO history-write chain
+
+        do {
+            try await repo.recordEnd(attemptID, at: Date(), outcome: .failed)
+            XCTFail("Completed history writes must release their database access grants")
+        } catch let error as DatabaseError {
+            XCTAssertTrue(error.resultCode == .SQLITE_ABORT || error.resultCode == .SQLITE_INTERRUPT)
+        }
+        center.post(name: UIApplication.willEnterForegroundNotification, object: UIApplication.shared)
+        let record = try await repo.fetchRecord(attemptID, localIdentityHash: localHash)
+        let final = try XCTUnwrap(record, "Background call history must not be lost")
+        XCTAssertNotNil(final.endedAt)
+        XCTAssertEqual(final.outcome, .failed)
+        await repo.close()
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    func testCallHistoryGrantDenialAndExpirationDoNotLeaveDatabaseResumed() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("call-grant-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let repo = try CallHistoryRepository(grdbPath: directory.appendingPathComponent("history.db").path)
+        let controller = DatabaseSuspensionController(isForeground: false)
+        defer { controller.setForeground(true) }
+        let denied = CallHistoryBackgroundTask(controller: controller, beginTask: { _ in .invalid })
+        XCTAssertNil(denied)
+        do {
+            try await repo.insertAttempt(
+                callAttemptId: "denied", localIdentityHash: "local", remoteIdentityHash: "remote",
+                direction: .outgoing, peerDisplayNameSnapshot: nil, codecProfileCode: 0, attemptedAt: Date()
+            )
+            XCTFail("A denied UIKit grant must not resume the database")
+        } catch let error as DatabaseError {
+            XCTAssertTrue(error.resultCode == .SQLITE_ABORT || error.resultCode == .SQLITE_INTERRUPT)
+        }
+
+        var expiration: (@Sendable () -> Void)?
+        var ended: [UIBackgroundTaskIdentifier] = []
+        let identifier = UIBackgroundTaskIdentifier(rawValue: 42)
+        let grant = try XCTUnwrap(CallHistoryBackgroundTask(
+            controller: controller,
+            beginTask: { expiration = $0; return identifier },
+            endTask: { ended.append($0) }
+        ))
+        try await repo.insertAttempt(
+            callAttemptId: "active", localIdentityHash: "local", remoteIdentityHash: "remote",
+            direction: .outgoing, peerDisplayNameSnapshot: nil, codecProfileCode: 0, attemptedAt: Date()
+        )
+        try XCTUnwrap(expiration)()
+        XCTAssertFalse(grant.isActive)
+        do {
+            try await repo.recordEnd("active", at: Date(), outcome: .failed)
+            XCTFail("Expiration must revoke database access before work finishes")
+        } catch let error as DatabaseError {
+            XCTAssertTrue(error.resultCode == .SQLITE_ABORT || error.resultCode == .SQLITE_INTERRUPT)
+        }
+        grant.finish() // late completion must not end the UIKit grant twice
+        XCTAssertEqual(ended, [identifier])
+        controller.setForeground(true)
+        let active = try await repo.fetchRecord("active", localIdentityHash: "local")
+        XCTAssertNil(try XCTUnwrap(active).endedAt)
+        let missing = try await repo.fetchRecord("denied", localIdentityHash: "local")
+        XCTAssertNil(missing)
+        await repo.close()
+        try FileManager.default.removeItem(at: directory)
+    }
 
     /// A CallKit provider reset while a call is active must FINALIZE the
     /// history attempt (end time + outcome) — otherwise the row is stranded

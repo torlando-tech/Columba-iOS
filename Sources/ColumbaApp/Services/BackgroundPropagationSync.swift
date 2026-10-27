@@ -19,6 +19,7 @@
 #if os(iOS)
 import BackgroundTasks
 import Foundation
+import GRDB
 import RNSAPI
 import UIKit
 import os
@@ -27,6 +28,165 @@ private let backgroundPropagationLogger = Logger(
     subsystem: "network.columba.Columba",
     category: "BackgroundPropagationSync"
 )
+
+/// GRDB suspension is process-local: the app must not hold database locks
+/// without foreground execution or an unexpired system background-task grant.
+@MainActor
+final class DatabaseSuspensionController {
+    static let shared = DatabaseSuspensionController(
+        isForeground: UIApplication.shared.applicationState != .background
+    )
+
+    private let notificationCenter: NotificationCenter
+    private var isForeground: Bool
+    private var backgroundAccessTokens: Set<UUID> = []
+    private var accessAllowed: Bool
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var accessWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+
+    init(isForeground: Bool, notificationCenter: NotificationCenter = .default) {
+        self.isForeground = isForeground
+        self.notificationCenter = notificationCenter
+        accessAllowed = isForeground
+        notificationCenter.post(
+            name: isForeground ? Database.resumeNotification : Database.suspendNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        for observer in lifecycleObservers {
+            notificationCenter.removeObserver(observer)
+        }
+    }
+
+    func observeApplicationLifecycle() {
+        guard lifecycleObservers.isEmpty else { return }
+        lifecycleObservers = [
+            notificationCenter.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setForeground(false) }
+            },
+            notificationCenter.addObserver(
+                forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setForeground(true) }
+            }
+        ]
+    }
+
+    func setForeground(_ isForeground: Bool) {
+        self.isForeground = isForeground
+        updateSuspension()
+    }
+
+    func beginBackgroundAccess() -> UUID {
+        let token = UUID()
+        backgroundAccessTokens.insert(token)
+        updateSuspension()
+        return token
+    }
+
+    func endBackgroundAccess(_ token: UUID) {
+        guard backgroundAccessTokens.remove(token) != nil else { return }
+        updateSuspension()
+    }
+
+    /// Startup must not open a new pool after it has missed the process's
+    /// suspension notification. Call immediately before synchronous creation.
+    func waitUntilAccessAllowed() async throws {
+        try Task.checkCancellation()
+        while !accessAllowed {
+            let identifier = UUID()
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    if Task.isCancelled {
+                        continuation.resume(throwing: CancellationError())
+                    } else {
+                        accessWaiters[identifier] = continuation
+                    }
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in
+                    self?.accessWaiters.removeValue(forKey: identifier)?
+                        .resume(throwing: CancellationError())
+                }
+            }
+            try Task.checkCancellation()
+        }
+        try Task.checkCancellation()
+    }
+
+    private func updateSuspension() {
+        let allowed = isForeground || !backgroundAccessTokens.isEmpty
+        guard allowed != accessAllowed else { return }
+        accessAllowed = allowed
+        notificationCenter.post(
+            name: allowed ? Database.resumeNotification : Database.suspendNotification,
+            object: nil
+        )
+        if allowed {
+            let waiters = accessWaiters
+            accessWaiters = [:]
+            for continuation in waiters.values {
+                continuation.resume()
+            }
+        }
+    }
+}
+
+/// Protects a queued call-history write with a bounded UIKit execution grant.
+/// Audio may keep a call alive in the background, but does not itself resume
+/// GRDB. Acquire before enqueueing; release before ending the system grant.
+@MainActor
+final class CallHistoryBackgroundTask {
+    typealias BeginTask = @MainActor (@escaping @Sendable () -> Void) -> UIBackgroundTaskIdentifier
+
+    private let controller: DatabaseSuspensionController
+    private let endTask: @MainActor (UIBackgroundTaskIdentifier) -> Void
+    private var taskIdentifier: UIBackgroundTaskIdentifier = .invalid
+    private var accessToken: UUID?
+    private(set) var isActive = true
+
+    init?(
+        controller: DatabaseSuspensionController? = nil,
+        beginTask: BeginTask = {
+            UIApplication.shared.beginBackgroundTask(withName: "call-history", expirationHandler: $0)
+        },
+        endTask: @escaping @MainActor (UIBackgroundTaskIdentifier) -> Void = {
+            UIApplication.shared.endBackgroundTask($0)
+        }
+    ) {
+        self.controller = controller ?? .shared
+        self.endTask = endTask
+        let identifier = beginTask { [weak self] in
+            // UIKit invokes expiration handlers on the main thread.
+            MainActor.assumeIsolated { self?.finish() }
+        }
+        guard identifier != .invalid else { return nil }
+        guard isActive else {
+            endTask(identifier)
+            return nil
+        }
+        taskIdentifier = identifier
+        accessToken = self.controller.beginBackgroundAccess()
+    }
+
+    func finish() {
+        guard isActive else { return }
+        isActive = false
+        if let token = accessToken {
+            accessToken = nil
+            controller.endBackgroundAccess(token)
+        }
+        if taskIdentifier != .invalid {
+            let identifier = taskIdentifier
+            taskIdentifier = .invalid
+            endTask(identifier)
+        }
+    }
+}
 
 /// Two system-scheduled task kinds that both trigger the SAME sync workflow.
 /// Both lanes use the user-configured cadence: registering both multiplies
@@ -190,6 +350,7 @@ private extension UIScene.ActivationState {
 protocol BackgroundTaskHandle: AnyObject {
     var expirationHandler: (() -> Void)? { get set }
     var isCompleted: Bool { get }
+    var isExpired: Bool { get }
     func setTaskCompleted(success: Bool)
 }
 
@@ -198,6 +359,7 @@ private final class LaunchOwnedBackgroundTask: BackgroundTaskHandle, @unchecked 
     private let lock = NSLock()
     private var storedExpirationHandler: (() -> Void)?
     private var completed = false
+    private var expired = false
 
     init(task: BGTask) {
         self.task = task
@@ -213,21 +375,31 @@ private final class LaunchOwnedBackgroundTask: BackgroundTaskHandle, @unchecked 
         lock.withLock { completed }
     }
 
+    var isExpired: Bool {
+        lock.withLock { expired }
+    }
+
     func setTaskCompleted(success: Bool) {
-        let shouldComplete = lock.withLock {
-            guard !completed else { return false }
+        let completionSuccess: Bool? = lock.withLock {
+            guard !completed else { return nil }
             completed = true
             storedExpirationHandler = nil
-            return true
+            return success && !expired
         }
-        if shouldComplete {
+        if let completionSuccess {
             task.expirationHandler = nil
-            task.setTaskCompleted(success: success)
+            task.setTaskCompleted(success: completionSuccess)
         }
     }
 
     private func expire() {
-        if let handler = expirationHandler {
+        let expiration: (shouldExpire: Bool, handler: (() -> Void)?) = lock.withLock {
+            guard !completed, !expired else { return (false, nil) }
+            expired = true
+            return (true, storedExpirationHandler)
+        }
+        guard expiration.shouldExpire else { return }
+        if let handler = expiration.handler {
             handler()
         } else {
             setTaskCompleted(success: false)
@@ -248,6 +420,8 @@ final class BackgroundTaskCoordinator {
     private final class TaskState {
         let task: any BackgroundTaskHandle
         var operation: Task<Void, Never>?
+        var backgroundAccessToken: UUID?
+        var expired = false
         var completed = false
 
         init(task: any BackgroundTaskHandle) {
@@ -258,7 +432,12 @@ final class BackgroundTaskCoordinator {
     static let shared = BackgroundTaskCoordinator()
 
     private var handler: Handler?
+    private let suspensionController: DatabaseSuspensionController
     private var states: [ObjectIdentifier: TaskState] = [:]
+
+    init(suspensionController: DatabaseSuspensionController? = nil) {
+        self.suspensionController = suspensionController ?? .shared
+    }
 
     func installHandler(_ handler: @escaping Handler) {
         self.handler = handler
@@ -269,8 +448,9 @@ final class BackgroundTaskCoordinator {
     }
 
     func receive(_ task: any BackgroundTaskHandle) {
-        guard !task.isCompleted else {
-            DiagLog.log("[BG-SYNC] coordinator ignored task already completed during launch handoff")
+        guard !task.isCompleted, !task.isExpired else {
+            if !task.isCompleted { task.setTaskCompleted(success: false) }
+            DiagLog.log("[BG-SYNC] coordinator ignored task completed or expired during launch handoff")
             return
         }
         let identifier = ObjectIdentifier(task)
@@ -280,44 +460,78 @@ final class BackgroundTaskCoordinator {
         states[identifier] = state
         DiagLog.log("[BG-SYNC] coordinator received handlerReady=\(handler != nil)")
         task.expirationHandler = { [weak self, weak state] in
-            Task { @MainActor in
-                guard let self, let state else { return }
-                DiagLog.log("[BG-SYNC] task expiration requested")
-                if let operation = state.operation {
-                    // Let the operation's structured completion path report failure
-                    // only after its Reticulum/Python cancellation cleanup returns.
-                    operation.cancel()
-                } else {
-                    self.complete(state, success: false)
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    guard let self, let state else { return }
+                    self.expire(state)
+                }
+            } else {
+                Task { @MainActor in
+                    guard let self, let state else { return }
+                    self.expire(state)
                 }
             }
         }
-        guard !task.isCompleted else {
-            states.removeValue(forKey: identifier)
+        guard !task.isCompleted, !task.isExpired, !state.completed else {
+            complete(state, success: false)
             return
         }
 
+        // Cold-launch initialization may access GRDB before a handler is ready.
+        // Retained deliveries own a grant too, until expiration or completion.
+        state.backgroundAccessToken = suspensionController.beginBackgroundAccess()
         if handler != nil {
             start(state)
         }
     }
 
     private func start(_ state: TaskState) {
-        guard let handler, state.operation == nil, !state.completed else { return }
+        guard let handler, state.operation == nil, !state.completed, !state.expired else { return }
+        guard !state.task.isCompleted, !state.task.isExpired else {
+            expire(state)
+            return
+        }
         DiagLog.log("[BG-SYNC] coordinator starting workflow")
         state.operation = Task { @MainActor [weak self, weak state] in
             guard let self, let state else { return }
+            guard !state.expired, !state.task.isExpired, !state.task.isCompleted else {
+                self.complete(state, success: false)
+                return
+            }
             let success = await handler()
             self.complete(state, success: success && !Task.isCancelled)
         }
     }
 
+    private func expire(_ state: TaskState) {
+        guard !state.completed, !state.expired else { return }
+        state.expired = true
+        DiagLog.log("[BG-SYNC] task expiration requested")
+        // Cancellation may wait indefinitely for Python cleanup. Revoke database
+        // access now, not when that cleanup eventually reports completion.
+        releaseBackgroundAccess(state)
+        if let operation = state.operation {
+            operation.cancel()
+        } else {
+            complete(state, success: false)
+        }
+    }
+
+    private func releaseBackgroundAccess(_ state: TaskState) {
+        guard let token = state.backgroundAccessToken else { return }
+        state.backgroundAccessToken = nil
+        suspensionController.endBackgroundAccess(token)
+    }
+
     private func complete(_ state: TaskState, success: Bool) {
         guard !state.completed else { return }
         state.completed = true
+        releaseBackgroundAccess(state)
         DiagLog.log("[BG-SYNC] coordinator completing success=\(success)")
         state.task.expirationHandler = nil
-        state.task.setTaskCompleted(success: success)
+        if !state.task.isCompleted {
+            state.task.setTaskCompleted(success: success && !state.expired && !state.task.isExpired)
+        }
         states.removeValue(forKey: ObjectIdentifier(state.task))
     }
 }

@@ -1496,6 +1496,12 @@ public final class AppServices {
         Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: newIdentity.hexHash)
         let grdbPath = Self.grdbDatabaseFilePath(for: newIdentity.hexHash)
         self.grdbDatabasePath = grdbPath
+        #if os(iOS)
+        // Newly opened pools cannot receive a suspension notification sent
+        // before they existed. Wait for foreground or an authorized BG task
+        // before opening them; no await may separate this gate from setup.
+        try await DatabaseSuspensionController.shared.waitUntilAccessAllowed()
+        #endif
         let messageRepository = try MessageRepository(grdbPath: grdbPath)
         self.messageRepository = messageRepository
         // Open the identity-scoped call-history store. A repository left over
@@ -1509,6 +1515,9 @@ public final class AppServices {
             self.callHistoryRepository = nil
         }
         do {
+            #if os(iOS)
+            try await DatabaseSuspensionController.shared.waitUntilAccessAllowed()
+            #endif
             let callHistory = try CallHistoryRepository(grdbPath: grdbPath)
             self.callHistoryRepository = callHistory
             DiagLog.log("[INIT] call-history repository ready at \(grdbPath)")
@@ -3900,6 +3909,9 @@ public final class AppServices {
         Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: identityHash)
         let grdbPath = Self.grdbDatabaseFilePath(for: identityHash)
         self.grdbDatabasePath = grdbPath
+        #if os(iOS)
+        try await DatabaseSuspensionController.shared.waitUntilAccessAllowed()
+        #endif
         let messageRepository = try MessageRepository(grdbPath: grdbPath)
         self.messageRepository = messageRepository
         // Open the identity-scoped call-history store. A repository left over
@@ -3913,6 +3925,9 @@ public final class AppServices {
             self.callHistoryRepository = nil
         }
         do {
+            #if os(iOS)
+            try await DatabaseSuspensionController.shared.waitUntilAccessAllowed()
+            #endif
             let callHistory = try CallHistoryRepository(grdbPath: grdbPath)
             self.callHistoryRepository = callHistory
             DiagLog.log("[INIT] call-history repository ready at \(grdbPath)")
@@ -4758,6 +4773,9 @@ public final class AppServices {
             Self.migrateLXMFDatabaseToAppGroupIfNeeded(identityHashHex: existingIdentity.hexHash)
             let grdbPath = Self.grdbDatabaseFilePath(for: existingIdentity.hexHash)
             self.grdbDatabasePath = grdbPath
+            #if os(iOS)
+            try await DatabaseSuspensionController.shared.waitUntilAccessAllowed()
+            #endif
             let messageRepository = try MessageRepository(grdbPath: grdbPath)
             self.messageRepository = messageRepository
             let recoveredRetryCount = try await messageRepository.recoverInterruptedRetries()

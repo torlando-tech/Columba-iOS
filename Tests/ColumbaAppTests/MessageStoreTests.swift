@@ -21,6 +21,9 @@
 import XCTest
 import GRDB
 import RNSAPI
+#if os(iOS)
+import UIKit
+#endif
 @testable import ColumbaApp
 
 final class MessageStoreTests: XCTestCase {
@@ -422,6 +425,106 @@ final class MessageStoreTests: XCTestCase {
         let failed = try await store.loadFailedOutboundIds()
         XCTAssertEqual(failed, [Data(repeating: 0x04, count: 32)])
     }
+}
+
+// GRDB 6.29 observes suspension only on NotificationCenter.default, with no
+// pool-specific object filtering. Keep these process-wide transitions on the
+// main actor and always restore resumed access, even when an assertion fails.
+@MainActor
+final class MessageRepositorySuspensionTests: XCTestCase {
+    private func temporaryDatabaseURL() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("columba-repository-suspension-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("lxmf-swift.db")
+    }
+
+    private func assertAnnouncedNameWriteIsSuspended(
+        _ repository: MessageRepository,
+        destination: Data,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        do {
+            _ = try await repository.applyAnnouncedDisplayName(
+                destination,
+                displayName: "Announced Peer"
+            )
+            XCTFail("A suspended repository must reject its announced-name write", file: file, line: line)
+        } catch let error as DatabaseError {
+            XCTAssertTrue(
+                error.resultCode == .SQLITE_ABORT || error.resultCode == .SQLITE_INTERRUPT,
+                "Expected a suspension error, received \(error)",
+                file: file,
+                line: line
+            )
+        }
+    }
+
+    func testAnnouncedNameWriteAbortsWhileSuspendedAndResumesWithoutOverwritingNickname() async throws {
+        let databaseURL = try temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: databaseURL.deletingLastPathComponent()) }
+        let center = NotificationCenter.default
+        defer { center.post(name: Database.resumeNotification, object: nil) }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xaa, count: 12))
+        let customDestination = Data(repeating: 0xbb, count: 16)
+        let fallbackName = "Peer 05c57e42"
+        try await repository.ensureConversation(destination, displayName: fallbackName)
+        try await repository.ensureConversation(customDestination, displayName: nil)
+        try await repository.updateDisplayName(customDestination, displayName: "My Server")
+
+        center.post(name: Database.suspendNotification, object: nil)
+        try await assertAnnouncedNameWriteIsSuspended(repository, destination: destination)
+        center.post(name: Database.resumeNotification, object: nil)
+
+        let afterAbort = try await repository.fetchConversation(destination)
+        XCTAssertEqual(try XCTUnwrap(afterAbort).displayName, fallbackName,
+                       "The rejected write must not have committed")
+        let applied = try await repository.applyAnnouncedDisplayName(destination, displayName: "Announced Peer")
+        XCTAssertTrue(applied)
+        let afterResume = try await repository.fetchConversation(destination)
+        XCTAssertEqual(try XCTUnwrap(afterResume).displayName, "Announced Peer")
+
+        let customApplied = try await repository.applyAnnouncedDisplayName(
+            customDestination,
+            displayName: "Announced Replacement"
+        )
+        XCTAssertFalse(customApplied)
+        let customConversation = try await repository.fetchConversation(customDestination)
+        XCTAssertEqual(try XCTUnwrap(customConversation).displayName, "My Server")
+    }
+
+    #if os(iOS)
+    func testApplicationBackgroundNotificationSuspendsRealRepositoryUntilForeground() async throws {
+        let databaseURL = try temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: databaseURL.deletingLastPathComponent()) }
+        let center = NotificationCenter.default
+        defer {
+            center.post(name: UIApplication.willEnterForegroundNotification, object: UIApplication.shared)
+            center.post(name: Database.resumeNotification, object: nil)
+        }
+        let repository = try MessageRepository(grdbPath: databaseURL.path)
+        let destination = Data([0x05, 0xc5, 0x7e, 0x42] + Array(repeating: 0xcc, count: 12))
+        let fallbackName = "Peer 05c57e42"
+        try await repository.ensureConversation(destination, displayName: fallbackName)
+
+        // The hosted app installs the real process lifecycle observers at init.
+        // Do not issue a GRDB suspension directly: missing UIKit-to-GRDB wiring
+        // must fail this regression even if the pools already opt into GRDB.
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: UIApplication.shared)
+        try await assertAnnouncedNameWriteIsSuspended(repository, destination: destination)
+        center.post(name: UIApplication.willEnterForegroundNotification, object: UIApplication.shared)
+
+        let afterAbort = try await repository.fetchConversation(destination)
+        XCTAssertEqual(try XCTUnwrap(afterAbort).displayName, fallbackName,
+                       "The backgrounded write must not have committed")
+        let applied = try await repository.applyAnnouncedDisplayName(destination, displayName: "Announced Peer")
+        XCTAssertTrue(applied)
+        let afterForeground = try await repository.fetchConversation(destination)
+        XCTAssertEqual(try XCTUnwrap(afterForeground).displayName, "Announced Peer")
+    }
+    #endif
 }
 
 // MARK: - Schema introspection helpers (test-only)
