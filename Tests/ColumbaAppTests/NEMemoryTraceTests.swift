@@ -96,12 +96,21 @@ final class NEMemoryTraceTests: XCTestCase {
     func testForeignLayoutFileIsDroppedAndRecreated() throws {
         // A v1 ring: same header geometry, but 64 B records — a different size
         // than this build writes.
+        func le(_ value: UInt64, _ width: Int) -> [UInt8] {
+            (0..<width).map { UInt8(truncatingIfNeeded: value >> (8 * $0)) }
+        }
         let v1RecordSize = 64
         var legacy = Data(count: NEMemoryTrace.headerSize)
-        legacy.writeLE(NEMemoryTrace.magic, at: NEMemoryTrace.offMagic, width: 4)
-        legacy.writeLE(1, at: NEMemoryTrace.offVersion, width: 2)
-        legacy.writeLE(UInt64(v1RecordSize), at: NEMemoryTrace.offRecordSize, width: 2)
-        legacy.writeLE(UInt64(NEMemoryTrace.ringCapacity), at: NEMemoryTrace.offCapacity, width: 4)
+        for (offset, field) in [
+            (NEMemoryTrace.offMagic, le(NEMemoryTrace.magic, 4)),
+            (NEMemoryTrace.offVersion, le(1, 2)),
+            (NEMemoryTrace.offRecordSize, le(UInt64(v1RecordSize), 2)),
+            (NEMemoryTrace.offCapacity, le(UInt64(NEMemoryTrace.ringCapacity), 4)),
+        ] {
+            for (index, byte) in field.enumerated() {
+                legacy[legacy.startIndex + offset + index] = byte
+            }
+        }
         legacy.append(Data(count: v1RecordSize * (1 + NEMemoryTrace.ringCapacity)))
         try legacy.write(to: fileURL, options: [.atomic])
 
