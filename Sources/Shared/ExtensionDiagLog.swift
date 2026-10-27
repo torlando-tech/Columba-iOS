@@ -3,7 +3,8 @@
 //  Columba Shared
 //
 //  Append-only diagnostic logger for the Network Extension, backed by a file in
-//  the App-Group container (`ext-diag.log`). The NE is sandboxed and its
+//  the App-Group container's `Library/` directory (`Library/ext-diag.log`). The
+//  NE is sandboxed and its
 //  unified-log output does not reliably reach the host over WiFi-only devices,
 //  so the NE writes its diagnostics here; the main app copies this file into its
 //  Documents directory on launch (`copyExtensionDiagToDocuments()`), making it
@@ -44,8 +45,37 @@ public enum ExtensionDiagLog {
         ) else {
             return nil
         }
-        return containerURL.appendingPathComponent("ext-diag.log")
+        // Under `Library/`, not the container root: `devicectl device copy from`
+        // only exposes Library / Documents / tmp inside a container, so a log at
+        // the App-Group root cannot be pulled off a device for post-kill analysis
+        // (remoteservices error 11007). Same constraint `NEMemoryTrace` hit.
+        return containerURL
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("ext-diag.log")
     }()
+
+    /// One-time migration: `ext-diag.log` used to live at the App-Group ROOT,
+    /// which `devicectl` cannot pull (only Library / Documents / tmp are
+    /// exposed inside a container). Move the legacy root file and its rotated
+    /// sibling into `Library/` when the destinations are absent, so a device
+    /// upgraded across the move keeps its previous session's diagnostics
+    /// pullable. Best-effort: any failure leaves the old files in place.
+    /// Call from the APP (it reads the log via the launch-time mirror); the NE
+    /// must not race its own writer with a move.
+    public static func migrateLegacyRootLog() {
+        guard let newURL = fileURL else { return }
+        let library = newURL.deletingLastPathComponent()
+        let containerRoot = library.deletingLastPathComponent()
+        for name in ["ext-diag.log", "ext-diag.log.1"] {
+            let source = containerRoot.appendingPathComponent(name)
+            let destination = library.appendingPathComponent(name)
+            let fm = FileManager.default
+            guard !fm.fileExists(atPath: destination.path),
+                  fm.fileExists(atPath: source.path) else { continue }
+            try? fm.createDirectory(at: library, withIntermediateDirectories: true)
+            try? fm.moveItem(at: source, to: destination)
+        }
+    }
 
     /// Maximum size of a single `ext-diag.log` file before rotation (5 MB),
     /// mirroring the app-side `DiagLog` cap. The NE runs for days without a
@@ -121,6 +151,11 @@ public enum ExtensionDiagLog {
                 fh.closeFile()
             }
         } else {
+            // `Library/` is not guaranteed to exist inside the App-Group container.
+            try? FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             // `createFile` lets us stamp file protection atomically with creation
             // so there's no window where the file exists at default protection.
             FileManager.default.createFile(

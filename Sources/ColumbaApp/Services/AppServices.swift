@@ -227,12 +227,41 @@ enum DiagLog {
     /// is unavailable. NO-PII: the source carries envelope/metadata only — see
     /// `ExtensionDiagLog`'s contract.
     static func copyExtensionDiagToDocuments() {
+        // Recover logs written by a build that stored them at the App-Group
+        // root (unpullable) before this one moved the writer under Library/.
+        ExtensionDiagLog.migrateLegacyRootLog()
         guard let source = ExtensionDiagLog.fileURL,
               FileManager.default.fileExists(atPath: source.path) else {
             return
         }
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let dest = docs.appendingPathComponent("ext-diag.log")
+        try? FileManager.default.removeItem(at: dest)
+        try? FileManager.default.copyItem(at: source, to: dest)
+    }
+
+    /// Copy the Network Extension's memory ring (`NEMemoryTrace`'s
+    /// `Library/ne-memory.bin`) into the app's Documents directory so the
+    /// post-kill footprint history is retrievable via `devicectl ... copy from
+    /// --domain-type appDataContainer` even if the App-Group copy gets rotated
+    /// or the container isn't directly reachable. Once per launch, NOT on the
+    /// live-copy loop: the ring's mtime advances on every NE write, so a
+    /// periodic mirror would re-copy 512 KB every cycle and double the
+    /// disk-write profile of a device that is already budget-bound. The
+    /// mtime guard skips the copy when the snapshot is already current.
+    /// NO-PII: the ring carries footprint numbers, pids, and wallMs only.
+    static func copyMemoryRingToDocuments() {
+        guard let source = NEMemoryTrace.fileURL,
+              FileManager.default.fileExists(atPath: source.path) else {
+            return
+        }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dest = docs.appendingPathComponent("ne-memory.bin")
+        if let srcMtime = try? FileManager.default.attributesOfItem(atPath: source.path)[.modificationDate] as? Date,
+           let dstMtime = try? FileManager.default.attributesOfItem(atPath: dest.path)[.modificationDate] as? Date,
+           srcMtime <= dstMtime {
+            return
+        }
         try? FileManager.default.removeItem(at: dest)
         try? FileManager.default.copyItem(at: source, to: dest)
     }

@@ -96,6 +96,14 @@ struct MainTabView: View {
     /// Session-scoped route request raised by the disconnected-interface banner.
     /// Settings consumes it after its navigation stack and interface model exist.
     @State private var shouldOpenInterfaceManagement: Bool = false
+    #if DEBUG
+    /// DEBUG-only capture affordance: the `ui-open-memory-usage` launch argument
+    /// presents the Memory Usage screen directly, so it can be screenshotted on a
+    /// physical device without UI taps. Same convention as the `ui-screenshotter`
+    /// argument handled in `ColumbaApp`; unreachable in Release builds.
+    @State private var debugMemoryPresented =
+        ProcessInfo.processInfo.arguments.contains("ui-open-memory-usage")
+    #endif
     /// Session-scoped route request raised by the Map tab's peer contact
     /// sheet ("Message" button): the peer's destination hash. MainTabView
     /// switches to Chats and hands the hash to ChatsView, which resolves the
@@ -197,6 +205,16 @@ struct MainTabView: View {
             }
         }
         .tint(Theme.accentColor)
+        #if DEBUG
+        .fullScreenCover(isPresented: $debugMemoryPresented) {
+            NavigationStack {
+                NEMemoryView(
+                    tunnel: appServices.tunnelManager,
+                    hostingMode: appServices.hostingMode
+                )
+            }
+        }
+        #endif
         .onAppear {
             consumePendingRNodeSetup()
             routePendingDeepLink()
