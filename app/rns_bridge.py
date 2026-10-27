@@ -1758,6 +1758,194 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     )
 
 
+# [MEM-LIMITS] Caps for the RNS tables that otherwise keep one record per peer
+# ever heard. RNS 1.6.0 has NO config key for any of these -- every
+# [reticulum] option lives in Reticulum.py:465-731 and none of them bounds the
+# path table -- but they are plain `RNS.Transport` class attributes read at use
+# time, so a host can bound them without patching the fork.
+#
+# Why they are needed (2026-10-27 overnight trace): the NE footprint climbed
+# 21.2 MB -> 48.3 MB in 12 h with `limit_bytes_remaining` down to 1.7 MB at the
+# stop marker. The Linux harness reproduces it: `known_destinations` +
+# `path_table` + `path_states` retain ~967 B of live objects (424 B RSS) per
+# never-before-seen peer, and the only bound RNS applies by default is
+# PATH_TIMEOUT = 7 days, which an overnight run never reaches.
+#
+# Every value below is enforced by an existing RNS cull loop
+# (Transport.py:1057 unused-pool target, Transport.py:938 path-state/reverse
+# cull, Identity.py:404 known-destination cull, Transport.py:2424 blob trim) --
+# only the threshold changes, not the policy.
+#
+# Caveat, and the reason PATH_TIMEOUT is the important one: `PATH_POOL_UNUSED_TARGET`
+# and both linger rules key off `path_used == 0`, so a peer we ever sent to
+# (Transport.py:1486 sets IDX_PT_USED) escapes them and is retained until
+# `path_expiry`, which is stamped from PATH_TIMEOUT at insert time
+# (Transport.py:3404). A week of retention is desktop policy; an hour is right
+# for a phone that can re-request a path on demand.
+_MEMORY_LIMITS: dict[str, int] = {
+    # Unused path-table entries retained before the pool cull kicks in
+    # (default 2048; each entry drags a known_destinations record with it).
+    "PATH_POOL_UNUSED_TARGET": 512,
+    # Retainment of any path after its last verifiable liveness event, used or
+    # not (default 7 days). Also bounds known_destinations: a pathless record
+    # is dropped at PATH_TIMEOUT * 1.25 (Identity.py:408).
+    "PATH_TIMEOUT": 60 * 60,
+    # Announce random blobs kept per destination (default 64 in memory / 32
+    # persisted). They are a dedupe window plus a max() timebase
+    # (Transport.py:3918), so trimming to the most recent 16 keeps both
+    # properties and cuts the largest per-peer term.
+    "MAX_RANDOM_BLOBS": 16,
+    "PERSIST_RANDOM_BLOBS": 16,
+}
+
+# Set COLUMBA_RNS_UNCAPPED=1 to run the uncapped defaults (A/B measurement).
+_MEMORY_LIMITS_DISABLED_ENV = "COLUMBA_RNS_UNCAPPED"
+
+
+def _apply_memory_limits() -> dict[str, int]:
+    """Set the leaf-appropriate memory caps on `RNS.Transport`. Idempotent.
+
+    Must run before `RNS.Reticulum(...)` so that path expiry stamped at insert
+    time picks up PATH_TIMEOUT. Values are NOT reset on stop(): the class
+    attributes are process-global and a later start() without the caps would
+    silently regrow.
+    """
+    import os as _os
+    if _os.environ.get(_MEMORY_LIMITS_DISABLED_ENV, "") not in ("", "0", "false"):
+        return {}
+    applied: dict[str, int] = {}
+    for name, value in _MEMORY_LIMITS.items():
+        try:
+            setattr(RNS.Transport, name, int(value))
+            applied[name] = int(value)
+        except Exception:
+            pass
+    return applied
+
+
+# [MEM] Periodic table census. The NE's footprint curve alone cannot say WHICH
+# table holds the bytes; this writes the counts next to the footprint ring so a
+# jetsam kill is attributable after the fact.
+#
+# Output goes to the NE's `ext-diag.log` (App-Group `Library/`), the file the app
+# mirrors into `Documents/ext-diag.log` every ~2 s and which is pullable with
+# `devicectl device copy from --domain-type appDataContainer`. PII-free: counts
+# only, no hashes, no paths.
+_CENSUS_EVERY_SECONDS = 60.0
+_CENSUS_STARTED = [False]
+
+
+def _ne_diag_path() -> str | None:
+    """Resolve the NE diagnostic log to append to, once per session.
+
+    `<config_dir>` is the per-identity RNS dir (AppGroupPaths: app-group root /
+    `Columba` / `python-<hash>`), so the App-Group root is two levels up and the
+    NE log the host app mirrors is `<root>/Library/ext-diag.log`. Fall back to a
+    sibling `mem-diag.log` when that Library dir is absent (in-process backend,
+    simulator) so census lines are still retrievable next to the config.
+    """
+    cfg = _state.get("config_dir")
+    if not cfg:
+        return None
+    if not _DIAG_PATH:
+        library = os.path.join(os.path.dirname(os.path.dirname(cfg)), "Library")
+        if os.path.isdir(library):
+            _DIAG_PATH.append(os.path.join(library, "ext-diag.log"))
+        else:
+            _DIAG_PATH.append(os.path.join(cfg, "mem-diag.log"))
+    return _DIAG_PATH[0]
+
+
+_DIAG_PATH: list[str] = []
+
+
+def _diag_append(line: str) -> bool:
+    """Append one line to the NE diagnostic log. Never raises."""
+    path = _ne_diag_path()
+    if not path:
+        return False
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S', time.localtime())}] {line}\n")
+        return True
+    except Exception:
+        return False
+
+
+def _table_census() -> dict[str, int]:
+    """Count the entries in every per-peer RNS table. Never raises."""
+    counts: dict[str, int] = {}
+    tr = getattr(RNS, "Transport", None)
+    if tr is None:
+        return counts
+
+    def _count(key: str, name: str, fn=None) -> None:
+        try:
+            source = getattr(tr, key, None)
+            if source is None:
+                return
+            counts[name] = int(fn(source)) if fn else len(source)
+        except Exception:
+            pass
+
+    _count("path_table", "pt")
+    try:
+        counts["ptu"] = sum(1 for e in tr.path_table.values() if not e[7])
+    except Exception:
+        pass
+    # `known_destinations` and its blob lists live on RNS.Identity, not Transport
+    # (Identity.py owns the cull at Identity.py:404).
+    try:
+        known = RNS.Identity.known_destinations
+        counts["kd"] = len(known)
+        counts["blobs"] = sum(len(e[4]) for e in known.values() if len(e) > 4 and e[4])
+    except Exception:
+        pass
+    _count("path_states", "ps")
+    _count("announce_rate_table", "art")
+    _count("packet_hashlist", "phl")
+    _count("held_announces", "ha")
+    _count("reverse_table", "rt")
+    _count("link_table", "lt")
+    _count("tunnels", "tuns")
+    _count("path_requests", "preq")
+    _count("announce_table", "at")
+    _count("interfaces", "ifs")
+    return counts
+
+
+def _census_line(counts: dict[str, int]) -> str:
+    return "[MEM] " + " ".join(f"{k}={v}" for k, v in counts.items())
+
+
+def _start_census_thread(applied_limits: dict[str, int]) -> None:
+    """Emit a `[MEM]` census line every minute. Idempotent per process."""
+    if _CENSUS_STARTED[0]:
+        return
+    _CENSUS_STARTED[0] = True
+    if applied_limits:
+        line = "[MEM] limits " + " ".join(f"{k}={v}" for k, v in applied_limits.items())
+    else:
+        line = f"[MEM] limits uncapped ({_MEMORY_LIMITS_DISABLED_ENV} set)"
+    print(line, flush=True)
+    _diag_append(line)
+
+    def _loop() -> None:
+        while True:
+            time.sleep(_CENSUS_EVERY_SECONDS)
+            try:
+                counts = _table_census()
+                if not counts:
+                    continue
+                line = _census_line(counts)
+                print(line, flush=True)
+                _diag_append(line)
+            except Exception:
+                pass
+
+    threading.Thread(target=_loop, daemon=True, name="rns-mem-census").start()
+
+
 def start(
     config_dir: str,
     identity_path: str,
@@ -1796,6 +1984,8 @@ def start(
 
         os.makedirs(config_dir, exist_ok=True)
         _state["config_dir"] = config_dir
+        # A restart can key a different per-identity dir; re-resolve the diag log.
+        _DIAG_PATH.clear()
 
         # Durable NE-only persistence (Model B): the NE runs Python in a Network
         # Extension process whose App-Group config dir is shared with the app, so
@@ -1828,6 +2018,10 @@ def start(
         _signal.signal = lambda *_a, **_kw: None
         try:
             _t0 = time.perf_counter()
+            # Before Reticulum(): path expiry is stamped AT INSERT time from
+            # PATH_TIMEOUT (Transport.py:3404), so a later override would leave
+            # the first few minutes of paths on the 7-day default.
+            applied_limits = _apply_memory_limits()
             reticulum = RNS.Reticulum(config_dir)
             _state["reticulum"] = reticulum
             STARTUP_TIMING["reticulum_ms"] = (time.perf_counter() - _t0) * 1000
@@ -1963,6 +2157,8 @@ def start(
                 target=_ingress_retry_loop, args=(_ingress_retry_gen,),
                 daemon=True,
             ).start()
+        # [MEM] Table census for post-mortem attribution of a jetsam kill.
+        _start_census_thread(applied_limits)
         _put("state", value="connected")
         return _local_info()
 
