@@ -353,7 +353,17 @@ def _put(kind: str, **payload: Any) -> None:
         # on the ping (immediately while open) or on launch / foreground (catch-up),
         # feeding the `backend.events` stream (path table, proof checkmarks, ...).
         # No poll. Best-effort: a failure must never crash the RNS/LXMF callback.
-        if kind != "inbound":
+        if kind == "announce":
+            # Announces are the flood: a hub mesh delivers ~1/s, and EVERY one
+            # used to get its own row + WAL commit. Measured on the real bridge
+            # (40 announces at 0.6/s): 12.5 kB written per announce, i.e. ~7.5
+            # kB/s at that rate — over half of iOS' 12.43 kB/s disk-writes
+            # budget before the extension's own storage writes are counted. On
+            # device the NE wrote 2136 MB in 12 h. Buffer instead: only the
+            # newest announce per destination is kept, and the buffer is flushed
+            # in ONE transaction per _ANNOUNCE_FLUSH_INTERVAL.
+            _queue_announce(payload)
+        elif kind != "inbound":
             _publish_durable(kind, payload)
     else:
         # In-process backend (Python runtime): in-memory queue drained directly by
@@ -594,6 +604,136 @@ def _publish_durable(kind: str, payload: dict) -> None:
         _post_link_events_ping()
     else:
         _coalesced_events_ping()
+
+
+# ── Announce event coalescing (NE write budget) ──────────────────────────────
+#
+# A hub-connected leaf receives ~1 announce/s. `_publish_durable` appends one row
+# with its own WAL commit per event; a suspended app then lets those rows pile up
+# (20k+ over a night) and every checkpoint rewrites the grown b-tree. Measured
+# against the real functions: 12.5 kB written per announce, versus ~0.4 kB for a
+# batched row. The NE's disk counter (its own rusage) read 2136 MB over 12 h,
+# about 4x iOS' ~1 GB/day disk-writes budget.
+#
+# So announces are coalesced, batched and bounded:
+#   * one entry per destination (the Network tab only ever shows the newest
+#     announce for a destination, and the app dedups by destination+time anyway),
+#   * ONE transaction per _ANNOUNCE_FLUSH_INTERVAL instead of one per announce,
+#   * at most _ANNOUNCE_ROWS_MAX rows retained, so a suspended app cannot grow
+#     the store without bound (the RNS path table remains the source of truth).
+_ANNOUNCE_FLUSH_INTERVAL = 10.0   # seconds between batched announce commits
+_ANNOUNCE_FLUSH_MAX = 512         # buffered destinations that force an early flush
+_ANNOUNCE_ROWS_MAX = 1024         # announce rows retained in `ne_inbox`
+_announce_buf: "dict[str, dict]" = {}
+_announce_buf_lock = threading.Lock()
+_announce_last_flush = 0.0
+_announce_flusher_started = False
+
+
+def _queue_announce(payload: dict) -> None:
+    """Buffer one announce event, flushing coalesced rows when due.
+
+    Called from RNS' announce-handler threads (one per announce), so it must stay
+    cheap: the JSON encoding and the SQLite work happen in `_append_announces`,
+    outside this lock. Never raises."""
+    global _announce_last_flush
+    try:
+        key = payload.get("dest_hash") or ""
+        batch = None
+        with _announce_buf_lock:
+            _announce_buf[key] = payload
+            due = (
+                len(_announce_buf) >= _ANNOUNCE_FLUSH_MAX
+                or time.time() - _announce_last_flush >= _ANNOUNCE_FLUSH_INTERVAL
+            )
+            if due:
+                _announce_last_flush = time.time()
+                batch = list(_announce_buf.values())
+                _announce_buf.clear()
+        # Arm the trailing flush OUTSIDE the buffer lock: it takes the same
+        # lock, and a plain Lock is not reentrant - arming while holding it
+        # wedged the announce-handler thread and stalled every announce.
+        if batch is None:
+            _ensure_announce_flusher()
+            return
+        _append_announces(batch)
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: announce queue failed: {e}", RNS.LOG_ERROR)
+
+
+def _ensure_announce_flusher() -> None:
+    """Start the single trailing-flush timer thread (once). Without it, the tail
+    announce of a burst would sit in the buffer until the NEXT announce arrives."""
+    global _announce_flusher_started
+    with _announce_buf_lock:
+        if _announce_flusher_started:
+            return
+        _announce_flusher_started = True
+    threading.Thread(
+        target=_announce_flusher_loop, name="announce-flush", daemon=True
+    ).start()
+
+
+def _announce_flusher_loop() -> None:
+    """Flush the buffered announce batch once its window has elapsed.
+
+    1 s tick only; the batch itself is at most _ANNOUNCE_FLUSH_MAX destinations,
+    so this never competes with delivery work."""
+    while True:
+        try:
+            time.sleep(1.0)
+            if _announce_buf and (
+                time.time() - _announce_last_flush >= _ANNOUNCE_FLUSH_INTERVAL
+            ):
+                _flush_announces()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _flush_announces() -> None:
+    """Flush any buffered announces. Called on stop() so a clean teardown does not
+    drop the newest announce batch."""
+    global _announce_last_flush
+    with _announce_buf_lock:
+        if not _announce_buf:
+            return
+        _announce_last_flush = time.time()
+        batch = list(_announce_buf.values())
+        _announce_buf.clear()
+    _append_announces(batch)
+
+
+def _append_announces(batch: "list[dict]") -> None:
+    """Append a batch of announce events in one transaction, then bound retention."""
+    if _inbox_path is None or not batch:
+        return
+    with _inbox_lock:
+        _open_inbox()
+        if _inbox_conn is None:
+            return
+        try:
+            _inbox_conn.executemany(
+                "INSERT INTO ne_inbox (kind, payload, created_at) VALUES (?, ?, ?)",
+                [
+                    ("announce", json.dumps(p), float(p.get("t") or time.time()))
+                    for p in batch
+                ],
+            )
+            # Bound retention in the SAME transaction: no extra commit, no extra
+            # WAL frame. A NULL subquery (fewer rows than the cap) deletes nothing,
+            # because `seq <= NULL` is NULL.
+            _inbox_conn.execute(
+                "DELETE FROM ne_inbox WHERE seq <= ("
+                " SELECT seq FROM ne_inbox WHERE kind = 'announce'"
+                " ORDER BY seq DESC LIMIT 1 OFFSET ?)",
+                (_ANNOUNCE_ROWS_MAX,),
+            )
+            _inbox_conn.commit()
+        except Exception as e:  # noqa: BLE001
+            RNS.log(f"rns_bridge: inbox append failed: {e}", RNS.LOG_ERROR)
+            return
+    # One ping per batch (still trailing-edge coalesced inside).
+    _coalesced_events_ping()
 
 
 # Bound both Python objects and the JSON copied/decoded across the NE/app seam.
@@ -2430,6 +2570,12 @@ def stop() -> None:
     # LXMF owns a process-global callback and may synchronously notify/cancel
     # jobs while clearing it. Never hold the bridge lock across that operation.
     _uninstall_native_stamp_generator()
+    # Persist the newest announce batch before teardown, or a clean stop drops
+    # up to one flush window of announce events.
+    try:
+        _flush_announces()
+    except Exception:  # noqa: BLE001
+        pass
     with _lock:
         try:
             existing = _state["handler"]
