@@ -105,12 +105,12 @@ class CensusTests(unittest.TestCase):
         self.ns = build_namespace()
         self.transport = self.ns['RNS'].Transport
         self.transport.path_table = {
-            b'a' * 16: [0, None, 0, 9e9, [], None, b'h', 0],          # unused
-            b'b' * 16: [0, None, 0, 9e9, [], None, b'h', 1234.5],     # used
+            b'a' * 16: [0, None, 0, 9e9, [b'blob1'], None, b'h', 0],       # unused
+            b'b' * 16: [0, None, 0, 9e9, [b'blob1', b'blob2'], None, b'h', 1234.5],  # used
         }
         self.ns['RNS'].Identity.known_destinations = {
-            b'a' * 16: [0, None, b'pk', b'sig', [b'blob1', b'blob2']],
-            b'b' * 16: [0, None, b'pk', b'sig', []],
+            b'a' * 16: [0, b'ph', b'pk', b'app', 0, None, 0],
+            b'b' * 16: [0, b'ph', b'pk', b'app', 1234.5, None, 0],
         }
         self.transport.path_states = {b'a' * 16: 2}
         self.transport.announce_rate_table = {b'a' * 16: object()}
@@ -128,7 +128,7 @@ class CensusTests(unittest.TestCase):
         self.assertEqual(counts['pt'], 2)
         self.assertEqual(counts['ptu'], 1, 'only the entry with IDX_PT_USED == 0 is unused')
         self.assertEqual(counts['kd'], 2)
-        self.assertEqual(counts['blobs'], 2)
+        self.assertEqual(counts['blobs'], 3, 'blob lists come from path_table, not Identity')
         self.assertEqual(counts['art'], 1)
         self.assertEqual(counts['phl'], 3)
         self.assertEqual(counts['ifs'], 2)

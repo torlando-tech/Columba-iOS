@@ -1893,12 +1893,19 @@ def _table_census() -> dict[str, int]:
         counts["ptu"] = sum(1 for e in tr.path_table.values() if not e[7])
     except Exception:
         pass
-    # `known_destinations` and its blob lists live on RNS.Identity, not Transport
-    # (Identity.py owns the cull at Identity.py:404).
+    # `known_destinations` lives on RNS.Identity (which owns its cull at
+    # Identity.py:404); its entries are [last_announce, packet_hash,
+    # public_key, app_data, used, ...] - the announce random-blob list is NOT
+    # there, it is path_table[IDX_PT_RANDBLOBS] (Transport.py:2331).
     try:
-        known = RNS.Identity.known_destinations
-        counts["kd"] = len(known)
-        counts["blobs"] = sum(len(e[4]) for e in known.values() if len(e) > 4 and e[4])
+        counts["kd"] = len(RNS.Identity.known_destinations)
+    except Exception:
+        pass
+    try:
+        counts["blobs"] = sum(
+            len(e[4]) for e in tr.path_table.values()
+            if len(e) > 4 and isinstance(e[4], list)
+        )
     except Exception:
         pass
     _count("path_states", "ps")
