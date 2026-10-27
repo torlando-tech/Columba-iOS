@@ -4,11 +4,151 @@
 //
 
 import XCTest
+import GRDB
+import UIKit
 import RNSAPI
 @testable import ColumbaApp
 
 @MainActor
 final class BackgroundPropagationSyncTests: XCTestCase {
+    func testDatabaseSuspensionKeepsAccessUntilLastOverlappingGrantEnds() {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let first = controller.beginBackgroundAccess()
+        let second = controller.beginBackgroundAccess()
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(notifications.accessStates, [false, true])
+
+        controller.endBackgroundAccess(first)
+        controller.endBackgroundAccess(first)
+        controller.endBackgroundAccess(UUID())
+        XCTAssertEqual(notifications.accessStates, [false, true])
+
+        controller.endBackgroundAccess(second)
+        controller.endBackgroundAccess(second)
+        XCTAssertEqual(notifications.accessStates, [false, true, false])
+    }
+
+    func testForegroundTransitionDuringBackgroundGrantKeepsDatabaseUsable() {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: true, notificationCenter: notifications.center
+        )
+        let first = controller.beginBackgroundAccess()
+        controller.setForeground(false)
+        XCTAssertEqual(notifications.accessStates, [true])
+        controller.endBackgroundAccess(first)
+        XCTAssertEqual(notifications.accessStates, [true, false])
+
+        let second = controller.beginBackgroundAccess()
+        controller.setForeground(true)
+        controller.endBackgroundAccess(second)
+        XCTAssertEqual(notifications.accessStates, [true, false, true])
+        controller.setForeground(false)
+        XCTAssertEqual(notifications.accessStates, [true, false, true, false])
+    }
+
+    func testDatabaseStartupWaitsForBackgroundGrantOrForeground() async throws {
+        for useGrant in [true, false] {
+            let notifications = DatabaseSuspensionNotifications()
+            let controller = DatabaseSuspensionController(
+                isForeground: false, notificationCenter: notifications.center
+            )
+            let started = expectation(description: "startup waiting")
+            var returned = false
+            let startup = Task { @MainActor in
+                started.fulfill()
+                try await controller.waitUntilAccessAllowed()
+                returned = true
+            }
+            await fulfillment(of: [started], timeout: 2)
+            XCTAssertFalse(returned)
+
+            if useGrant {
+                let token = controller.beginBackgroundAccess()
+                try await startup.value
+                controller.endBackgroundAccess(token)
+                XCTAssertEqual(notifications.accessStates, [false, true, false])
+            } else {
+                controller.setForeground(true)
+                try await startup.value
+                XCTAssertEqual(notifications.accessStates, [false, true])
+            }
+            XCTAssertTrue(returned)
+        }
+    }
+
+    func testDatabaseStartupRechecksGrantThatExpiresBeforeWaiterResumes() async throws {
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: NotificationCenter()
+        )
+        let started = expectation(description: "startup waiting")
+        var returned = false
+        let startup = Task { @MainActor in
+            started.fulfill()
+            try await controller.waitUntilAccessAllowed()
+            returned = true
+        }
+        await fulfillment(of: [started], timeout: 2)
+
+        let token = controller.beginBackgroundAccess()
+        controller.endBackgroundAccess(token)
+        // Let the resumed continuation re-enter the suspended gate. It must
+        // not treat the now-expired grant as permission to create a pool.
+        let checked = expectation(description: "expired grant checked")
+        Task { @MainActor in
+            XCTAssertFalse(returned)
+            checked.fulfill()
+        }
+        await fulfillment(of: [checked], timeout: 2)
+        controller.setForeground(true)
+        try await startup.value
+        XCTAssertTrue(returned)
+    }
+
+    func testDatabaseStartupCancellationDoesNotWaitForPermissionOrResumeTwice() async {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let started = expectation(description: "startup waiting")
+        let startup = Task { @MainActor in
+            started.fulfill()
+            try await controller.waitUntilAccessAllowed()
+        }
+        await fulfillment(of: [started], timeout: 2)
+        startup.cancel()
+
+        do {
+            try await startup.value
+            XCTFail("Canceled startup must not open the database")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        // Resuming after cancellation must not resume the removed continuation.
+        controller.setForeground(true)
+        XCTAssertEqual(notifications.accessStates, [false, true])
+    }
+
+    func testAlreadyCanceledDatabaseStartupDoesNotUseForegroundPermission() async {
+        let controller = DatabaseSuspensionController(
+            isForeground: true, notificationCenter: NotificationCenter()
+        )
+        let startup = Task { @MainActor in
+            try await controller.waitUntilAccessAllowed()
+        }
+        startup.cancel()
+
+        do {
+            try await startup.value
+            XCTFail("Permission must not override cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
     func testSchedulePolicyDisablesRefreshWhenPeriodicSyncIsOff() {
         XCTAssertNil(
             BackgroundPropagationSchedulePolicy.nextDelay(
@@ -380,7 +520,9 @@ final class BackgroundPropagationSyncTests: XCTestCase {
     }
 
     func testCoordinatorCompletesEachDeliveredTaskKindIndependently() async {
-        let coordinator = BackgroundTaskCoordinator()
+        let coordinator = BackgroundTaskCoordinator(suspensionController: DatabaseSuspensionController(
+            isForeground: true, notificationCenter: NotificationCenter()
+        ))
         let refreshTask = FakeBackgroundTaskHandle()
         let processingTask = FakeBackgroundTaskHandle()
         var handlerRuns = 0
@@ -585,38 +727,179 @@ final class BackgroundPropagationSyncTests: XCTestCase {
     }
 
     func testTaskReceivedBeforeHandlerRunsAfterHandlerInstallation() async {
-        let coordinator = BackgroundTaskCoordinator()
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let coordinator = BackgroundTaskCoordinator(suspensionController: controller)
         let task = FakeBackgroundTaskHandle()
 
         coordinator.receive(task)
         XCTAssertTrue(task.completions.isEmpty)
+        XCTAssertEqual(notifications.accessStates, [false, true])
 
-        coordinator.installHandler { true }
+        coordinator.installHandler {
+            XCTAssertEqual(notifications.accessStates, [false, true])
+            return true
+        }
         await task.waitForCompletion()
 
         XCTAssertEqual(task.completions, [true])
+        XCTAssertEqual(notifications.accessStates, [false, true, false])
     }
 
-    func testExpirationWaitsForOperationCleanupThenCompletesOnceAndSuppressesLateSuccess() async {
-        let coordinator = BackgroundTaskCoordinator()
+    func testExpirationRevokesGrantBeforeCleanupThenCompletesOnceWithoutLateResume() async {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let coordinator = BackgroundTaskCoordinator(suspensionController: controller)
         let task = FakeBackgroundTaskHandle()
         let gate = AsyncGate()
+        let started = expectation(description: "handler started")
 
         coordinator.installHandler {
+            started.fulfill()
             await gate.wait()
             return true
         }
         coordinator.receive(task)
+        await fulfillment(of: [started], timeout: 2)
+        let expiration = task.expirationHandler
 
-        task.expirationHandler?()
-        await Task.yield()
-        XCTAssertTrue(task.completions.isEmpty)
+        task.expire()
+        expiration?()
+        XCTAssertEqual(notifications.accessStates, [false, true, false])
+        XCTAssertTrue(task.completions.isEmpty, "Cleanup still owns exactly-once completion")
 
         gate.open()
         await task.waitForCompletion()
+        expiration?()
+        XCTAssertEqual(task.completions, [false])
+        XCTAssertEqual(notifications.accessStates, [false, true, false])
+    }
+
+    func testRetainedTaskExpirationReleasesGrantAndNeverStartsAfterHandlerInstallation() async {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let coordinator = BackgroundTaskCoordinator(suspensionController: controller)
+        let task = FakeBackgroundTaskHandle()
+        task.onCompletion = { _ in
+            XCTAssertEqual(notifications.accessStates, [false, true, false])
+        }
+
+        coordinator.receive(task)
+        let expiration = task.expirationHandler
+        task.expire()
+        expiration?()
+        coordinator.installHandler {
+            XCTFail("An expired retained delivery must not run or reacquire access")
+            return true
+        }
+        coordinator.receive(task)
         await Task.yield()
 
         XCTAssertEqual(task.completions, [false])
+        XCTAssertEqual(notifications.accessStates, [false, true, false])
+    }
+
+    func testTaskExpiredBeforeMainActorHandoffNeverResumesDatabase() {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let coordinator = BackgroundTaskCoordinator(suspensionController: controller)
+        let task = FakeBackgroundTaskHandle()
+        task.expire()
+
+        coordinator.receive(task)
+        coordinator.installHandler {
+            XCTFail("Expired launch delivery must not initialize the workflow")
+            return true
+        }
+
+        XCTAssertEqual(task.completions, [false])
+        XCTAssertEqual(notifications.accessStates, [false])
+    }
+
+    func testExpirationBeforeQueuedHandlerStartsNeverRunsWorkflow() async {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let coordinator = BackgroundTaskCoordinator(suspensionController: controller)
+        let task = FakeBackgroundTaskHandle()
+        coordinator.installHandler {
+            XCTFail("Expiration must win over a queued handler")
+            return true
+        }
+
+        coordinator.receive(task)
+        task.expire()
+        await task.waitForCompletion()
+
+        XCTAssertEqual(task.completions, [false])
+        XCTAssertEqual(notifications.accessStates, [false, true, false])
+    }
+
+    func testOverlappingTaskExpirationKeepsOtherGrantAndForegroundUsable() async {
+        let notifications = DatabaseSuspensionNotifications()
+        let controller = DatabaseSuspensionController(
+            isForeground: false, notificationCenter: notifications.center
+        )
+        let coordinator = BackgroundTaskCoordinator(suspensionController: controller)
+        let first = FakeBackgroundTaskHandle()
+        let second = FakeBackgroundTaskHandle()
+        let gate = AsyncGate()
+        let started = expectation(description: "remaining handler started")
+
+        coordinator.receive(first)
+        coordinator.receive(second)
+        first.expire()
+        XCTAssertEqual(first.completions, [false])
+        XCTAssertEqual(notifications.accessStates, [false, true])
+
+        coordinator.installHandler {
+            started.fulfill()
+            await gate.wait()
+            return true
+        }
+        await fulfillment(of: [started], timeout: 2)
+        controller.setForeground(true)
+        second.expire()
+        XCTAssertEqual(notifications.accessStates, [false, true])
+
+        gate.open()
+        await second.waitForCompletion()
+        XCTAssertEqual(second.completions, [false])
+        XCTAssertEqual(notifications.accessStates, [false, true])
+        controller.setForeground(false)
+        XCTAssertEqual(notifications.accessStates, [false, true, false])
+    }
+
+    func testTaskSuccessAndFailureReleaseGrantBeforeExactlyOnceCompletion() async {
+        for success in [true, false] {
+            let notifications = DatabaseSuspensionNotifications()
+            let controller = DatabaseSuspensionController(
+                isForeground: false, notificationCenter: notifications.center
+            )
+            let coordinator = BackgroundTaskCoordinator(suspensionController: controller)
+            let task = FakeBackgroundTaskHandle()
+            task.onCompletion = { _ in
+                XCTAssertEqual(notifications.accessStates, [false, true, false])
+            }
+            coordinator.installHandler { success }
+            coordinator.receive(task)
+            let lateExpiration = task.expirationHandler
+            await task.waitForCompletion()
+            lateExpiration?()
+            coordinator.receive(task)
+
+            XCTAssertEqual(task.completions, [success])
+            XCTAssertEqual(notifications.accessStates, [false, true, false])
+        }
     }
 
     private func makeMessage(
@@ -657,12 +940,15 @@ private actor EventRecorder {
 
 private final class FakeBackgroundTaskHandle: BackgroundTaskHandle {
     var expirationHandler: (() -> Void)?
+    var onCompletion: ((Bool) -> Void)?
+    private(set) var isExpired = false
     private(set) var completions: [Bool] = []
     private var continuation: CheckedContinuation<Void, Never>?
     var isCompleted: Bool { !completions.isEmpty }
 
     func setTaskCompleted(success: Bool) {
         completions.append(success)
+        onCompletion?(success)
         continuation?.resume()
         continuation = nil
     }
@@ -673,21 +959,61 @@ private final class FakeBackgroundTaskHandle: BackgroundTaskHandle {
             self.continuation = continuation
         }
     }
+
+    func expire() {
+        isExpired = true
+        expirationHandler?()
+    }
 }
 
 @MainActor
 private final class AsyncGate {
     private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
 
     func wait() async {
+        guard !isOpen else { return }
         await withCheckedContinuation { continuation in
             self.continuation = continuation
         }
     }
 
     func open() {
+        isOpen = true
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private final class DatabaseSuspensionNotifications: @unchecked Sendable {
+    let center = NotificationCenter()
+    private let lock = NSLock()
+    private var states: [Bool] = []
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        observers = [
+            center.addObserver(forName: Database.resumeNotification, object: nil, queue: nil) { [weak self] _ in
+                self?.record(true)
+            },
+            center.addObserver(forName: Database.suspendNotification, object: nil, queue: nil) { [weak self] _ in
+                self?.record(false)
+            }
+        ]
+    }
+
+    deinit {
+        for observer in observers {
+            center.removeObserver(observer)
+        }
+    }
+
+    var accessStates: [Bool] {
+        lock.withLock { states }
+    }
+
+    private func record(_ allowed: Bool) {
+        lock.withLock { states.append(allowed) }
     }
 }
 

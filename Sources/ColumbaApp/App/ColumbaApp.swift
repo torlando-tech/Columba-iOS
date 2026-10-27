@@ -52,6 +52,12 @@ struct ColumbaApp: App {
 
     init() {
         _ = Self.launchHostingMode
+        #if os(iOS)
+        // GRDB's opt-in flag listens to explicit suspension notifications,
+        // not UIKit lifecycle events. Install the process-wide bridge even
+        // when a background launch never creates a SwiftUI scene.
+        DatabaseSuspensionController.shared.observeApplicationLifecycle()
+        #endif
         // Privacy hygiene + bounded storage: wipe diag.log (and its rotated
         // sibling) before ANY launch work so logs left by pre-#186 builds,
         // which leaked received-message plaintext on every inbound message,
