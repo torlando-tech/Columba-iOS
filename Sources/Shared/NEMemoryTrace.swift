@@ -755,9 +755,10 @@ enum DiskIO {
     private typealias ProcPidRusageFn = @convention(c) (Int32, Int32, UnsafeMutableRawPointer) -> Int32
 
     private static let procPidRusage: ProcPidRusageFn? = {
-        // NULL handle = RTLD_DEFAULT: search the global symbol scope, where
-        // libsystem_kernel/libproc are always present.
-        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: 0), "proc_pid_rusage") else {
+        // Darwin's RTLD_DEFAULT is (void*)-2, NOT NULL — a glibc-ism cost a
+        // device cycle here: dlsym(NULL, …) fails outright on iOS. -2 is never
+        // 0, so the failable bitPattern init cannot trip.
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2)!, "proc_pid_rusage") else {
             return nil
         }
         return unsafeBitCast(sym, to: ProcPidRusageFn.self)
