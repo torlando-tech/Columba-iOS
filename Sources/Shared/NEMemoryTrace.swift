@@ -769,14 +769,30 @@ enum DiskIO {
     /// interval's rate. The sampler stores the `diskWrittenUnavailable`
     /// sentinel instead, which the analyzer renders as "no data".
     static func sample() -> Snapshot? {
-        guard let fn = procPidRusage else { return nil }
+        guard let fn = procPidRusage else {
+            logFailureOnce("proc_pid_rusage symbol not found")
+            return nil
+        }
         var info = rusage_info_v6()
         let result = withUnsafeMutablePointer(to: &info) { pointer in
             fn(getpid(), RUSAGE_INFO_V6, UnsafeMutableRawPointer(pointer))
         }
-        guard result == 0 else { return nil }
+        guard result == 0 else {
+            logFailureOnce("proc_pid_rusage returned \(result), errno \(errno)")
+            return nil
+        }
         return Snapshot(writtenBytes: info.ri_diskio_byteswritten, logicalWrites: info.ri_logical_writes)
     }
+
+    /// The failure is persistent-or-never for a given process, so one line is
+    /// all the diagnosis the rolling log needs.
+    private static func logFailureOnce(_ detail: String) {
+        guard !loggedFailure else { return }
+        loggedFailure = true
+        ExtensionDiagLog.log("MEMTRACE disk probe unavailable: \(detail)")
+    }
+
+    private static var loggedFailure = false
 }
 
 /// Wall clock + monotonic uptime. The pair is what lets the chart tell a device
