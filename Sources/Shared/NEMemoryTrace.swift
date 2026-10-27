@@ -786,13 +786,20 @@ enum DiskIO {
     }
 
     /// The failure is persistent-or-never for a given process, so one line is
-    /// all the diagnosis the rolling log needs.
+    /// all the diagnosis the rolling log needs. The sampler calls this outside
+    /// the trace lock and can race the stop marker's sample; the lock keeps the
+    /// once-only promise, and the log call stays outside it.
     private static func logFailureOnce(_ detail: String) {
-        guard !loggedFailure else { return }
+        let shouldLog: Bool
+        failureLogLock.lock()
+        shouldLog = !loggedFailure
         loggedFailure = true
+        failureLogLock.unlock()
+        guard shouldLog else { return }
         ExtensionDiagLog.log("MEMTRACE disk probe unavailable: \(detail)")
     }
 
+    private static let failureLogLock = NSLock()
     private static var loggedFailure = false
 }
 
