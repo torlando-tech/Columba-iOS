@@ -43,14 +43,18 @@ source "$POC_ROOT/support/bootstrap-pip.sh"
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
 #
-# Pinned to the branch `rebase/columba-1.5.5` (head 3759488e): RNS 1.5.5 plus the
+# Pinned to the branch `rebase/columba-1.6.0` (head d1421e08): RNS 1.6.0 plus the
 # SAME six columba embedded-runtime hardening commits the previous pin
-# (754654fe, RNS 1.5.2 + 6) carried, re-applied on top of 1.5.5. 1.5.5 adds live
-# interface attach/detach/reload (RNS.Reticulum.attach_interface /
-# detach_interface / reload_interface) and a real AutoInterface.detach() teardown
-# — the teardown the in-NE node relies on for hot interface swaps. Bump
-# deliberately; the commit is on the same remote this script pulls from.
-RETICULUM_REF="${RETICULUM_REF:-3759488eba880489562268d9a1a993f443d1b8bd}"
+# (3759488e, RNS 1.5.5 + 6) carried, re-applied on top of 1.6.0, plus the
+# receive-assembly memory fix (Resource.assemble releases the parts list after
+# the join and strips the random hash via memoryview — ~1x payload less peak
+# RSS on large inbound attachments) and its behavioral contract test
+# (tests/test_resource_assemble.py). 1.6.0 adds heap trimming
+# (malloc_zone_pressure_relief on darwin), GC throttling, path-table culling,
+# columnar announce bookkeeping, and a SQLite-WAL Storage.py for identity
+# ratchets + known destinations. Bump deliberately; the commit is on the same
+# remote this script pulls from.
+RETICULUM_REF="${RETICULUM_REF:-d1421e081d9b35b8cb4a54a3b357a9849721305f}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
