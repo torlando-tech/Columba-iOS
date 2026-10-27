@@ -136,6 +136,58 @@ final class DatabaseSuspensionController {
     }
 }
 
+/// Protects a queued call-history write with a bounded UIKit execution grant.
+/// Audio may keep a call alive in the background, but does not itself resume
+/// GRDB. Acquire before enqueueing; release before ending the system grant.
+@MainActor
+final class CallHistoryBackgroundTask {
+    typealias BeginTask = @MainActor (@escaping @Sendable () -> Void) -> UIBackgroundTaskIdentifier
+
+    private let controller: DatabaseSuspensionController
+    private let endTask: @MainActor (UIBackgroundTaskIdentifier) -> Void
+    private var taskIdentifier: UIBackgroundTaskIdentifier = .invalid
+    private var accessToken: UUID?
+    private(set) var isActive = true
+
+    init?(
+        controller: DatabaseSuspensionController? = nil,
+        beginTask: BeginTask = {
+            UIApplication.shared.beginBackgroundTask(withName: "call-history", expirationHandler: $0)
+        },
+        endTask: @escaping @MainActor (UIBackgroundTaskIdentifier) -> Void = {
+            UIApplication.shared.endBackgroundTask($0)
+        }
+    ) {
+        self.controller = controller ?? .shared
+        self.endTask = endTask
+        let identifier = beginTask { [weak self] in
+            // UIKit invokes expiration handlers on the main thread.
+            MainActor.assumeIsolated { self?.finish() }
+        }
+        guard identifier != .invalid else { return nil }
+        guard isActive else {
+            endTask(identifier)
+            return nil
+        }
+        taskIdentifier = identifier
+        accessToken = self.controller.beginBackgroundAccess()
+    }
+
+    func finish() {
+        guard isActive else { return }
+        isActive = false
+        if let token = accessToken {
+            accessToken = nil
+            controller.endBackgroundAccess(token)
+        }
+        if taskIdentifier != .invalid {
+            let identifier = taskIdentifier
+            taskIdentifier = .invalid
+            endTask(identifier)
+        }
+    }
+}
+
 /// Two system-scheduled task kinds that both trigger the SAME sync workflow.
 /// Both lanes use the user-configured cadence: registering both multiplies
 /// the grant opportunities (daytime active refresh vs charging/overnight

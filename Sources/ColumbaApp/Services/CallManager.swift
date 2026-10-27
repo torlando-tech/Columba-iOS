@@ -195,7 +195,8 @@ public final class CallManager {
         // is discarded — nothing from it is still pending, because every
         // terminal path (ended / failed / reset) finalizes before clearing.
         let repo = callHistoryRepository
-        historyWriteChain = Task {
+        historyWriteChain = nil
+        enqueueHistoryWrite {
             guard let repo else { return }
             try? await repo.insertAttempt(
                 callAttemptId: id, localIdentityHash: hex,
@@ -215,10 +216,25 @@ public final class CallManager {
     /// caller (a history write must never block a call); a nil repository
     /// (Model B / pre-wiring) is a silent no-op.
     private func enqueueHistoryWrite(_ body: @escaping @Sendable () async -> Void) {
-        if let existing = historyWriteChain {
-            historyWriteChain = Task { await existing.value; await body() }
-        } else {
-            historyWriteChain = Task { await body() }
+        guard callHistoryRepository != nil else { return }
+        #if os(iOS)
+        // Acquire synchronously, before the queued task yields or audio stops.
+        // The system grant bounds database access even if an earlier write stalls.
+        guard let backgroundTask = CallHistoryBackgroundTask() else {
+            logger.warning("[CALL] history write skipped: background execution unavailable")
+            return
+        }
+        #endif
+        let previous = historyWriteChain
+        historyWriteChain = Task {
+            #if os(iOS)
+            defer { backgroundTask.finish() }
+            #endif
+            await previous?.value
+            #if os(iOS)
+            guard backgroundTask.isActive else { return }
+            #endif
+            await body()
         }
     }
 
