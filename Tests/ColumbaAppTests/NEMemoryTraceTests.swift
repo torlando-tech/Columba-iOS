@@ -348,6 +348,27 @@ final class NEMemoryTraceTests: XCTestCase {
         )
     }
 
+    /// ...and the guard's other half: after a clean stop, the stale live record
+    /// must stay out of the ring — appending it after the `.stop` marker would
+    /// make the generation's last record a `.live` and read as a kill.
+    func testBootDoesNotFlushStaleLiveSlotAfterCleanStop() {
+        NEMemoryTrace.clear()
+        NEMemoryTrace.appendRecords([
+            makeRecord(.bucket, pid: 424_242, at: 10, footprint: megabytes(33)),
+            makeRecord(.stop, pid: 424_242, at: 40, footprint: megabytes(34)),
+        ])
+        NEMemoryTrace.writeLiveRecord(makeRecord(.live, pid: 424_242, at: 30, footprint: megabytes(33)))
+
+        NEMemoryTrace.start()
+        NEMemoryTrace.stopSampling()
+
+        let records = NEMemoryTrace.readAll().records
+        XCTAssertFalse(
+            records.contains { $0.kind == .live },
+            "a live record older than its generation's stop marker must not be re-appended"
+        )
+    }
+
     // MARK: - Stop reason names
 
     /// The `.stop` marker's raw value is displayed verbatim in the Memory Usage

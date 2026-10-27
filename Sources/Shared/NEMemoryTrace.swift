@@ -370,16 +370,32 @@ public enum NEMemoryTrace {
     /// newest generation, so a relaunched process must copy its predecessor's
     /// live record into the ring or that reading is lost when the slot is
     /// overwritten. Same-pid live slots (in-process tunnel restart) keep
-    /// merging, so only foreign pids are flushed. Caller must hold `lock`.
+    /// merging, so only foreign pids are flushed. Skipped when the ring's last
+    /// record is already at least as new: the generation stopped cleanly (its
+    /// `.stop` marker postdates the last live write, and appending the live
+    /// record after the marker would read as a kill), or a previous boot
+    /// already flushed this record. Caller must hold `lock`.
     private static func flushForeignLiveLocked() {
         guard let url = fileURL,
               let data = try? Data(contentsOf: url),
               data.count >= Int(liveSlotOffset) + recordSize,
               let live = decodeRecord(slice(data, Int(liveSlotOffset), recordSize)),
-              live.pid != UInt32(getpid()) else { return }
+              live.pid != UInt32(getpid()),
+              lastRingRecordLocked(data).map({ live.wallMs > $0.wallMs }) ?? true else { return }
         var header = readHeader()
         append(live, header: &header)
         writeHeader(header)
+    }
+
+    /// The newest decodable ring record, or nil when the ring is empty or its
+    /// tail is torn (a kill during the write — treat as unknown, flush).
+    private static func lastRingRecordLocked(_ data: Data) -> Record? {
+        guard let header = decodeHeader(data) else { return nil }
+        let filled = min(Int(header.recordCount), ringCapacity)
+        guard filled > 0 else { return nil }
+        let start = header.recordCount >= UInt32(ringCapacity) ? Int(header.writeIndex) : 0
+        let slot = (start + filled - 1) % ringCapacity
+        return decodeRecord(slice(data, Int(ringStartOffset) + slot * recordSize, recordSize))
     }
 
     private static func appendMarkerLocked(kind: Kind, reason: UInt32) {
