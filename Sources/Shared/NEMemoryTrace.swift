@@ -595,7 +595,7 @@ public enum NEMemoryTrace {
             let expectedSize = Int(headerSize) + recordSize * (1 + ringCapacity)
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path))
                 .flatMap { $0[.size] as? Int } ?? 0
-            guard size == expectedSize else {
+            if size != expectedSize {
                 try? FileManager.default.removeItem(at: url)
             }
             if FileManager.default.fileExists(atPath: url.path) {
