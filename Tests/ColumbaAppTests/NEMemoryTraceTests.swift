@@ -51,13 +51,15 @@ final class NEMemoryTraceTests: XCTestCase {
         windowMax: UInt64 = 0,
         lifetimePeak: UInt64 = 0,
         limit: UInt64 = 0,
+        disk: UInt64 = 0,
         reason: UInt32 = 0
     ) -> NEMemoryTrace.Record {
         NEMemoryTrace.Record(
             kind: kind, reason: reason,
             wallMs: wall(seconds), uptimeMs: Int64((overrideUptime ?? seconds) * 1000),
             footprint: footprint, windowMax: windowMax,
-            lifetimePeak: lifetimePeak, limitRemaining: limit, pid: pid
+            lifetimePeak: lifetimePeak, limitRemaining: limit,
+            diskWritten: disk, pid: pid
         )
     }
 
@@ -68,7 +70,8 @@ final class NEMemoryTraceTests: XCTestCase {
             kind: .stop, reason: 12,
             wallMs: wall(7), uptimeMs: -4_294_967_296,
             footprint: megabytes(47), windowMax: 1 << 40,
-            lifetimePeak: 1 << 41, limitRemaining: 1 << 42, pid: 42_424_242
+            lifetimePeak: 1 << 41, limitRemaining: 1 << 42,
+            diskWritten: 0xF0F1_F2F3_F4F5_F6F7, pid: 42_424_242
         )
         XCTAssertEqual(NEMemoryTrace.decodeRecord(NEMemoryTrace.encodeRecord(original)), original)
     }
@@ -84,6 +87,28 @@ final class NEMemoryTraceTests: XCTestCase {
 
     func testEmptySlotIsRejected() {
         XCTAssertNil(NEMemoryTrace.decodeRecord(Data(count: NEMemoryTrace.recordSize)))
+    }
+
+    /// A trace file from an incompatible layout (an older build's ring) has a
+    /// different size, so slot addressing differs. The writer must drop and
+    /// recreate it rather than interleave two layouts; the reader must see the
+    /// new records, not garbage from the old geometry.
+    func testForeignLayoutFileIsDroppedAndRecreated() throws {
+        // A v1 ring: same header geometry, but 64 B records — a different size
+        // than this build writes.
+        let v1RecordSize = 64
+        var legacy = Data(count: NEMemoryTrace.headerSize)
+        legacy.writeLE(NEMemoryTrace.magic, at: NEMemoryTrace.offMagic, width: 4)
+        legacy.writeLE(1, at: NEMemoryTrace.offVersion, width: 2)
+        legacy.writeLE(UInt64(v1RecordSize), at: NEMemoryTrace.offRecordSize, width: 2)
+        legacy.writeLE(UInt64(NEMemoryTrace.ringCapacity), at: NEMemoryTrace.offCapacity, width: 4)
+        legacy.append(Data(count: v1RecordSize * (1 + NEMemoryTrace.ringCapacity)))
+        try legacy.write(to: fileURL, options: [.atomic])
+
+        NEMemoryTrace.appendRecords([makeRecord(.bucket, pid: 1, at: 1, footprint: megabytes(10))])
+
+        let trace = NEMemoryTrace.readAll()
+        XCTAssertEqual(trace.records.map { $0.footprint }, [megabytes(10)])
     }
 
     func testShortBufferIsRejected() {
@@ -147,9 +172,9 @@ final class NEMemoryTraceTests: XCTestCase {
 
     func testGenerationWithoutStopMarkerIsAttributedAsKill() throws {
         let trace = traceOf([
-            makeRecord(.boot, pid: 100, at: 0, footprint: megabytes(8), lifetimePeak: megabytes(8)),
-            makeRecord(.bucket, pid: 100, at: 10, footprint: megabytes(20), lifetimePeak: megabytes(20)),
-            makeRecord(.bucket, pid: 100, at: 20, footprint: megabytes(45), lifetimePeak: megabytes(49)),
+            makeRecord(.boot, pid: 100, at: 0, footprint: megabytes(8), lifetimePeak: megabytes(8), disk: 100 * 1024),
+            makeRecord(.bucket, pid: 100, at: 10, footprint: megabytes(20), lifetimePeak: megabytes(20), disk: 300 * 1024),
+            makeRecord(.bucket, pid: 100, at: 20, footprint: megabytes(45), lifetimePeak: megabytes(49), disk: 700 * 1024),
             makeRecord(.boot, pid: 200, at: 30, footprint: megabytes(9), lifetimePeak: megabytes(9)),
             makeRecord(.bucket, pid: 200, at: 40, footprint: megabytes(12), lifetimePeak: megabytes(12)),
         ])
@@ -160,6 +185,15 @@ final class NEMemoryTraceTests: XCTestCase {
         XCTAssertEqual(kill.date, base.addingTimeInterval(20), "attributed to the last sample the dead process wrote")
         XCTAssertEqual(kill.lastSeenMB ?? -1, 45.0, accuracy: 0.001)
         XCTAssertEqual(kill.peakMB ?? -1, 49.0, accuracy: 0.001, "peak comes from the lifetime peak, not the last sample")
+        // Cumulative counter, so the generation total is last − first (the boot
+        // marker's 100 KB is part of what that process wrote).
+        XCTAssertEqual(kill.diskWrittenMB ?? -1, 600.0 * 1024 / 1_048_576, accuracy: 0.001)
+        // Rate between the last two plotted points of the killed generation.
+        let points = summary.points.filter { $0.pid == 100 }
+        XCTAssertEqual(points.last?.diskRateKBs ?? -1, 40.0, accuracy: 0.001, "(700−300) KB over 10 s")
+        // A new process restarts the counter; its first point has no rate.
+        XCTAssertEqual(summary.points.last?.diskWrittenMB ?? -1, 0, accuracy: 0.001)
+        XCTAssertNil(summary.points.last?.diskRateKBs)
         XCTAssertEqual(summary.restarts24h, 2)
         XCTAssertEqual(summary.current?.footprintMB ?? -1, 12.0, accuracy: 0.001)
     }

@@ -58,14 +58,17 @@ public enum NEMemoryTrace {
     /// File magic — a mismatch means "written by an incompatible build", so the
     /// reader returns empty instead of misreading stale bytes.
     static let magic: UInt64 = 0x544D4243 // "CBMT"
-    static let layoutVersion: UInt64 = 1
+    static let layoutVersion: UInt64 = 2
 
     /// Byte size of one record / of the header. Fixed, so slot N always lives at
     /// the same offset and a killed writer can never shift the addressing.
-    static let recordSize = 64
+    /// v2 grew the record by 8 B for `diskWritten` (see the field doc); an
+    /// on-disk v1 file has a different size and is dropped on first open (see
+    /// `ensureFile`) — it is diagnostic data, not state worth migrating.
+    static let recordSize = 72
     static let headerSize = 64
 
-    /// Ring capacity in records. 8192 × 64 B = 512 KB sparse file; at the 1/min
+    /// Ring capacity in records. 8192 × 72 B ≈ 576 KB sparse file; at the 1/min
     /// idle flush cadence that is ~5.6 days of history.
     static let defaultRingCapacity = 8192
 
@@ -92,8 +95,9 @@ public enum NEMemoryTrace {
     static let offWindowMax = 32      // u64
     static let offLifetimePeak = 40   // u64
     static let offLimitRemaining = 48 // u64
-    static let offPid = 56            // u32
-    static let offChecksum = 60       // u32 (FNV-1a over bytes 0..<60)
+    static let offDiskWritten = 56    // u64 (cumulative bytes written to disk)
+    static let offPid = 64            // u32
+    static let offChecksum = 68       // u32 (FNV-1a over bytes 0..<68)
 
     /// Header field offsets.
     static let offMagic = 0           // u32
@@ -158,6 +162,14 @@ public enum NEMemoryTrace {
         public let lifetimePeak: UInt64
         /// `limit_bytes_remaining`; 0 means unknown (see file header).
         public let limitRemaining: UInt64
+        /// Cumulative bytes this process has written to disk at record time
+        /// (`proc_pid_rusage` → `ri_diskio_byteswritten`). Monotonic within a
+        /// generation; resets to ~0 at each process start, so per-generation
+        /// totals are `last − first` and per-interval rates are the delta
+        /// between consecutive records. This is the volume the OS disk-writes
+        /// resource limit measures (the `.ips` reports), whose breach gets the
+        /// NE throttled or killed.
+        public let diskWritten: UInt64
         /// Process generation. A pid change with no `.stop` record between is the
         /// kill tell, and it survives even a kill before the boot marker landed.
         public let pid: UInt32
@@ -165,7 +177,7 @@ public enum NEMemoryTrace {
         public init(
             kind: Kind, reason: UInt32, wallMs: Int64, uptimeMs: Int64,
             footprint: UInt64, windowMax: UInt64, lifetimePeak: UInt64,
-            limitRemaining: UInt64, pid: UInt32
+            limitRemaining: UInt64, diskWritten: UInt64 = 0, pid: UInt32
         ) {
             self.kind = kind
             self.reason = reason
@@ -175,6 +187,7 @@ public enum NEMemoryTrace {
             self.windowMax = windowMax
             self.lifetimePeak = lifetimePeak
             self.limitRemaining = limitRemaining
+            self.diskWritten = diskWritten
             self.pid = pid
         }
     }
@@ -304,6 +317,7 @@ public enum NEMemoryTrace {
             guard isRunning(generation: generation) else { return }
 
             let snap = MemoryFootprint.sample()
+            let disk = DiskIO.sample()
             let now = Clocks.now()
             let pid = UInt32(getpid())
             // A jump is measured against what the last bucket recorded, so a
@@ -320,7 +334,9 @@ public enum NEMemoryTrace {
                     wallMs: now.wallMs, uptimeMs: now.uptimeMs,
                     footprint: snap.footprint, windowMax: windowMax,
                     lifetimePeak: snap.lifetimePeak,
-                    limitRemaining: snap.limitRemaining, pid: pid
+                    limitRemaining: snap.limitRemaining,
+                    diskWritten: disk.writtenBytes,
+                    pid: pid
                 ))
                 lastLiveUptimeMs = now.uptimeMs
             }
@@ -331,7 +347,9 @@ public enum NEMemoryTrace {
                     wallMs: now.wallMs, uptimeMs: now.uptimeMs,
                     footprint: snap.footprint, windowMax: windowMax,
                     lifetimePeak: snap.lifetimePeak,
-                    limitRemaining: snap.limitRemaining, pid: pid
+                    limitRemaining: snap.limitRemaining,
+                    diskWritten: disk.writtenBytes,
+                    pid: pid
                 ), header: &header)
                 writeHeader(header)
                 lastFlushUptimeMs = now.uptimeMs
@@ -400,6 +418,7 @@ public enum NEMemoryTrace {
 
     private static func appendMarkerLocked(kind: Kind, reason: UInt32) {
         let snap = MemoryFootprint.sample()
+        let disk = DiskIO.sample()
         let now = Clocks.now()
         var header = readHeader()
         if kind == .boot { header.bootCount &+= 1 }
@@ -409,6 +428,7 @@ public enum NEMemoryTrace {
             footprint: snap.footprint, windowMax: snap.lifetimePeak,
             lifetimePeak: snap.lifetimePeak,
             limitRemaining: snap.limitRemaining,
+            diskWritten: disk.writtenBytes,
             pid: UInt32(getpid())
         ), header: &header)
         writeHeader(header)
@@ -513,6 +533,7 @@ public enum NEMemoryTrace {
         out.writeLE(record.windowMax, at: offWindowMax, width: 8)
         out.writeLE(record.lifetimePeak, at: offLifetimePeak, width: 8)
         out.writeLE(record.limitRemaining, at: offLimitRemaining, width: 8)
+        out.writeLE(record.diskWritten, at: offDiskWritten, width: 8)
         out.writeLE(UInt64(record.pid), at: offPid, width: 4)
         out.writeLE(UInt64(checksum(of: out)), at: offChecksum, width: 4)
         return out
@@ -551,6 +572,7 @@ public enum NEMemoryTrace {
             windowMax: readLE(data, offWindowMax, 8),
             lifetimePeak: readLE(data, offLifetimePeak, 8),
             limitRemaining: readLE(data, offLimitRemaining, 8),
+            diskWritten: readLE(data, offDiskWritten, 8),
             pid: UInt32(truncatingIfNeeded: readLE(data, offPid, 4))
         )
     }
@@ -566,11 +588,23 @@ public enum NEMemoryTrace {
             .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication
         ]
         if FileManager.default.fileExists(atPath: url.path) {
-            // Re-assert on every open: a file created by another process (or an
-            // older build) may carry default protection, which blocks writes on a
-            // locked device. Cheap and idempotent.
-            try? FileManager.default.setAttributes(attributes, ofItemAtPath: url.path)
-            return true
+            // Reject a file whose size does not match THIS build's layout (a v1
+            // ring from an older build, or a torn creation): slot addressing
+            // differs, so writing would interleave two layouts. The trace is
+            // diagnostics, not state — drop and recreate rather than migrate.
+            let expectedSize = Int(headerSize) + recordSize * (1 + ringCapacity)
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path))
+                .flatMap { $0[.size] as? Int } ?? 0
+            guard size == expectedSize else {
+                try? FileManager.default.removeItem(at: url)
+            }
+            if FileManager.default.fileExists(atPath: url.path) {
+                // Re-assert on every open: a file created by another process (or
+                // an older build) may carry default protection, which blocks
+                // writes on a locked device. Cheap and idempotent.
+                try? FileManager.default.setAttributes(attributes, ofItemAtPath: url.path)
+                return true
+            }
         }
         // Header + live slot + a zero-filled ring. The zero fill is what makes a
         // never-written slot distinguishable from a corrupt one, and it is written
@@ -689,6 +723,49 @@ enum MemoryFootprint {
             lifetimePeak: UInt64(bitPattern: info.ledger_phys_footprint_peak),
             limitRemaining: UInt64(info.limit_bytes_remaining)
         )
+    }
+}
+
+// MARK: - Disk I/O sampling
+
+/// Cumulative disk-write counter for THIS process, from
+/// `proc_pid_rusage(RUSAGE_INFO_V6)`. `ri_diskio_byteswritten` counts physical
+/// writes after page-cache writeback — the closest public probe to the
+/// "file backed memory dirtied" volume the OS disk-writes resource limit
+/// measures (the `*.diskwrites_resource` `.ips` reports).
+///
+/// `proc_pid_rusage` is NOT declared in the iOS SDK's headers (libproc.h ships
+/// only on macOS), but the symbol has been in libsystem since iOS 8 and is
+/// callable for the current process without entitlement — resolve it once via
+/// `dlsym(RTLD_DEFAULT, …)`. Reading your own rusage needs no privilege.
+enum DiskIO {
+
+    struct Snapshot: Equatable, Sendable {
+        /// Physical bytes written since process start.
+        var writtenBytes: UInt64 = 0
+        /// Logical writes (the dirtying-side counter, same source).
+        var logicalWrites: UInt64 = 0
+    }
+
+    private typealias ProcPidRusageFn = @convention(c) (Int32, Int32, UnsafeMutableRawPointer) -> Int32
+
+    private static let procPidRusage: ProcPidRusageFn? = {
+        // NULL handle = RTLD_DEFAULT: search the global symbol scope, where
+        // libsystem_kernel/libproc are always present.
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: 0), "proc_pid_rusage") else {
+            return nil
+        }
+        return unsafeBitCast(sym, to: ProcPidRusageFn.self)
+    }()
+
+    static func sample() -> Snapshot {
+        guard let fn = procPidRusage else { return Snapshot() }
+        var info = rusage_info_v6()
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            fn(getpid(), RUSAGE_INFO_V6, UnsafeMutableRawPointer(pointer))
+        }
+        guard result == 0 else { return Snapshot() }
+        return Snapshot(writtenBytes: info.ri_diskio_byteswritten, logicalWrites: info.ri_logical_writes)
     }
 }
 

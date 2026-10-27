@@ -41,6 +41,14 @@ enum NEMemoryHistory {
         let footprintMB: Double
         /// Highest footprint inside the window (MB) — the spike envelope.
         let windowMaxMB: Double
+        /// Cumulative bytes this generation had written to disk at this point
+        /// (MB); monotonic within a segment, resets at a process restart.
+        let diskWrittenMB: Double
+        /// Disk-write rate over the interval since the previous point in the
+        /// same segment (KB/s); nil for a segment's first point. Sustained rate
+        /// above `dailyDiskWriteBudgetBytes / 86_400` is what gets the NE
+        /// killed by the disk-writes resource limit.
+        let diskRateKBs: Double?
         let segment: Int
         let pid: UInt32
     }
@@ -64,6 +72,9 @@ enum NEMemoryHistory {
         /// Headroom to the limit at the last sample (MB); nil when the OS
         /// reported no limit for this process.
         let headroomMB: Double?
+        /// Total bytes that generation wrote to disk (MB), when the trace
+        /// carries the counter; nil for boot markers and pre-v2 rings.
+        let diskWrittenMB: Double?
     }
 
     /// The newest generation, while it is still up.
@@ -159,6 +170,13 @@ enum NEMemoryHistory {
 
     static let daySeconds: TimeInterval = 86_400
 
+    /// Daily disk-write budget for a background process, as the OS states it in
+    /// the `*.diskwrites_resource` `.ips` reports pulled off the iPhone 14
+    /// ("limit of 12,137 KB … over 86400 seconds" — ~0.14 KB/s sustained). The
+    /// reference line the disk chart draws; a generation whose cumulative
+    /// writes cross this gets throttled, then killed.
+    static let dailyDiskWriteBudgetBytes: UInt64 = 12_137 * 1024
+
     // MARK: - Analysis
 
     /// Whether the tunnel process is believed alive, gone, or mid-transition.
@@ -216,10 +234,19 @@ enum NEMemoryHistory {
             if let first = generation.first, first.kind == .boot {
                 events.append(Event(
                     id: eventId, date: date(fromMs: first.wallMs), kind: .boot,
-                    lastSeenMB: nil, peakMB: nil, headroomMB: nil
+                    lastSeenMB: nil, peakMB: nil, headroomMB: nil, diskWrittenMB: nil
                 ))
                 eventId += 1
             }
+
+            // Per-generation disk total: `last − first` of the cumulative
+            // counter. `first.diskWritten == 0` also covers a pre-v2 ring, where
+            // no record ever carries the counter.
+            let diskTotalMB: Double? = {
+                let firstDisk = generation[0].diskWritten
+                guard last.diskWritten > firstDisk else { return nil }
+                return megabytes(last.diskWritten - firstDisk)
+            }()
 
             if killed {
                 // The best number for "what was it using when it got killed":
@@ -237,7 +264,8 @@ enum NEMemoryHistory {
                     id: eventId, date: date(fromMs: last.wallMs), kind: .kill,
                     lastSeenMB: megabytes(lastSeen),
                     peakMB: peak > 0 ? megabytes(peak) : nil,
-                    headroomMB: last.limitRemaining > 0 ? megabytes(last.limitRemaining) : nil
+                    headroomMB: last.limitRemaining > 0 ? megabytes(last.limitRemaining) : nil,
+                    diskWrittenMB: diskTotalMB
                 ))
                 eventId += 1
             } else if endedCleanly {
@@ -246,10 +274,17 @@ enum NEMemoryHistory {
                     kind: .cleanStop(reason: Int(last.reason)),
                     lastSeenMB: megabytes(last.footprint),
                     peakMB: last.lifetimePeak > 0 ? megabytes(last.lifetimePeak) : nil,
-                    headroomMB: last.limitRemaining > 0 ? megabytes(last.limitRemaining) : nil
+                    headroomMB: last.limitRemaining > 0 ? megabytes(last.limitRemaining) : nil,
+                    diskWrittenMB: diskTotalMB
                 ))
                 eventId += 1
             }
+
+            // The disk counter resets at process start, so rate and total are
+            // per-generation. `previousPlotted` is the last plotted record in
+            // THIS generation: its delta covers exactly the interval between
+            // plotted points, with no live/bucket double counting.
+            var previousPlotted: (date: Date, disk: UInt64)?
 
             for record in generation {
                 let date = date(fromMs: record.wallMs)
@@ -275,10 +310,20 @@ enum NEMemoryHistory {
                 // the process-LIFETIME peak, so plotting it would draw a spike at
                 // every boot and teardown instead of a window maximum.
                 guard record.kind == .bucket || record.kind == .live else { continue }
+                var diskRateKBs: Double?
+                if let previous = previousPlotted, record.diskWritten >= previous.disk {
+                    let interval = date.timeIntervalSince(previous.date)
+                    if interval > 0 {
+                        diskRateKBs = Double(record.diskWritten - previous.disk) / 1024 / interval
+                    }
+                }
+                previousPlotted = (date, record.diskWritten)
                 points.append(Point(
                     id: pointId, date: date,
                     footprintMB: megabytes(record.footprint),
                     windowMaxMB: megabytes(record.windowMax),
+                    diskWrittenMB: megabytes(record.diskWritten),
+                    diskRateKBs: diskRateKBs,
                     segment: segment, pid: record.pid
                 ))
                 pointId += 1

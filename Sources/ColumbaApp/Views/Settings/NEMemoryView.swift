@@ -60,6 +60,7 @@ struct NEMemoryView: View {
                 statsRow
                 rangePicker
                 chartCard
+                diskChartCard
                 explainer
             }
             .padding(20)
@@ -107,6 +108,11 @@ struct NEMemoryView: View {
 
                 if let headroom = kill.headroomMB {
                     Text("\(formatMB(headroom)) of headroom was left at the last sample.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                if let disk = kill.diskWrittenMB {
+                    Text("It wrote \(String(format: "%.1f", disk)) MB to disk during its run — the daily budget iOS enforces on background processes is \(String(format: "%.1f", Double(NEMemoryHistory.dailyDiskWriteBudgetBytes) / 1_048_576)) MB.")
                         .font(.footnote)
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -264,6 +270,54 @@ struct NEMemoryView: View {
         }
     }
 
+    /// Cumulative disk writes vs the daily budget the OS enforces. The y-value
+    /// is a running total (resets at each process restart, hence one line per
+    /// segment), so the slope IS the write rate — a flat line means nothing is
+    /// being written, and crossing the dashed line is what gets the process
+    /// throttled, then killed.
+    @ViewBuilder private var diskChartCard: some View {
+        if !visiblePoints.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Disk writes").font(.headline)
+                Chart {
+                    ForEach(visiblePoints) { point in
+                        LineMark(
+                            x: .value("Time", point.date),
+                            y: .value("Written", point.diskWrittenMB),
+                            series: .value("Run", "\(point.segment)")
+                        )
+                        .foregroundStyle(Theme.accentColor)
+                        .interpolationMethod(.linear)
+                    }
+                    RuleMark(y: .value("Daily budget", diskBudgetMB))
+                        .foregroundStyle(Color.orange)
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .annotation(position: .top, alignment: .leading) {
+                            Text("daily budget")
+                                .font(.caption2)
+                                .foregroundStyle(Color.orange)
+                        }
+                }
+                .chartYAxisLabel("MB", position: .leading)
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                        AxisGridLine()
+                        AxisValueLabel(format: .dateTime.hour().day())
+                    }
+                }
+                .frame(height: 140)
+                .accessibilityIdentifier("ne_disk_chart")
+
+                Text("Cumulative bytes the background transport has written to disk since it started — one line per process run. The dashed line is the per-day write budget iOS enforces; breaching it throttles the process, and continued breaches kill it.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard()
+        }
+    }
+
     private var explainer: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("About this data").font(.headline)
@@ -301,6 +355,11 @@ struct NEMemoryView: View {
         let limit = current.footprintMB + headroom
         // A zero/near-zero headroom reading means iOS reported no usable limit.
         return limit > current.footprintMB + 1 ? limit : nil
+    }
+
+    /// The daily disk-write budget the OS enforces on this process class, in MB.
+    private var diskBudgetMB: Double {
+        Double(NEMemoryHistory.dailyDiskWriteBudgetBytes) / 1_048_576
     }
 
     private func formatMB(_ value: Double?) -> String {
