@@ -283,13 +283,17 @@ struct NEMemoryView: View {
                 Text("Disk writes").font(.headline)
                 Chart {
                     ForEach(visiblePoints) { point in
-                        LineMark(
-                            x: .value("Time", point.date),
-                            y: .value("Rate", point.diskRateKBs),
-                            series: .value("Run", "\(point.segment)")
-                        )
-                        .foregroundStyle(Theme.accentColor)
-                        .interpolationMethod(.linear)
+                        // A point with no rate (segment start, or a failed
+                        // probe) plots nothing rather than a fake zero.
+                        if let rate = point.diskRateKBs {
+                            LineMark(
+                                x: .value("Time", point.date),
+                                y: .value("Rate", rate),
+                                series: .value("Run", "\(point.segment)")
+                            )
+                            .foregroundStyle(Theme.accentColor)
+                            .interpolationMethod(.linear)
+                        }
                     }
                     RuleMark(y: .value("Budget rate", diskBudgetKBs))
                         .foregroundStyle(Color.orange)
