@@ -1759,44 +1759,49 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
 
 
 # [MEM-LIMITS] Caps for the RNS tables that otherwise keep one record per peer
-# ever heard. RNS 1.6.0 has NO config key for any of these -- every
-# [reticulum] option lives in Reticulum.py:465-731 and none of them bounds the
-# path table -- but they are plain `RNS.Transport` class attributes read at use
-# time, so a host can bound them without patching the fork.
+# ever heard. RNS has NO config key for any of these -- every [reticulum]
+# option lives in Reticulum.py's config block and none of them bounds the path
+# table -- but they are plain `RNS.Transport` class attributes read at use time,
+# so a host can bound them without patching the fork.
 #
 # Why they are needed (2026-10-27 overnight trace): the NE footprint climbed
 # 21.2 MB -> 48.3 MB in 12 h with `limit_bytes_remaining` down to 1.7 MB at the
 # stop marker. The Linux harness reproduces it: `known_destinations` +
 # `path_table` + `path_states` retain ~967 B of live objects (424 B RSS) per
-# never-before-seen peer, and the only bound RNS applies by default is
-# PATH_TIMEOUT = 7 days, which an overnight run never reaches.
+# never-before-seen peer, the hub feeds ~1 new peer/s, and the only bound RNS
+# applies by default is a 7-day path timeout, which an overnight run never
+# reaches (12 h at 1/s is ~40k peers).
 #
-# Every value below is enforced by an existing RNS cull loop
-# (Transport.py:1057 unused-pool target, Transport.py:938 path-state/reverse
-# cull, Identity.py:404 known-destination cull, Transport.py:2424 blob trim) --
-# only the threshold changes, not the policy.
+# Every value below is enforced by an existing RNS cull loop -- only the
+# threshold changes, not the policy. The NAMES differ by RNS version, so each
+# cap is applied only when the running RNS actually defines it (see
+# `_apply_memory_limits`): the payload on a device is whatever
+# `support/fetch-wheels.sh` unpacked, and RNS <= 1.5.x calls the path timeout
+# `DESTINATION_TIMEOUT` while 1.6.0 renamed it to `PATH_TIMEOUT` and added the
+# unused-pool target. Writing a name the running RNS never reads would make the
+# `[MEM] limits` line lie, so absent names are reported as skipped instead.
 #
-# Caveat, and the reason PATH_TIMEOUT is the important one: `PATH_POOL_UNUSED_TARGET`
-# and both linger rules key off `path_used == 0`, so a peer we ever sent to
-# (Transport.py:1486 sets IDX_PT_USED) escapes them and is retained until
-# `path_expiry`, which is stamped from PATH_TIMEOUT at insert time
-# (Transport.py:3404). A week of retention is desktop policy; an hour is right
-# for a phone that can re-request a path on demand.
-_MEMORY_LIMITS: dict[str, int] = {
+# Caveat on 1.6.0: `PATH_POOL_UNUSED_TARGET` and both linger rules key off
+# `path_used == 0`, so a peer we ever sent to (Transport.py sets IDX_PT_USED)
+# escapes them and is retained until `path_expiry`, stamped from PATH_TIMEOUT at
+# insert time. A week of retention is desktop policy; an hour is right for a
+# phone that can re-request a path on demand.
+_MEMORY_LIMITS: tuple[tuple[str, int], ...] = (
+    # Path retention after the last announce/liveness event, used or not
+    # (default 7 days in both layouts). Bounds known_destinations too: a
+    # pathless record is dropped shortly after its path goes.
+    ("DESTINATION_TIMEOUT", 60 * 60),   # RNS <= 1.5.x
+    ("PATH_TIMEOUT", 60 * 60),          # RNS >= 1.6.0
     # Unused path-table entries retained before the pool cull kicks in
     # (default 2048; each entry drags a known_destinations record with it).
-    "PATH_POOL_UNUSED_TARGET": 512,
-    # Retainment of any path after its last verifiable liveness event, used or
-    # not (default 7 days). Also bounds known_destinations: a pathless record
-    # is dropped at PATH_TIMEOUT * 1.25 (Identity.py:408).
-    "PATH_TIMEOUT": 60 * 60,
+    ("PATH_POOL_UNUSED_TARGET", 512),   # RNS >= 1.6.0
     # Announce random blobs kept per destination (default 64 in memory / 32
-    # persisted). They are a dedupe window plus a max() timebase
-    # (Transport.py:3918), so trimming to the most recent 16 keeps both
-    # properties and cuts the largest per-peer term.
-    "MAX_RANDOM_BLOBS": 16,
-    "PERSIST_RANDOM_BLOBS": 16,
-}
+    # persisted). They are a dedupe window plus a max() timebase, so trimming to
+    # the most recent 16 keeps both properties and cuts the largest per-peer
+    # term (~10 B each, up to ~640 B per repeat announcer).
+    ("MAX_RANDOM_BLOBS", 16),
+    ("PERSIST_RANDOM_BLOBS", 16),
+)
 
 # Set COLUMBA_RNS_UNCAPPED=1 to run the uncapped defaults (A/B measurement).
 _MEMORY_LIMITS_DISABLED_ENV = "COLUMBA_RNS_UNCAPPED"
@@ -1805,8 +1810,9 @@ _MEMORY_LIMITS_DISABLED_ENV = "COLUMBA_RNS_UNCAPPED"
 def _apply_memory_limits() -> dict[str, int]:
     """Set the leaf-appropriate memory caps on `RNS.Transport`. Idempotent.
 
-    Must run before `RNS.Reticulum(...)` so that path expiry stamped at insert
-    time picks up PATH_TIMEOUT. Values are NOT reset on stop(): the class
+    Only attributes the running RNS already defines are written: a cap RNS does
+    not read is inert. Must run before `RNS.Reticulum(...)` because 1.6.0 stamps
+    path expiry at insert time. Values are NOT reset on stop(): the class
     attributes are process-global and a later start() without the caps would
     silently regrow.
     """
@@ -1814,8 +1820,10 @@ def _apply_memory_limits() -> dict[str, int]:
     if _os.environ.get(_MEMORY_LIMITS_DISABLED_ENV, "") not in ("", "0", "false"):
         return {}
     applied: dict[str, int] = {}
-    for name, value in _MEMORY_LIMITS.items():
+    for name, value in _MEMORY_LIMITS:
         try:
+            if not hasattr(RNS.Transport, name):
+                continue
             setattr(RNS.Transport, name, int(value))
             applied[name] = int(value)
         except Exception:
@@ -1889,8 +1897,10 @@ def _table_census() -> dict[str, int]:
             pass
 
     _count("path_table", "pt")
+    # `used` is IDX_PT_USED (7) only on RNS >= 1.6.0; older entries are 7 long
+    # and have no used marker, i.e. they have never been used.
     try:
-        counts["ptu"] = sum(1 for e in tr.path_table.values() if not e[7])
+        counts["ptu"] = sum(1 for e in tr.path_table.values() if len(e) <= 7 or not e[7])
     except Exception:
         pass
     # `known_destinations` lives on RNS.Identity (which owns its cull at
@@ -1930,10 +1940,15 @@ def _start_census_thread(applied_limits: dict[str, int]) -> None:
     if _CENSUS_STARTED[0]:
         return
     _CENSUS_STARTED[0] = True
-    if applied_limits:
-        line = "[MEM] limits " + " ".join(f"{k}={v}" for k, v in applied_limits.items())
-    else:
-        line = f"[MEM] limits uncapped ({_MEMORY_LIMITS_DISABLED_ENV} set)"
+    version = getattr(RNS, "__version__", None) or "unknown"
+    skipped = [name for name, _ in _MEMORY_LIMITS if name not in applied_limits]
+    parts = [f"rns={version}"]
+    parts += [f"{k}={v}" for k, v in applied_limits.items()]
+    if skipped:
+        parts.append("inert=" + ",".join(skipped))
+    line = "[MEM] limits " + " ".join(parts)
+    if not applied_limits:
+        line = f"[MEM] limits rns={version} uncapped ({_MEMORY_LIMITS_DISABLED_ENV} set)"
     print(line, flush=True)
     _diag_append(line)
 
