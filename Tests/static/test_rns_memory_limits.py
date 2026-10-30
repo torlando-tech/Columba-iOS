@@ -38,6 +38,7 @@ class FakeTransport16:
     PATH_TIMEOUT = 60 * 60 * 24 * 7
     MAX_RANDOM_BLOBS = 64
     PERSIST_RANDOM_BLOBS = 32
+    hashlist_maxsize = 1_000_000
 
 
 class FakeTransport14:
@@ -47,6 +48,7 @@ class FakeTransport14:
     DESTINATION_TIMEOUT = 60 * 60 * 24 * 7
     MAX_RANDOM_BLOBS = 64
     PERSIST_RANDOM_BLOBS = 32
+    hashlist_maxsize = 1_000_000
 
 
 def build_namespace(transport_cls=FakeTransport16):
@@ -91,6 +93,10 @@ class MemoryLimitTests(unittest.TestCase):
         self.assertEqual(transport.PATH_POOL_UNUSED_TARGET, 512)
         self.assertEqual(transport.MAX_RANDOM_BLOBS, 16)
         self.assertEqual(transport.PERSIST_RANDOM_BLOBS, 16)
+        # Both layouts read hashlist_maxsize at swap time, so the same cap
+        # bounds the 1.6.0 dense list and the 1.4.2 `set` alike.
+        self.assertEqual(applied['hashlist_maxsize'], 100_000)
+        self.assertEqual(transport.hashlist_maxsize, 100_000)
 
     def test_only_attributes_the_running_rns_defines_are_written(self):
         # The device payload ships RNS 1.4.2: no PATH_TIMEOUT, no pool target.
@@ -100,6 +106,7 @@ class MemoryLimitTests(unittest.TestCase):
         self.assertEqual(applied['DESTINATION_TIMEOUT'], 3600)
         self.assertEqual(self.ns['RNS'].Transport.DESTINATION_TIMEOUT, 3600)
         self.assertEqual(self.ns['RNS'].Transport.MAX_RANDOM_BLOBS, 16)
+        self.assertEqual(applied['hashlist_maxsize'], 100_000)
         self.assertNotIn('PATH_TIMEOUT', applied)
         self.assertNotIn('PATH_POOL_UNUSED_TARGET', applied)
         self.assertFalse(hasattr(self.ns['RNS'].Transport, 'PATH_TIMEOUT'))
@@ -119,6 +126,7 @@ class MemoryLimitTests(unittest.TestCase):
         transport = self.ns['RNS'].Transport
         self.assertEqual(transport.PATH_TIMEOUT, 60 * 60 * 24 * 7)
         self.assertEqual(transport.PATH_POOL_UNUSED_TARGET, 2048)
+        self.assertEqual(transport.hashlist_maxsize, 1_000_000)
 
     @unittest.skipUnless(importlib.util.find_spec('RNS'), 'RNS not installed')
     def test_every_limit_names_a_real_transport_attribute(self):

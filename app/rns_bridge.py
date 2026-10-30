@@ -1801,6 +1801,14 @@ _MEMORY_LIMITS: tuple[tuple[str, int], ...] = (
     # term (~10 B each, up to ~640 B per repeat announcer).
     ("MAX_RANDOM_BLOBS", 16),
     ("PERSIST_RANDOM_BLOBS", 16),
+    # Duplicate-packet filter window (default 1 000 000 hashes, swapped at half).
+    # 1.6.0 stores them densely (16 B each) so the default still means ~16 MB;
+    # 1.4.2 keeps a plain `set` of bytes, i.e. ~90 B each, so the same default is
+    # ~90 MB and jetsams long before the swap. Both layouts read the attribute at
+    # swap time, so the override bounds them alike. 100k at the observed ~400
+    # packets/min is a ~2 h window per generation - retransmits live in seconds,
+    # and announce replay is guarded by the random-blob timebase, not this list.
+    ("hashlist_maxsize", 100_000),
 )
 
 # Set COLUMBA_RNS_UNCAPPED=1 to run the uncapped defaults (A/B measurement).
