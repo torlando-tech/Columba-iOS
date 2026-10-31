@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import copy
 import ctypes
+import gc
 import json
 import os
 import queue
+import resource
 import sqlite3
 import threading
 import time
+import tracemalloc
 import types
 from typing import Any
 
@@ -353,7 +356,17 @@ def _put(kind: str, **payload: Any) -> None:
         # on the ping (immediately while open) or on launch / foreground (catch-up),
         # feeding the `backend.events` stream (path table, proof checkmarks, ...).
         # No poll. Best-effort: a failure must never crash the RNS/LXMF callback.
-        if kind != "inbound":
+        if kind == "announce":
+            # Announces are the flood: a hub mesh delivers ~1/s, and EVERY one
+            # used to get its own row + WAL commit. Measured on the real bridge
+            # (40 announces at 0.6/s): 12.5 kB written per announce, i.e. ~7.5
+            # kB/s at that rate — over half of iOS' 12.43 kB/s disk-writes
+            # budget before the extension's own storage writes are counted. On
+            # device the NE wrote 2136 MB in 12 h. Buffer instead: only the
+            # newest announce per destination is kept, and the buffer is flushed
+            # in ONE transaction per _ANNOUNCE_FLUSH_INTERVAL.
+            _queue_announce(payload)
+        elif kind != "inbound":
             _publish_durable(kind, payload)
     else:
         # In-process backend (Python runtime): in-memory queue drained directly by
@@ -594,6 +607,153 @@ def _publish_durable(kind: str, payload: dict) -> None:
         _post_link_events_ping()
     else:
         _coalesced_events_ping()
+
+
+# ── Announce event coalescing (NE write budget) ──────────────────────────────
+#
+# A hub-connected leaf receives ~1 announce/s. `_publish_durable` appends one row
+# with its own WAL commit per event; a suspended app then lets those rows pile up
+# (20k+ over a night) and every checkpoint rewrites the grown b-tree. Measured
+# against the real functions: 12.5 kB written per announce, versus ~0.4 kB for a
+# batched row. The NE's disk counter (its own rusage) read 2136 MB over 12 h,
+# about 4x iOS' ~1 GB/day disk-writes budget.
+#
+# So announces are coalesced, batched and bounded:
+#   * one entry per destination (the Network tab only ever shows the newest
+#     announce for a destination, and the app dedups by destination+time anyway),
+#   * ONE transaction per _ANNOUNCE_FLUSH_INTERVAL instead of one per announce,
+#   * at most _ANNOUNCE_ROWS_MAX rows retained, so a suspended app cannot grow
+#     the store without bound (the RNS path table remains the source of truth).
+_ANNOUNCE_FLUSH_INTERVAL = 10.0   # seconds between batched announce commits
+_ANNOUNCE_FLUSH_MAX = 512         # buffered destinations that force an early flush
+_ANNOUNCE_ROWS_MAX = 1024         # announce rows retained in `ne_inbox`
+# Backstop for every OTHER kind (delivery / state / link_*): those are drained by
+# the app, but a long suspension must not grow the store without bound. Sized well
+# above the announce cap so ordinary announce volume never evicts an unread event.
+_INBOX_ROWS_MAX = 8192
+_announce_buf: "dict[str, dict]" = {}
+_announce_buf_lock = threading.Lock()
+_announce_last_flush = 0.0
+_announce_flusher_started = False
+
+
+def _queue_announce(payload: dict) -> None:
+    """Buffer one announce event, flushing coalesced rows when due.
+
+    Called from RNS' announce-handler threads (one per announce), so it must stay
+    cheap: the JSON encoding and the SQLite work happen in `_append_announces`,
+    outside this lock. Never raises."""
+    global _announce_last_flush
+    try:
+        key = payload.get("dest_hash") or ""
+        batch = None
+        with _announce_buf_lock:
+            _announce_buf[key] = payload
+            due = (
+                len(_announce_buf) >= _ANNOUNCE_FLUSH_MAX
+                or time.time() - _announce_last_flush >= _ANNOUNCE_FLUSH_INTERVAL
+            )
+            if due:
+                _announce_last_flush = time.time()
+                batch = list(_announce_buf.values())
+                _announce_buf.clear()
+        # Arm the trailing flush OUTSIDE the buffer lock: it takes the same
+        # lock, and a plain Lock is not reentrant - arming while holding it
+        # wedged the announce-handler thread and stalled every announce.
+        if batch is None:
+            _ensure_announce_flusher()
+            return
+        _append_announces(batch)
+    except Exception as e:  # noqa: BLE001
+        RNS.log(f"rns_bridge: announce queue failed: {e}", RNS.LOG_ERROR)
+
+
+def _ensure_announce_flusher() -> None:
+    """Start the single trailing-flush timer thread (once). Without it, the tail
+    announce of a burst would sit in the buffer until the NEXT announce arrives."""
+    global _announce_flusher_started
+    with _announce_buf_lock:
+        if _announce_flusher_started:
+            return
+        _announce_flusher_started = True
+    threading.Thread(
+        target=_announce_flusher_loop, name="announce-flush", daemon=True
+    ).start()
+
+
+def _announce_flusher_loop() -> None:
+    """Flush the buffered announce batch once its window has elapsed.
+
+    1 s tick only; the batch itself is at most _ANNOUNCE_FLUSH_MAX destinations,
+    so this never competes with delivery work."""
+    while True:
+        try:
+            time.sleep(1.0)
+            if _announce_buf and (
+                time.time() - _announce_last_flush >= _ANNOUNCE_FLUSH_INTERVAL
+            ):
+                _flush_announces()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _flush_announces() -> None:
+    """Flush any buffered announces. Called on stop() so a clean teardown does not
+    drop the newest announce batch."""
+    global _announce_last_flush
+    with _announce_buf_lock:
+        if not _announce_buf:
+            return
+        _announce_last_flush = time.time()
+        batch = list(_announce_buf.values())
+        _announce_buf.clear()
+    _append_announces(batch)
+
+
+def _append_announces(batch: "list[dict]") -> None:
+    """Append a batch of announce events in one transaction, then bound retention."""
+    if _inbox_path is None or not batch:
+        return
+    with _inbox_lock:
+        _open_inbox()
+        if _inbox_conn is None:
+            return
+        try:
+            _inbox_conn.executemany(
+                "INSERT INTO ne_inbox (kind, payload, created_at) VALUES (?, ?, ?)",
+                [
+                    ("announce", json.dumps(p), float(p.get("t") or time.time()))
+                    for p in batch
+                ],
+            )
+            # Bound retention in the SAME transaction: no extra commit, no extra
+            # WAL frame. A NULL subquery (fewer rows than the cap) deletes nothing,
+            # because `seq <= NULL` is NULL.
+            #
+            # The announce cap is kind-scoped on BOTH sides. With the outer
+            # predicate left as `seq <= <announce cutoff>` over every row, a busy
+            # mesh (1024 announces ~ 18 min at hub rates) deleted unread
+            # delivery / state / link events the app had not drained yet, so a
+            # delivery update that arrived during a suspend could vanish before
+            # the app ever saw it.
+            _inbox_conn.execute(
+                "DELETE FROM ne_inbox WHERE kind = 'announce' AND seq <= ("
+                " SELECT seq FROM ne_inbox WHERE kind = 'announce'"
+                " ORDER BY seq DESC LIMIT 1 OFFSET ?)",
+                (_ANNOUNCE_ROWS_MAX,),
+            )
+            # Disk backstop across all kinds, oldest first.
+            _inbox_conn.execute(
+                "DELETE FROM ne_inbox WHERE seq <= ("
+                " SELECT seq FROM ne_inbox ORDER BY seq DESC LIMIT 1 OFFSET ?)",
+                (_INBOX_ROWS_MAX,),
+            )
+            _inbox_conn.commit()
+        except Exception as e:  # noqa: BLE001
+            RNS.log(f"rns_bridge: inbox append failed: {e}", RNS.LOG_ERROR)
+            return
+    # One ping per batch (still trailing-edge coalesced inside).
+    _coalesced_events_ping()
 
 
 # Bound both Python objects and the JSON copied/decoded across the NE/app seam.
@@ -1618,6 +1778,374 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     )
 
 
+# [MEM-LIMITS] Caps for the RNS tables that otherwise keep one record per peer
+# ever heard. RNS has NO config key for any of these -- every [reticulum]
+# option lives in Reticulum.py's config block and none of them bounds the path
+# table -- but they are plain `RNS.Transport` class attributes read at use time,
+# so a host can bound them without patching the fork.
+#
+# Why they are needed (2026-10-27 overnight trace): the NE footprint climbed
+# 21.2 MB -> 48.3 MB in 12 h with `limit_bytes_remaining` down to 1.7 MB at the
+# stop marker. The Linux harness reproduces it: `known_destinations` +
+# `path_table` + `path_states` retain ~967 B of live objects (424 B RSS) per
+# never-before-seen peer, the hub feeds ~1 new peer/s, and the only bound RNS
+# applies by default is a 7-day path timeout, which an overnight run never
+# reaches (12 h at 1/s is ~40k peers).
+#
+# Every value below is enforced by an existing RNS cull loop -- only the
+# threshold changes, not the policy. The NAMES differ by RNS version, so each
+# cap is applied only when the running RNS actually defines it (see
+# `_apply_memory_limits`): the payload on a device is whatever
+# `support/fetch-wheels.sh` unpacked, and RNS <= 1.5.x calls the path timeout
+# `DESTINATION_TIMEOUT` while 1.6.0 renamed it to `PATH_TIMEOUT` and added the
+# unused-pool target. Writing a name the running RNS never reads would make the
+# `[MEM] limits` line lie, so absent names are reported as skipped instead.
+#
+# Caveat on 1.6.0: `PATH_POOL_UNUSED_TARGET` and both linger rules key off
+# `path_used == 0`, so a peer we ever sent to (Transport.py sets IDX_PT_USED)
+# escapes them and is retained until `path_expiry`, stamped from PATH_TIMEOUT at
+# insert time. A week of retention is desktop policy; an hour is right for a
+# phone that can re-request a path on demand.
+_MEMORY_LIMITS: tuple[tuple[str, int], ...] = (
+    # Path retention after the last announce/liveness event, used or not
+    # (default 7 days in both layouts). Bounds known_destinations too: a
+    # pathless record is dropped shortly after its path goes.
+    ("DESTINATION_TIMEOUT", 60 * 60),   # RNS <= 1.5.x
+    ("PATH_TIMEOUT", 60 * 60),          # RNS >= 1.6.0
+    # Unused path-table entries retained before the pool cull kicks in
+    # (default 2048; each entry drags a known_destinations record with it).
+    ("PATH_POOL_UNUSED_TARGET", 512),   # RNS >= 1.6.0
+    # Announce random blobs kept per destination (default 64 in memory / 32
+    # persisted). They are a dedupe window plus a max() timebase, so trimming to
+    # the most recent 16 keeps both properties and cuts the largest per-peer
+    # term (~10 B each, up to ~640 B per repeat announcer).
+    ("MAX_RANDOM_BLOBS", 16),
+    ("PERSIST_RANDOM_BLOBS", 16),
+    # Duplicate-packet filter window (default 1 000 000 hashes, swapped at half).
+    # 1.6.0 stores them densely (16 B each) so the default still means ~16 MB;
+    # 1.4.2 keeps a plain `set` of bytes, i.e. ~90 B each, so the same default is
+    # ~90 MB and jetsams long before the swap. Both layouts read the attribute at
+    # swap time, so the override bounds them alike. 100k at the observed ~400
+    # packets/min is a ~2 h window per generation - retransmits live in seconds,
+    # and announce replay is guarded by the random-blob timebase, not this list.
+    ("hashlist_maxsize", 100_000),
+)
+
+# Set COLUMBA_RNS_UNCAPPED=1 to run the uncapped defaults (A/B measurement).
+_MEMORY_LIMITS_DISABLED_ENV = "COLUMBA_RNS_UNCAPPED"
+
+
+def _apply_memory_limits() -> dict[str, int]:
+    """Set the leaf-appropriate memory caps on `RNS.Transport`. Idempotent.
+
+    Only attributes the running RNS already defines are written: a cap RNS does
+    not read is inert. Must run before `RNS.Reticulum(...)` because 1.6.0 stamps
+    path expiry at insert time. Values are NOT reset on stop(): the class
+    attributes are process-global and a later start() without the caps would
+    silently regrow.
+    """
+    import os as _os
+    if _os.environ.get(_MEMORY_LIMITS_DISABLED_ENV, "") not in ("", "0", "false"):
+        return {}
+    applied: dict[str, int] = {}
+    for name, value in _MEMORY_LIMITS:
+        try:
+            if not hasattr(RNS.Transport, name):
+                continue
+            setattr(RNS.Transport, name, int(value))
+            applied[name] = int(value)
+        except Exception:
+            pass
+    return applied
+
+
+# [MEM] Periodic table census. The NE's footprint curve alone cannot say WHICH
+# table holds the bytes; this writes the counts next to the footprint ring so a
+# jetsam kill is attributable after the fact.
+#
+# Output goes to the NE's `ext-diag.log` (App-Group `Library/`), the file the app
+# mirrors into `Documents/ext-diag.log` every ~2 s and which is pullable with
+# `devicectl device copy from --domain-type appDataContainer`. PII-free: counts
+# only, no hashes, no paths.
+_CENSUS_EVERY_SECONDS = 60.0
+_CENSUS_STARTED = [False]
+
+
+def _ne_diag_path() -> str | None:
+    """Resolve the NE diagnostic log to append to, once per session.
+
+    `<config_dir>` is the per-identity RNS dir (AppGroupPaths: app-group root /
+    `Columba` / `python-<hash>`), so the App-Group root is two levels up and the
+    NE log the host app mirrors is `<root>/Library/ext-diag.log`. Fall back to a
+    sibling `mem-diag.log` when that Library dir is absent (in-process backend,
+    simulator) so census lines are still retrievable next to the config.
+    """
+    cfg = _state.get("config_dir")
+    if not cfg:
+        return None
+    if not _DIAG_PATH:
+        library = os.path.join(os.path.dirname(os.path.dirname(cfg)), "Library")
+        if os.path.isdir(library):
+            _DIAG_PATH.append(os.path.join(library, "ext-diag.log"))
+        else:
+            _DIAG_PATH.append(os.path.join(cfg, "mem-diag.log"))
+    return _DIAG_PATH[0]
+
+
+_DIAG_PATH: list[str] = []
+
+
+def _diag_append(line: str) -> bool:
+    """Append one line to the NE diagnostic log. Never raises."""
+    path = _ne_diag_path()
+    if not path:
+        return False
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S', time.localtime())}] {line}\n")
+        return True
+    except Exception:
+        return False
+
+
+def _table_census() -> dict[str, int]:
+    """Count the entries in every per-peer RNS table. Never raises."""
+    counts: dict[str, int] = {}
+    tr = getattr(RNS, "Transport", None)
+    if tr is None:
+        return counts
+
+    def _count(key: str, name: str, fn=None) -> None:
+        try:
+            source = getattr(tr, key, None)
+            if source is None:
+                return
+            counts[name] = int(fn(source)) if fn else len(source)
+        except Exception:
+            pass
+
+    _count("path_table", "pt")
+    # `used` is IDX_PT_USED (7) only on RNS >= 1.6.0; older entries are 7 long
+    # and have no used marker, i.e. they have never been used.
+    try:
+        counts["ptu"] = sum(1 for e in tr.path_table.values() if len(e) <= 7 or not e[7])
+    except Exception:
+        pass
+    # `known_destinations` lives on RNS.Identity (which owns its cull at
+    # Identity.py:404); its entries are [last_announce, packet_hash,
+    # public_key, app_data, used, ...] - the announce random-blob list is NOT
+    # there, it is path_table[IDX_PT_RANDBLOBS] (Transport.py:2331).
+    try:
+        counts["kd"] = len(RNS.Identity.known_destinations)
+    except Exception:
+        pass
+    try:
+        counts["blobs"] = sum(
+            len(e[4]) for e in tr.path_table.values()
+            if len(e) > 4 and isinstance(e[4], list)
+        )
+    except Exception:
+        pass
+    _count("path_states", "ps")
+    _count("announce_rate_table", "art")
+    _count("packet_hashlist", "phl")
+    _count("held_announces", "ha")
+    _count("reverse_table", "rt")
+    _count("link_table", "lt")
+    _count("tunnels", "tuns")
+    _count("path_requests", "preq")
+    _count("announce_table", "at")
+    _count("interfaces", "ifs")
+    return counts
+
+
+def _census_line(counts: dict[str, int]) -> str:
+    return "[MEM] " + " ".join(f"{k}={v}" for k, v in counts.items())
+
+
+def _start_census_thread(applied_limits: dict[str, int]) -> None:
+    """Emit a `[MEM]` census line every minute. Idempotent per process."""
+    if _CENSUS_STARTED[0]:
+        return
+    _CENSUS_STARTED[0] = True
+    version = getattr(RNS, "__version__", None) or "unknown"
+    skipped = [name for name, _ in _MEMORY_LIMITS if name not in applied_limits]
+    parts = [f"rns={version}"]
+    parts += [f"{k}={v}" for k, v in applied_limits.items()]
+    if skipped:
+        parts.append("inert=" + ",".join(skipped))
+    line = "[MEM] limits " + " ".join(parts)
+    if not applied_limits:
+        line = f"[MEM] limits rns={version} uncapped ({_MEMORY_LIMITS_DISABLED_ENV} set)"
+    print(line, flush=True)
+    _diag_append(line)
+
+    def _loop() -> None:
+        while True:
+            time.sleep(_CENSUS_EVERY_SECONDS)
+            try:
+                counts = _table_census()
+                if not counts:
+                    continue
+                line = _census_line(counts)
+                print(line, flush=True)
+                _diag_append(line)
+            except Exception:
+                pass
+
+    threading.Thread(target=_loop, daemon=True, name="rns-mem-census").start()
+
+
+_STEP_WATCHDOG_INTERVAL = 5.0
+_STEP_THRESHOLD_BYTES = 3 * 1024 * 1024
+_STEP_TOP_TYPES = 6
+_TRACE_ALLOC_ENV = "COLUMBA_TRACE_ALLOC"
+# Module-level, NOT in `_state`: `stop()` rebuilds `_state` from scratch, so
+# `start()` runs its whole body again on every reconnect and a flag inside it
+# would reset with the dict. Same reason `_CENSUS_STARTED` lives here.
+_STEP_WATCHDOG_STARTED = [False]
+
+
+def _peak_rss_bytes() -> int:
+    """This process's peak resident size in bytes (Darwin reports bytes, not KB).
+
+    Peak, not current: the jetsam ledger cares about the high-water mark, and a
+    new peak is the one instant the allocation that set it is certain to still be
+    alive. Never raises; without `getrusage` it reports 0 and the watchdog idles.
+    """
+    try:
+        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    except Exception:
+        return 0
+
+
+def _heap_top_types() -> tuple[list[tuple[str, int]], int]:
+    """`(top, total)`: the most numerous gc-visible types, and how many were seen.
+
+    A full heap walk (~100 ms plus a list as long as the heap), so it belongs on
+    the step path only, never the sampling path. Note what it cannot see: `bytes`
+    and `str` are not gc-tracked, so a step whose type census is flat is evidence
+    the growth is a mapping (SQLite WAL / -shm) or an allocator arena rather than
+    Python containers - a useful answer on its own.
+    """
+    try:
+        counts: dict[str, int] = {}
+        objects = gc.get_objects()
+        try:
+            for obj in objects:
+                name = type(obj).__name__
+                counts[name] = counts.get(name, 0) + 1
+        finally:
+            del objects
+        top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:_STEP_TOP_TYPES]
+        return top, sum(counts.values())
+    except Exception:
+        return [], 0
+
+
+def _trace_top_sites() -> list[str]:
+    """Top allocation sites, but only when the operator armed tracemalloc.
+
+    Off unless `COLUMBA_TRACE_ALLOC` names a frame depth: the trace tables cost
+    tens of megabytes in a process whose entire problem is a ~50 MB ceiling, so
+    line-level attribution is something a diagnostic build asks for explicitly.
+    """
+    try:
+        if not tracemalloc.is_tracing():
+            return []
+        return [str(stat).replace("\n", " ")
+                for stat in tracemalloc.take_snapshot().statistics("lineno")[:3]]
+    except Exception:
+        return []
+
+
+def _step_line(rss: int, delta: int) -> str:
+    """One `[STEP]` line: the new peak, what is on the heap, what the tables hold."""
+    top, total = _heap_top_types()
+    parts = [f"[STEP] rss={rss / 1e6:.1f}MB +{delta / 1e6:.1f}MB objs={total}"]
+    if top:
+        parts.append(" ".join(f"{name}={count}" for name, count in top))
+    counts = _table_census()
+    if counts:
+        parts.append(" ".join(f"{key}={value}" for key, value in counts.items()))
+    sites = _trace_top_sites()
+    if sites:
+        parts.append(" | ".join(sites))
+    return " ".join(parts)
+
+
+def _arm_alloc_trace() -> bool:
+    """Start tracemalloc when `COLUMBA_TRACE_ALLOC` names a frame depth."""
+    depth = os.environ.get(_TRACE_ALLOC_ENV)
+    if not depth:
+        return False
+    try:
+        tracemalloc.start(max(1, int(depth)))
+        return True
+    except Exception:
+        return False
+
+
+def _step_poll(high: int) -> tuple[int, str]:
+    """One watchdog tick: `(baseline, report)`, with `report` empty by default.
+
+    The baseline only moves when a step is reported, so a drift of 2 MB per tick
+    still trips the threshold on the second tick instead of hiding in the noise.
+    It is re-read AFTER the heap walk, because the list that walk builds is
+    itself megabytes - reporting it would blame the instrument for the leak.
+    """
+    rss = _peak_rss_bytes()
+    delta = rss - high
+    if delta < _STEP_THRESHOLD_BYTES:
+        return high, ""
+    try:
+        report = _step_line(rss, delta)
+    except Exception:
+        report = ""
+    return _peak_rss_bytes(), report
+
+
+def _start_step_watchdog() -> None:
+    """Log a `[STEP]` line every time this process raises its RSS peak by 3 MB.
+
+    One watcher per process: `stop()` rebuilds `_state`, so `start()` runs its
+    whole body again after every reconnect and would otherwise stack a polling
+    thread (and repeat the heap walk once per watcher) for each disconnect.
+
+    WHY: with the RNS tables capped the footprint plateaus (34 MB, flat for
+    hours) and the kills now come from one-second jumps of 3-11 MB that never
+    come back down. The 60 s census cannot see a 1 s event, and by the next
+    minute the culprit is gone. Peak RSS is a syscall that allocates nothing, so
+    it is cheap to poll every 5 s; the expensive heap walk runs only on a peak.
+    """
+    if _STEP_WATCHDOG_STARTED[0]:
+        return
+    _STEP_WATCHDOG_STARTED[0] = True
+    traced = _arm_alloc_trace()
+    # The starting peak goes on the log because a wrong unit assumption has to be
+    # visible: `ru_maxrss` is bytes on Darwin and kilobytes on Linux, and reading
+    # it wrong would leave the threshold permanently unreachable in silence.
+    baseline = _peak_rss_bytes()
+    line = ("[STEP] watchdog interval="
+            f"{_STEP_WATCHDOG_INTERVAL:.0f}s threshold="
+            f"{_STEP_THRESHOLD_BYTES // (1024 * 1024)}MB "
+            f"tracemalloc={'on' if traced else 'off'} "
+            f"peak={baseline / 1e6:.1f}MB")
+    print(line, flush=True)
+    _diag_append(line)
+
+    def _loop() -> None:
+        high = baseline
+        while True:
+            time.sleep(_STEP_WATCHDOG_INTERVAL)
+            high, report = _step_poll(high)
+            if report:
+                print(report, flush=True)
+                _diag_append(report)
+
+    threading.Thread(target=_loop, daemon=True, name="rns-mem-step").start()
+
+
 def start(
     config_dir: str,
     identity_path: str,
@@ -1656,6 +2184,8 @@ def start(
 
         os.makedirs(config_dir, exist_ok=True)
         _state["config_dir"] = config_dir
+        # A restart can key a different per-identity dir; re-resolve the diag log.
+        _DIAG_PATH.clear()
 
         # Durable NE-only persistence (Model B): the NE runs Python in a Network
         # Extension process whose App-Group config dir is shared with the app, so
@@ -1688,6 +2218,10 @@ def start(
         _signal.signal = lambda *_a, **_kw: None
         try:
             _t0 = time.perf_counter()
+            # Before Reticulum(): path expiry is stamped AT INSERT time from
+            # PATH_TIMEOUT (Transport.py:3404), so a later override would leave
+            # the first few minutes of paths on the 7-day default.
+            applied_limits = _apply_memory_limits()
             reticulum = RNS.Reticulum(config_dir)
             _state["reticulum"] = reticulum
             STARTUP_TIMING["reticulum_ms"] = (time.perf_counter() - _t0) * 1000
@@ -1823,6 +2357,10 @@ def start(
                 target=_ingress_retry_loop, args=(_ingress_retry_gen,),
                 daemon=True,
             ).start()
+        # [MEM] Table census for post-mortem attribution of a jetsam kill.
+        _start_census_thread(applied_limits)
+        # [STEP] Attribution for the one-second multi-MB jumps the census misses.
+        _start_step_watchdog()
         _put("state", value="connected")
         return _local_info()
 
@@ -2430,6 +2968,12 @@ def stop() -> None:
     # LXMF owns a process-global callback and may synchronously notify/cancel
     # jobs while clearing it. Never hold the bridge lock across that operation.
     _uninstall_native_stamp_generator()
+    # Persist the newest announce batch before teardown, or a clean stop drops
+    # up to one flush window of announce events.
+    try:
+        _flush_announces()
+    except Exception:  # noqa: BLE001
+        pass
     with _lock:
         try:
             existing = _state["handler"]

@@ -47,7 +47,9 @@ def _extract(names):
     return [n for n in tree.body if
             isinstance(n, ast.FunctionDef) and n.name in wanted or
             isinstance(n, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id in wanted for t in n.targets)]
+                isinstance(t, ast.Name) and t.id in wanted for t in n.targets) or
+            isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)
+            and n.target.id in wanted]
 
 
 class RnsBridgePersistenceTest(unittest.TestCase):
@@ -268,6 +270,13 @@ class RnsBridgeStartPersistenceModeTest(unittest.TestCase):
         "start",
         "_set_inbox_path", "_open_inbox",
         "_set_grdb_store", "_open_grdb",
+        # start() also applies the RNS memory caps and arms the [MEM] census
+        # thread; both are stubbed out here (RNS.Transport is absent, so the
+        # caps no-op) but their globals must exist for the module-level wiring.
+        "_apply_memory_limits", "_start_census_thread",
+        "_ne_diag_path", "_diag_append", "_table_census", "_census_line",
+        "_MEMORY_LIMITS", "_MEMORY_LIMITS_DISABLED_ENV",
+        "_CENSUS_EVERY_SECONDS", "_CENSUS_STARTED", "_DIAG_PATH",
     ]
 
     class _StopAfterPersistence(Exception):
