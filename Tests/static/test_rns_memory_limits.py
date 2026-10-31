@@ -130,11 +130,25 @@ class MemoryLimitTests(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec('RNS'), 'RNS not installed')
     def test_every_limit_names_a_real_transport_attribute(self):
+        """A cap RNS does not read is inert, so every name must be real.
+
+        The two path-timeout spellings belong to different layouts, so at most one
+        can exist on a given version - require that one of them does, and require
+        every other name unconditionally.
+        """
         import RNS
+        timeout_names = {'DESTINATION_TIMEOUT', 'PATH_TIMEOUT'}
         limits = self.ns['_MEMORY_LIMITS']
-        for name in limits:
+        for name, value in limits:
+            if name in timeout_names:
+                continue
             with self.subTest(name=name):
-                self.assertTrue(hasattr(RNS.Transport, name), f"RNS.Transport.{name} does not exist")
+                self.assertTrue(hasattr(RNS.Transport, name),
+                                f'RNS.Transport.{name} does not exist')
+                self.assertIsInstance(value, int)
+        live = [n for n, _ in limits
+                if n in timeout_names and hasattr(RNS.Transport, n)]
+        self.assertTrue(live, 'no path-timeout attribute on this RNS')
 
 
 class CensusTests(unittest.TestCase):

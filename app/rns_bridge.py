@@ -624,6 +624,10 @@ def _publish_durable(kind: str, payload: dict) -> None:
 _ANNOUNCE_FLUSH_INTERVAL = 10.0   # seconds between batched announce commits
 _ANNOUNCE_FLUSH_MAX = 512         # buffered destinations that force an early flush
 _ANNOUNCE_ROWS_MAX = 1024         # announce rows retained in `ne_inbox`
+# Backstop for every OTHER kind (delivery / state / link_*): those are drained by
+# the app, but a long suspension must not grow the store without bound. Sized well
+# above the announce cap so ordinary announce volume never evicts an unread event.
+_INBOX_ROWS_MAX = 8192
 _announce_buf: "dict[str, dict]" = {}
 _announce_buf_lock = threading.Lock()
 _announce_last_flush = 0.0
@@ -722,11 +726,24 @@ def _append_announces(batch: "list[dict]") -> None:
             # Bound retention in the SAME transaction: no extra commit, no extra
             # WAL frame. A NULL subquery (fewer rows than the cap) deletes nothing,
             # because `seq <= NULL` is NULL.
+            #
+            # The announce cap is kind-scoped on BOTH sides. With the outer
+            # predicate left as `seq <= <announce cutoff>` over every row, a busy
+            # mesh (1024 announces ~ 18 min at hub rates) deleted unread
+            # delivery / state / link events the app had not drained yet, so a
+            # delivery update that arrived during a suspend could vanish before
+            # the app ever saw it.
             _inbox_conn.execute(
-                "DELETE FROM ne_inbox WHERE seq <= ("
+                "DELETE FROM ne_inbox WHERE kind = 'announce' AND seq <= ("
                 " SELECT seq FROM ne_inbox WHERE kind = 'announce'"
                 " ORDER BY seq DESC LIMIT 1 OFFSET ?)",
                 (_ANNOUNCE_ROWS_MAX,),
+            )
+            # Disk backstop across all kinds, oldest first.
+            _inbox_conn.execute(
+                "DELETE FROM ne_inbox WHERE seq <= ("
+                " SELECT seq FROM ne_inbox ORDER BY seq DESC LIMIT 1 OFFSET ?)",
+                (_INBOX_ROWS_MAX,),
             )
             _inbox_conn.commit()
         except Exception as e:  # noqa: BLE001

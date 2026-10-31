@@ -139,6 +139,7 @@ class AnnounceWritePathTests(unittest.TestCase):
             isinstance(n, (ast.Assign, ast.AnnAssign))
             and any(isinstance(t, ast.Name) and (
                 t.id.startswith('_ANNOUNCE_') or t.id.startswith('_announce_')
+                or t.id == '_INBOX_ROWS_MAX'
             ) for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))
         )]
         found = set()
@@ -216,6 +217,37 @@ class AnnounceWritePathTests(unittest.TestCase):
             self.ns['_announce_last_flush'] = 0.0
         self.assertLessEqual(len(self.rows('announce')), 20,
                              'a suspended app must not grow announce rows without bound')
+
+    def test_announce_cap_leaves_unread_events_of_other_kinds_alone(self):
+        # The announce cutoff used to filter only the subquery, so the outer
+        # DELETE removed EVERY row below it: at hub rates 1024 announces is ~18
+        # minutes, and a delivery update that arrived while the app was suspended
+        # could be deleted before the app ever drained it.
+        self.ns['_ANNOUNCE_ROWS_MAX'] = 20
+        self.ns['_INBOX_ROWS_MAX'] = 8192
+        self.ns['_ANNOUNCE_FLUSH_INTERVAL'] = 0.0
+        self.db.execute("INSERT INTO ne_inbox (kind, payload, created_at) "
+                        "VALUES ('delivery', '{\"kind\":\"delivery\"}', 1.0)")
+        unread = self.db.execute('SELECT seq FROM ne_inbox').fetchone()[0]
+        for i in range(200):
+            self.ns['_put']('announce', **self.announce(i))
+            self.ns['_announce_last_flush'] = 0.0
+        self.assertLessEqual(len(self.rows('announce')), 20)
+        self.assertEqual(
+            self.db.execute('SELECT kind FROM ne_inbox WHERE seq=?', (unread,)).fetchone(),
+            ('delivery',), 'announce retention must not evict other kinds')
+
+    def test_total_row_backstop_bounds_every_kind(self):
+        # Exempting the other kinds must not make the store unbounded again: they
+        # are drained by the app, but a long suspension still has to be capped.
+        self.ns['_ANNOUNCE_ROWS_MAX'] = 10_000   # so the backstop is what binds
+        self.ns['_INBOX_ROWS_MAX'] = 30
+        self.ns['_ANNOUNCE_FLUSH_INTERVAL'] = 0.0
+        for i in range(200):
+            self.ns['_put']('announce', **self.announce(i))
+            self.ns['_announce_last_flush'] = 0.0
+        self.assertLessEqual(len(self.rows()), 30,
+                             'the all-kind backstop must bound the table')
 
     def test_non_announce_events_keep_the_immediate_durable_path(self):
         self.keep_buffering()
