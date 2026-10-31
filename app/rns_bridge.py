@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import copy
 import ctypes
+import gc
 import json
 import os
 import queue
+import resource
 import sqlite3
 import threading
 import time
+import tracemalloc
 import types
 from typing import Any
 
@@ -1993,6 +1996,145 @@ def _start_census_thread(applied_limits: dict[str, int]) -> None:
     threading.Thread(target=_loop, daemon=True, name="rns-mem-census").start()
 
 
+_STEP_WATCHDOG_INTERVAL = 5.0
+_STEP_THRESHOLD_BYTES = 3 * 1024 * 1024
+_STEP_TOP_TYPES = 6
+_TRACE_ALLOC_ENV = "COLUMBA_TRACE_ALLOC"
+
+
+def _peak_rss_bytes() -> int:
+    """This process's peak resident size in bytes (Darwin reports bytes, not KB).
+
+    Peak, not current: the jetsam ledger cares about the high-water mark, and a
+    new peak is the one instant the allocation that set it is certain to still be
+    alive. Never raises; without `getrusage` it reports 0 and the watchdog idles.
+    """
+    try:
+        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    except Exception:
+        return 0
+
+
+def _heap_top_types() -> tuple[list[tuple[str, int]], int]:
+    """`(top, total)`: the most numerous gc-visible types, and how many were seen.
+
+    A full heap walk (~100 ms plus a list as long as the heap), so it belongs on
+    the step path only, never the sampling path. Note what it cannot see: `bytes`
+    and `str` are not gc-tracked, so a step whose type census is flat is evidence
+    the growth is a mapping (SQLite WAL / -shm) or an allocator arena rather than
+    Python containers - a useful answer on its own.
+    """
+    try:
+        counts: dict[str, int] = {}
+        objects = gc.get_objects()
+        try:
+            for obj in objects:
+                name = type(obj).__name__
+                counts[name] = counts.get(name, 0) + 1
+        finally:
+            del objects
+        top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:_STEP_TOP_TYPES]
+        return top, sum(counts.values())
+    except Exception:
+        return [], 0
+
+
+def _trace_top_sites() -> list[str]:
+    """Top allocation sites, but only when the operator armed tracemalloc.
+
+    Off unless `COLUMBA_TRACE_ALLOC` names a frame depth: the trace tables cost
+    tens of megabytes in a process whose entire problem is a ~50 MB ceiling, so
+    line-level attribution is something a diagnostic build asks for explicitly.
+    """
+    try:
+        if not tracemalloc.is_tracing():
+            return []
+        return [str(stat).replace("\n", " ")
+                for stat in tracemalloc.take_snapshot().statistics("lineno")[:3]]
+    except Exception:
+        return []
+
+
+def _step_line(rss: int, delta: int) -> str:
+    """One `[STEP]` line: the new peak, what is on the heap, what the tables hold."""
+    top, total = _heap_top_types()
+    parts = [f"[STEP] rss={rss / 1e6:.1f}MB +{delta / 1e6:.1f}MB objs={total}"]
+    if top:
+        parts.append(" ".join(f"{name}={count}" for name, count in top))
+    counts = _table_census()
+    if counts:
+        parts.append(" ".join(f"{key}={value}" for key, value in counts.items()))
+    sites = _trace_top_sites()
+    if sites:
+        parts.append(" | ".join(sites))
+    return " ".join(parts)
+
+
+def _arm_alloc_trace() -> bool:
+    """Start tracemalloc when `COLUMBA_TRACE_ALLOC` names a frame depth."""
+    depth = os.environ.get(_TRACE_ALLOC_ENV)
+    if not depth:
+        return False
+    try:
+        tracemalloc.start(max(1, int(depth)))
+        return True
+    except Exception:
+        return False
+
+
+def _step_poll(high: int) -> tuple[int, str]:
+    """One watchdog tick: `(baseline, report)`, with `report` empty by default.
+
+    The baseline only moves when a step is reported, so a drift of 2 MB per tick
+    still trips the threshold on the second tick instead of hiding in the noise.
+    It is re-read AFTER the heap walk, because the list that walk builds is
+    itself megabytes - reporting it would blame the instrument for the leak.
+    """
+    rss = _peak_rss_bytes()
+    delta = rss - high
+    if delta < _STEP_THRESHOLD_BYTES:
+        return high, ""
+    try:
+        report = _step_line(rss, delta)
+    except Exception:
+        report = ""
+    return _peak_rss_bytes(), report
+
+
+def _start_step_watchdog() -> None:
+    """Log a `[STEP]` line every time this process raises its RSS peak by 3 MB.
+
+    WHY: with the RNS tables capped the footprint plateaus (34 MB, flat for
+    hours) and the kills now come from one-second jumps of 3-11 MB that never
+    come back down. The 60 s census cannot see a 1 s event, and by the next
+    minute the culprit is gone. Peak RSS is a syscall that allocates nothing, so
+    it is cheap to poll every 5 s; the expensive heap walk runs only on a peak.
+    """
+    traced = _arm_alloc_trace()
+    # The starting peak goes on the log because a wrong unit assumption has to be
+    # visible: `ru_maxrss` is bytes on Darwin and kilobytes on Linux, and reading
+    # it wrong would leave the threshold permanently unreachable in silence.
+    baseline = _peak_rss_bytes()
+    line = ("[STEP] watchdog interval="
+            f"{_STEP_WATCHDOG_INTERVAL:.0f}s threshold="
+            f"{_STEP_THRESHOLD_BYTES // (1024 * 1024)}MB "
+            f"tracemalloc={'on' if traced else 'off'} "
+            f"peak={baseline / 1e6:.1f}MB")
+    print(line, flush=True)
+    _diag_append(line)
+
+    def _loop() -> None:
+        high = baseline
+        while True:
+            time.sleep(_STEP_WATCHDOG_INTERVAL)
+            high, report = _step_poll(high)
+            if report:
+                print(report, flush=True)
+                _diag_append(report)
+
+    threading.Thread(target=_loop, daemon=True, name="rns-mem-step").start()
+
+
 def start(
     config_dir: str,
     identity_path: str,
@@ -2206,6 +2348,8 @@ def start(
             ).start()
         # [MEM] Table census for post-mortem attribution of a jetsam kill.
         _start_census_thread(applied_limits)
+        # [STEP] Attribution for the one-second multi-MB jumps the census misses.
+        _start_step_watchdog()
         _put("state", value="connected")
         return _local_info()
 

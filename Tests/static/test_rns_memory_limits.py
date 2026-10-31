@@ -25,9 +25,18 @@ FUNCTIONS = {
     '_census_line',
     '_ne_diag_path',
     '_diag_append',
+    '_peak_rss_bytes',
+    '_heap_top_types',
+    '_trace_top_sites',
+    '_step_line',
+    '_arm_alloc_trace',
+    '_step_poll',
+    '_start_step_watchdog',
 }
 ASSIGNMENTS = {'_MEMORY_LIMITS', '_DIAG_PATH', '_MEMORY_LIMITS_DISABLED_ENV',
-               '_CENSUS_EVERY_SECONDS', '_CENSUS_STARTED'}
+               '_CENSUS_EVERY_SECONDS', '_CENSUS_STARTED',
+               '_STEP_WATCHDOG_INTERVAL', '_STEP_THRESHOLD_BYTES',
+               '_STEP_TOP_TYPES', '_TRACE_ALLOC_ENV'}
 
 
 class FakeTransport16:
@@ -67,6 +76,13 @@ def build_namespace(transport_cls=FakeTransport16):
         'RNS': SimpleNamespace(Transport=transport, Identity=identity, __version__='9.9.9'),
         'os': os,
         'time': time,
+        'gc': types.SimpleNamespace(get_objects=lambda: []),
+        'resource': types.SimpleNamespace(
+            RUSAGE_SELF=0,
+            getrusage=lambda _who: types.SimpleNamespace(ru_maxrss=0)),
+        'tracemalloc': types.SimpleNamespace(
+            is_tracing=lambda: False, start=lambda _depth: None,
+            take_snapshot=lambda: None),
         'threading': types.SimpleNamespace(
             Thread=lambda *a, **k: types.SimpleNamespace(start=lambda: None, daemon=True)),
         'queue': None,
@@ -268,6 +284,129 @@ class DiagChannelTests(unittest.TestCase):
 
     def test_no_config_dir_is_a_silent_noop(self):
         self.assertFalse(self.ns['_diag_append']('[MEM] pt=4'))
+
+
+class StepWatchdogTests(unittest.TestCase):
+    """`[STEP]` attribution: the one-second multi-MB jumps the 60 s census misses."""
+
+    MB = 1024 * 1024
+
+    def setUp(self):
+        self.ns = build_namespace()
+        self.addCleanup(mock.patch.dict(os.environ, {}, clear=False).stop)
+        os.environ.pop('COLUMBA_TRACE_ALLOC', None)
+
+    def test_the_watchdog_announces_its_baseline_peak(self):
+        lines = []
+        self.ns['_diag_append'] = lines.append
+        self.ns['_peak_rss_bytes'] = lambda: 27 * self.MB
+        self.ns['_start_step_watchdog']()
+        self.assertEqual(len(lines), 1, 'the watchdog says it is alive on the log')
+        self.assertIn('peak=28.3MB', lines[0],
+                      'a 1024x unit error must be visible on the first line, '
+                      'not leave the threshold unreachable in silence')
+        self.assertIn('tracemalloc=off', lines[0])
+
+
+    def test_peak_rss_reads_bytes_and_survives_a_missing_getrusage(self):
+        self.ns['resource'].getrusage = lambda _who: SimpleNamespace(ru_maxrss=11 * self.MB)
+        self.assertEqual(self.ns['_peak_rss_bytes'](), 11 * self.MB,
+                         'Darwin reports ru_maxrss in bytes, not KB')
+
+        def boom(_who):
+            raise OSError('no getrusage here')
+
+        self.ns['resource'].getrusage = boom
+        self.assertEqual(self.ns['_peak_rss_bytes'](), 0,
+                         'a platform without getrusage must idle the watchdog, not raise')
+
+    def test_heap_census_ranks_by_count_and_caps_the_line(self):
+        types_ = [type(f'T{name}', (), {}) for name in
+                  ('alpha', 'beta', 'gamma', 'delta', 'eps', 'zeta', 'eta', 'theta')]
+        objs = [cls() for cls, count in zip(types_, (80, 70, 60, 50, 40, 30, 20, 10))
+                for _ in range(count)]
+        self.ns['gc'].get_objects = lambda: objs
+        top, total = self.ns['_heap_top_types']()
+        self.assertEqual(total, 360)
+        self.assertEqual([name for name, _ in top],
+                         ['Talpha', 'Tbeta', 'Tgamma', 'Tdelta', 'Teps', 'Tzeta'],
+                         'the line must stay short enough to survive log rotation')
+
+    def test_heap_census_degrades_to_empty_when_the_walk_fails(self):
+        def boom():
+            raise RuntimeError('heap walk blew up')
+
+        self.ns['gc'].get_objects = boom
+        self.assertEqual(self.ns['_heap_top_types'](), ([], 0))
+
+    def test_step_line_carries_the_peak_the_types_and_the_tables(self):
+        self.ns['gc'].get_objects = lambda: [object(), object()]
+        self.ns['_table_census'] = lambda: {'pt': 294, 'phl': 39760}
+        line = self.ns['_step_line'](41 * self.MB, 8 * self.MB)
+        self.assertIn('rss=43.0MB', line)
+        self.assertIn('+8.4MB', line)
+        self.assertIn('objs=2 object=2', line)
+        self.assertIn('pt=294 phl=39760', line,
+                      'the tables at the step instant, not the ones a minute later')
+
+    def test_step_line_omits_sections_that_could_not_be_measured(self):
+        def boom():
+            raise RuntimeError('heap walk blew up')
+
+        self.ns['gc'].get_objects = boom
+        self.ns['_table_census'] = lambda: {}
+        self.assertEqual(self.ns['_step_line'](35 * self.MB, 4 * self.MB).split(),
+                         ['[STEP]', 'rss=36.7MB', '+4.2MB', 'objs=0'],
+                         'an unmeasurable section must be absent, not a zero that '
+                         'reads like a real measurement')
+
+    def test_trace_sites_are_reported_only_while_tracing(self):
+        class Stat:
+            def __str__(self):
+                return 'rns_bridge.py:12 size=2.0 MB\n    12  blob = read()'
+
+        snapshot = SimpleNamespace(statistics=lambda _mode: [Stat()])
+        self.ns['tracemalloc'].take_snapshot = lambda: snapshot
+        self.assertEqual(self.ns['_trace_top_sites'](), [],
+                         'tracemalloc costs memory the NE cannot spare unasked')
+        self.ns['tracemalloc'].is_tracing = lambda: True
+        self.assertEqual(self.ns['_trace_top_sites'](),
+                         ['rns_bridge.py:12 size=2.0 MB     12  blob = read()'],
+                         'one line per site: the log is line-oriented')
+
+    def test_alloc_trace_is_off_unless_the_operator_arms_it(self):
+        started = []
+        self.ns['tracemalloc'].start = lambda depth: started.append(depth)
+        self.assertFalse(self.ns['_arm_alloc_trace']())
+        self.assertEqual(started, [])
+        os.environ['COLUMBA_TRACE_ALLOC'] = '2'
+        self.assertTrue(self.ns['_arm_alloc_trace']())
+        self.assertEqual(started, [2])
+        os.environ['COLUMBA_TRACE_ALLOC'] = 'nonsense'
+        self.assertFalse(self.ns['_arm_alloc_trace']())
+        self.assertEqual(started, [2], 'a garbage depth must not start a trace')
+
+    def test_a_step_rebaselines_after_the_heap_walk_not_before(self):
+        peaks = iter([30 * self.MB, 32 * self.MB])
+        self.ns['_peak_rss_bytes'] = lambda: next(peaks)
+        seen = []
+        self.ns['_step_line'] = lambda rss, delta: seen.append((rss, delta)) or 'REPORT'
+        high, report = self.ns['_step_poll'](20 * self.MB)
+        self.assertEqual(report, 'REPORT')
+        self.assertEqual(seen, [(30 * self.MB, 10 * self.MB)])
+        self.assertEqual(high, 32 * self.MB,
+                         'the baseline is the post-walk peak, or the walk itself '
+                         'gets reported as the next leak')
+
+    def test_a_small_drift_is_not_reported_and_does_not_move_the_baseline(self):
+        self.ns['_peak_rss_bytes'] = lambda: 21 * self.MB
+        self.ns['_step_line'] = lambda _rss, _delta: 'SHOULD NOT RUN'
+        high, report = self.ns['_step_poll'](20 * self.MB)
+        self.assertEqual(report, '')
+        self.assertEqual(high, 20 * self.MB,
+                         'keeping the old baseline lets 2 MB ticks accumulate '
+                         'into a reported step instead of hiding in the noise')
+
 
 
 if __name__ == '__main__':
