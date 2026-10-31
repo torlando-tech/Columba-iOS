@@ -289,9 +289,7 @@ struct NEMemoryView: View {
                     Text("Disk writes").font(.headline)
                     Spacer()
                     if let multiple = diskBudgetMultiple {
-                        Text(multiple < 10
-                             ? String(format: "%.1f× budget", multiple)
-                             : String(format: "%.0f× budget", multiple))
+                        Text("median \(Self.formatMultiple(multiple)) budget")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.orange)
                             .accessibilityIdentifier("ne_disk_budget_multiple")
@@ -330,7 +328,7 @@ struct NEMemoryView: View {
                 .frame(height: 140)
                 .accessibilityIdentifier("ne_disk_chart")
 
-                Text("How fast the background transport writes to disk, averaged over each sample window. The dashed line is the rate that stays inside the per-day write budget iOS enforces (12,137 KB/day ≈ 0.14 KB/s); it sits on the axis floor because the transport writes far more than that, so read the multiple above the chart instead. Bursts are normal — sustaining above the budget is what gets the process throttled, then killed.")
+                Text(diskChartCaption)
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -398,6 +396,26 @@ struct NEMemoryView: View {
             ? (rates[mid - 1] + rates[mid]) / 2
             : rates[mid]
         return median / diskBudgetKBs
+    }
+
+    /// `732×` / `1.8×` — one format for the header and the caption.
+    private static func formatMultiple(_ multiple: Double) -> String {
+        multiple < 10 ? String(format: "%.1f×", multiple) : String(format: "%.0f×", multiple)
+    }
+
+    /// Caption that claims only what the plotted data supports. `diskRateKBs` is
+    /// nil for a segment's first point and for every record when the disk probe
+    /// failed, so a freshly started extension has memory points but no multiple
+    /// to point at; and a quiet window must not be told it is over budget.
+    private var diskChartCaption: String {
+        let base = "How fast the background transport writes to disk, averaged over each sample window. The dashed line is the rate that stays inside the per-day write budget iOS enforces (12,137 KB/day ≈ 0.14 KB/s)."
+        guard let multiple = diskBudgetMultiple else {
+            return base + " Not enough sampled write rates yet to compare against it."
+        }
+        let text = Self.formatMultiple(multiple)
+        return multiple >= 1
+            ? base + " The median is \(text) that rate. A linear axis cannot show the line and the data at once, which is why the comparison is above the chart; sustaining above the budget is what gets the process throttled, then killed, while brief bursts are normal."
+            : base + " The median is \(text) that rate, so writes are inside the budget. Brief bursts above the line are normal as long as the day stays under it."
     }
 
     private func formatMB(_ value: Double?) -> String {
