@@ -415,7 +415,7 @@ struct NEMemoryView: View {
         let text = Self.formatMultiple(multiple)
         return multiple >= 1
             ? base + " The median is \(text) that rate. A linear axis cannot show the line and the data at once, which is why the comparison is above the chart; sustaining above the budget is what gets the process throttled, then killed, while brief bursts are normal."
-            : base + " The median is \(text) that rate, so writes are inside the budget. Brief bursts above the line are normal as long as the day stays under it."
+            : base + " The median is \(text) that rate. A median rate is not a running total, so a low value is no proof the day stayed inside the allowance — one large burst can exhaust it."
     }
 
     private func formatMB(_ value: Double?) -> String {
