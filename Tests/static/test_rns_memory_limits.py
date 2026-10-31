@@ -36,7 +36,7 @@ FUNCTIONS = {
 ASSIGNMENTS = {'_MEMORY_LIMITS', '_DIAG_PATH', '_MEMORY_LIMITS_DISABLED_ENV',
                '_CENSUS_EVERY_SECONDS', '_CENSUS_STARTED',
                '_STEP_WATCHDOG_INTERVAL', '_STEP_THRESHOLD_BYTES',
-               '_STEP_TOP_TYPES', '_TRACE_ALLOC_ENV'}
+               '_STEP_TOP_TYPES', '_TRACE_ALLOC_ENV', '_STEP_WATCHDOG_STARTED'}
 
 
 class FakeTransport16:
@@ -307,6 +307,19 @@ class StepWatchdogTests(unittest.TestCase):
                       'not leave the threshold unreachable in silence')
         self.assertIn('tracemalloc=off', lines[0])
 
+    def test_a_reconnect_does_not_stack_a_second_watcher(self):
+        # stop() rebuilds _state, so start() re-runs its whole body after every
+        # reconnect: unguarded, each disconnect left another thread polling
+        # forever and repeating the heap walk on every new peak.
+        threads = []
+        self.ns['threading'] = SimpleNamespace(
+            Thread=lambda *a, **k: threads.append(k.get('name'))
+            or SimpleNamespace(start=lambda: None))
+        self.ns['_diag_append'] = lambda line: True
+        self.ns['_start_step_watchdog']()
+        self.ns['_start_step_watchdog']()
+        self.assertEqual(threads, ['rns-mem-step'],
+                         'one watcher per process, not one per reconnect')
 
     def test_peak_rss_reads_bytes_and_survives_a_missing_getrusage(self):
         self.ns['resource'].getrusage = lambda _who: SimpleNamespace(ru_maxrss=11 * self.MB)

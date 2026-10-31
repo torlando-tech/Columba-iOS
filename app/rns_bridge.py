@@ -2000,6 +2000,10 @@ _STEP_WATCHDOG_INTERVAL = 5.0
 _STEP_THRESHOLD_BYTES = 3 * 1024 * 1024
 _STEP_TOP_TYPES = 6
 _TRACE_ALLOC_ENV = "COLUMBA_TRACE_ALLOC"
+# Module-level, NOT in `_state`: `stop()` rebuilds `_state` from scratch, so
+# `start()` runs its whole body again on every reconnect and a flag inside it
+# would reset with the dict. Same reason `_CENSUS_STARTED` lives here.
+_STEP_WATCHDOG_STARTED = [False]
 
 
 def _peak_rss_bytes() -> int:
@@ -2104,12 +2108,19 @@ def _step_poll(high: int) -> tuple[int, str]:
 def _start_step_watchdog() -> None:
     """Log a `[STEP]` line every time this process raises its RSS peak by 3 MB.
 
+    One watcher per process: `stop()` rebuilds `_state`, so `start()` runs its
+    whole body again after every reconnect and would otherwise stack a polling
+    thread (and repeat the heap walk once per watcher) for each disconnect.
+
     WHY: with the RNS tables capped the footprint plateaus (34 MB, flat for
     hours) and the kills now come from one-second jumps of 3-11 MB that never
     come back down. The 60 s census cannot see a 1 s event, and by the next
     minute the culprit is gone. Peak RSS is a syscall that allocates nothing, so
     it is cheap to poll every 5 s; the expensive heap walk runs only on a peak.
     """
+    if _STEP_WATCHDOG_STARTED[0]:
+        return
+    _STEP_WATCHDOG_STARTED[0] = True
     traced = _arm_alloc_trace()
     # The starting peak goes on the log because a wrong unit assumption has to be
     # visible: `ru_maxrss` is bytes on Darwin and kilobytes on Linux, and reading
