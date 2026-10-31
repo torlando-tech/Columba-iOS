@@ -233,7 +233,11 @@ public enum NEDiskCensus {
     /// the root label, plus allocated size. `truncated` is true when the walk hit
     /// `cap`, so a capped census is never mistaken for a complete one. `cap` is a
     /// test seam; production always walks with `maxEntries`.
-    public static func entries(
+    ///
+    /// Internal, not public: a default argument may not reference an `internal`
+    /// bound, and `maxEntries` is an implementation detail, not API. Tests reach
+    /// this through `@testable import`.
+    static func entries(
         root: URL, label: String, cap: Int = maxEntries
     ) -> (entries: [(path: String, size: Int64)], truncated: Bool) {
         let base = root.path
@@ -263,8 +267,8 @@ public enum NEDiskCensus {
         return (collected, false)
     }
 
-    /// One snapshot across every root.
-    public static func snapshot(
+    /// One snapshot across every root. Internal for the same reason as `entries`.
+    static func snapshot(
         roots: [(label: String, url: URL)], uptimeMs: Int64, cap: Int = maxEntries
     ) -> (Snapshot, Bool) {
         var collected: [(path: String, size: Int64)] = []
