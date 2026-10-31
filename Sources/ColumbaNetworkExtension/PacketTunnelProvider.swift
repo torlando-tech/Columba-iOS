@@ -68,6 +68,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // blocked during bring-up and announce floods.
         NEMemoryTrace.start()
 
+        // Disk-write attribution. The memory ring proves the NE writes ~100 KB/s
+        // sustained — ~732x the daily file-backed-write allowance — but cannot
+        // say which directory. Only this process can enumerate its own container,
+        // so the census walks it on a 15-minute cadence and logs the per-directory
+        // delta to ext-diag.log. Read-only, background QoS, bounded walk.
+        NEDiskCensus.start()
+
         // SINGLE RUNTIME: Python RNS is the only Reticulum runtime in the NE.
         // Initialize CPython here (non-blocking - it must never gate tunnel
         // bring-up). The actual node is brought up lazily when the app's first
@@ -139,6 +146,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // Writing this marker is what lets the app tell a clean teardown from a
         // kill. A memory kill never reaches here, so its absence is the signal.
         NEMemoryTrace.recordStop(reason: reason.rawValue)
+        NEDiskCensus.stop()
 
         // Track C3: tear down the in-NE node. Stopping the node drops its TCP
         // relay interface + AppGroupBridge. Fire-and-forget — teardown is
