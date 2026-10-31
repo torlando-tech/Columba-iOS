@@ -145,10 +145,26 @@ public enum ExtensionDiagLog {
             }
         }
         if FileManager.default.fileExists(atPath: fileURL.path) {
-            if let fh = try? FileHandle(forWritingTo: fileURL) {
-                fh.seekToEndOfFile()
-                fh.write(data)
-                fh.closeFile()
+            // O_APPEND, NOT seek-then-write. The NE's embedded Python appends the
+            // `[MEM]` table census to this same file from another thread (it has
+            // no way to take this NSLock), and a `seekToEndOfFile()` + `write()`
+            // pair lets that append land in between — Swift would then overwrite
+            // the census line, which is the only record of the table sizes at
+            // kill time. With O_APPEND the kernel resolves the offset at write
+            // time, so both writers append without clobbering each other. The
+            // lock still serialises Swift callers against each other.
+            let fd = Darwin.open(fileURL.path, O_WRONLY | O_APPEND | O_CLOEXEC)
+            if fd >= 0 {
+                var offset = 0
+                while offset < data.count {
+                    let written = data.withUnsafeBytes { raw in
+                        Darwin.write(fd, raw.baseAddress!.advanced(by: offset),
+                                     data.count - offset)
+                    }
+                    if written <= 0 { break }
+                    offset += written
+                }
+                Darwin.close(fd)
             }
         } else {
             // `Library/` is not guaranteed to exist inside the App-Group container.

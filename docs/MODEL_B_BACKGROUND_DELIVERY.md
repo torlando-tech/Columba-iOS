@@ -93,6 +93,31 @@ ONE destination on the NE. The app is a thin client that marshals node-owning op
 
 This path runs entirely in the extension while `ColumbaModelBApp` is suspended or locked.
 
+## Announce write budget
+
+Announces are the only high-rate event on the inbox: a hub-connected leaf
+receives roughly one per second, and they were written **one WAL commit per
+announce**. That is what blew iOS' disk-writes resource budget (a TestFlight
+report charged the extension 1073.88 MB over 7198 s — about 12x the 12.43 kB/s
+budget — and the footprint ring shows the extension reaching 48.3 MB with
+1.7 MB left of the ~50 MB NE ceiling). So the announce path is coalesced,
+batched and bounded instead of streaming:
+
+- **Coalesced** — one buffered entry per destination hash; a newer announce for
+  the same destination replaces the buffered one. `ProxyRnsBackend` already
+  drops re-delivered announces by `destHash` + `t`, so the app sees the same
+  sequence it did before, just batched.
+- **Batched** — one `INSERT` batch and one transaction per 10 s window (or
+  earlier at 512 buffered destinations), then a single drain ping. Buffered
+  announces are flushed on `stop()`, so a clean teardown loses nothing.
+- **Bounded** — at most 1024 announce rows are retained; older ones are deleted
+  in the same transaction that appends the new batch. A suspended app therefore
+  cannot grow the announce b-tree without bound, and every later checkpoint
+  rewrites a small table instead of a 20k-row one.
+
+Other event kinds (delivery, state, link) keep the immediate
+one-append-per-event path: they are low-rate and latency-sensitive.
+
 ## Durable inbox replay limits
 
 The extension returns at most 128 events and 256 KiB of Python event JSON per
