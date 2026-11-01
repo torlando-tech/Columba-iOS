@@ -1,182 +1,319 @@
 import XCTest
 @testable import ColumbaApp
 
-/// Coverage for the NE's disk-write attribution census.
-///
-/// The census exists to answer exactly one question — WHICH directory is
-/// writing — from inside a sandbox nothing outside it can inspect. Two failures
-/// would make it worse than having nothing:
-///
-/// 1. A rendered line that leaks an identifier. RNS stores message data under
-///    `messages/<dest_hash>/` and caches announces by packet hash, and this log
-///    is copied off the device. Masking is a hard contract, not cosmetics.
-/// 2. A rate wrong by 1024x. The line is read against the 0.14 KB/s allowance on
-///    the Memory screen; a unit slip either hides a 732x overage or invents one.
 final class NEDiskCensusTests: XCTestCase {
+    private let epoch = Date(timeIntervalSince1970: 1_700_000_000)
 
-    // MARK: - Bucketing
-
-    func testBucketKeyKeepsTheDirectoryAndDropsTheFile() {
-        XCTAssertEqual(
-            NEDiskCensus.bucketKey(forRelativePath: "ag/cache/announces/1a2b3c4d5e6f7890.dat"),
-            "ag/cache/announces"
-        )
-    }
-
-    func testBucketKeyDoesNotSpendTheRootLabelOnDepth() {
-        // The label keeps the App-Group container and the temp dir from merging
-        // into one bucket. Counting it toward `bucketDepth` would collapse every
-        // App-Group path to `ag/<one dir>` and destroy the attribution.
-        XCTAssertEqual(
-            NEDiskCensus.bucketKey(forRelativePath: "ag/messages/deadbeefdeadbeef/body.dat"),
-            "ag/messages/«hash»"
-        )
-        XCTAssertEqual(NEDiskCensus.bucketKey(forRelativePath: "ag/ne-memory.bin"), "ag")
-        XCTAssertEqual(NEDiskCensus.bucketKey(forRelativePath: "orphan"), "/")
-    }
-
-    func testLongNonHexDirectoryNamesSurvive() {
-        XCTAssertEqual(
-            NEDiskCensus.bucketKey(forRelativePath: "ag/reticulum_storage_directory/x.dat"),
-            "ag/reticulum_storage_directory"
-        )
-    }
-
-    func testDistinctDestinationsCollapseIntoOneBucket() {
-        // Per-peer buckets would bury the answer under thousands of equal lines.
-        // The census reports the directory, not the destination.
-        let buckets = NEDiskCensus.buckets(from: [
-            (path: "ag/messages/\(String(repeating: "a", count: 32))/body.dat", size: 4096),
-            (path: "ag/messages/\(String(repeating: "b", count: 32))/body.dat", size: 4096),
-        ])
-        XCTAssertEqual(buckets.count, 1)
-        XCTAssertEqual(buckets.first?.path, "ag/messages/«hash»")
-        XCTAssertEqual(buckets.first?.files, 2)
-        XCTAssertEqual(buckets.first?.bytes, 8192)
-    }
-
-    func testBucketsSortByBytesThenName() {
-        let buckets = NEDiskCensus.buckets(from: [
-            (path: "ag/small/a", size: 1024),
-            (path: "ag/big/a", size: 400_000),
-            (path: "ag/big/b", size: 1),
-        ])
-        XCTAssertEqual(buckets.map(\.path), ["ag/big", "ag/small"])
-        XCTAssertEqual(buckets.first?.files, 2)
-    }
-
-    // MARK: - Growth
-
-    func testGrowthReportsGainsAndVanishedDirectories() {
-        let before = NEDiskCensus.Snapshot(uptimeMs: 0, buckets: [
-            .init(path: "ag/cache/announces", files: 100, bytes: 100 * 4096),
-            .init(path: "ag/gone", files: 5, bytes: 5 * 4096),
-        ])
-        let after = NEDiskCensus.Snapshot(uptimeMs: 900_000, buckets: [
-            .init(path: "ag/cache/announces", files: 140, bytes: 140 * 4096),
-        ])
-
-        let deltas = NEDiskCensus.growth(before: before, after: after, limit: 5)
-        XCTAssertEqual(deltas.first?.path, "ag/cache/announces")
-        XCTAssertEqual(deltas.first?.files, 40)
-        XCTAssertEqual(deltas.first?.bytes, 40 * 4096)
-
-        // A directory that disappeared entirely still wrote. Deleting a thousand
-        // files is churn, and reporting it as zero would hide the sawtooth the
-        // announce cache produces when RNS cleans up.
-        let vanished = deltas.first { $0.path == "ag/gone" }
-        XCTAssertEqual(vanished?.files, -5)
-        XCTAssertEqual(vanished?.bytes, -5 * 4096)
-    }
-
-    func testGrowthLimitKeepsTheLargestWriters() {
-        let after = NEDiskCensus.Snapshot(uptimeMs: 0, buckets: (0..<10).map { index in
-            NEDiskCensus.Bucket(path: "ag/d\(index)", files: 1, bytes: Int64(index) * 1024)
-        })
-        let deltas = NEDiskCensus.growth(
-            before: NEDiskCensus.Snapshot(uptimeMs: 0, buckets: []), after: after, limit: 3
-        )
-        XCTAssertEqual(deltas.map(\.path), ["ag/d9", "ag/d8", "ag/d7"])
-    }
-
-    // MARK: - Rendering
-
-    func testRenderedRateIsKilobytesPerSecond() {
-        // 300 KiB over 900 s = 0.33 KB/s.
-        let deltas = [NEDiskCensus.Growth(path: "ag/cache/announces", files: 10, bytes: 300 * 1024)]
-        let line = NEDiskCensus.renderGrowth(deltas, windowSeconds: 900)
-        XCTAssertTrue(line.contains("0.33 KB/s"), line)
-        XCTAssertTrue(line.contains("total +300KB"), line)
-        XCTAssertTrue(line.contains("ag/cache/announces=+10f/+300KB"), line)
-    }
-
-    func testQuietWindowStillShowsItsRateAgainstTheAllowance() {
-        // 6 KiB over 900 s is 0.0067 KB/s. One decimal renders that as `0.0`,
-        // which reads identically to a window that wrote nothing — and the whole
-        // point of the number is the comparison against the 0.14 KB/s allowance.
-        let line = NEDiskCensus.renderGrowth(
-            [.init(path: "ag/Library", files: 1, bytes: 6 * 1024)], windowSeconds: 900
-        )
-        XCTAssertTrue(line.contains("0.01 KB/s"), line)
-    }
-
-    /// Hard contract: this log is copied out of the container and read off the
-    /// device. RNS stores message data under `messages/<dest_hash>/` and caches
-    /// announces under their packet hash, so an unmasked path would ship peer
-    /// identifiers with the diagnostic.
-    func testRenderedLinesCarryNoIdentifiersOrAbsolutePaths() throws {
-        let hash = "0f1e2d3c4b5a69780f1e2d3c4b5a6978"
-        let snapshot = NEDiskCensus.Snapshot(uptimeMs: 0, buckets: NEDiskCensus.buckets(from: [
-            (path: "ag/messages/\(hash)/body.dat", size: 4096),
-            (path: "tmp/Library/Caches/x.dat", size: 2048),
-        ]))
-        let empty = NEDiskCensus.Snapshot(uptimeMs: 0, buckets: [])
-        let lines = [
-            NEDiskCensus.renderAbsolute(snapshot, truncated: false),
-            NEDiskCensus.renderGrowth(
-                NEDiskCensus.growth(before: empty, after: snapshot, limit: 6), windowSeconds: 900
-            ),
-        ]
-        let identifierRun = try NSRegularExpression(pattern: "[0-9a-fA-F]{16,}")
-        for line in lines {
-            XCTAssertFalse(line.contains("/Users"), line)
-            XCTAssertFalse(line.contains("/var/"), line)
-            XCTAssertNil(
-                identifierRun.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
-                "rendered line leaks an identifier-length hex run: \(line)"
-            )
-        }
-    }
-
-    // MARK: - Walk
-
-    func testWalkLabelsEntriesBucketsByDirectoryAndHonoursTheCap() throws {
+    private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ne-census-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let announces = root.appendingPathComponent("cache/announces", isDirectory: true)
-        try FileManager.default.createDirectory(at: announces, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(
-            at: root.appendingPathComponent("storage", isDirectory: true),
-            withIntermediateDirectories: true
-        )
-        for name in ["a", "b", "c"] {
-            try Data(count: 2048).write(to: announces.appendingPathComponent(name))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return root.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    @discardableResult
+    private func file(_ path: String, in root: URL, modifiedAt: Date? = nil) throws -> URL {
+        let url = root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 4096).write(to: url)
+        if let modifiedAt {
+            try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: url.path)
         }
-        try Data(count: 1024).write(to: root.appendingPathComponent("storage/known_destinations"))
+        return url
+    }
 
-        let walk = NEDiskCensus.entries(root: root, label: "ag")
-        XCTAssertEqual(walk.entries.count, 4)
-        XCTAssertFalse(walk.truncated)
-        XCTAssertTrue(walk.entries.allSatisfy { $0.path.hasPrefix("ag/") })
-        XCTAssertFalse(walk.entries.contains { $0.path.contains(root.path) }, "absolute path leaked")
+    private func fixedAllocationMetadata(_ url: URL) throws -> NEDiskCensus.Metadata {
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .contentModificationDateKey])
+        return .init(
+            isDirectory: values.isDirectory == true, isRegularFile: values.isRegularFile == true,
+            allocatedBytes: values.isRegularFile == true ? 4096 : nil,
+            modifiedAt: values.contentModificationDate
+        )
+    }
 
-        let buckets = NEDiskCensus.buckets(from: walk.entries)
-        XCTAssertEqual(buckets.first?.path, "ag/cache/announces")
-        XCTAssertEqual(buckets.first?.files, 3)
+    private func snapshot(
+        _ buckets: [NEDiskCensus.Bucket], time: Int64 = 0,
+        issues: Set<NEDiskCensus.IncompleteReason> = []
+    ) -> NEDiskCensus.Snapshot {
+        NEDiskCensus.Snapshot(
+            uptimeMs: time, observedAt: epoch.addingTimeInterval(Double(time) / 1000),
+            modifiedSince: time == 0 ? nil : epoch, buckets: buckets, issues: issues
+        )
+    }
 
-        let capped = NEDiskCensus.entries(root: root, label: "ag", cap: 2)
-        XCTAssertEqual(capped.entries.count, 2)
-        XCTAssertTrue(capped.truncated)
+    func testNormalizesRealRuntimeWrappersWithoutLosingRootOrStorageCategory() {
+        let hash = String(repeating: "aB12", count: 8)
+        for wrapper in ["python-current", "python-\(hash)"] {
+            for directory in ["cache/announces", "storage/identities", "lxmf-storage/messages"] {
+                XCTAssertEqual(
+                    NEDiskCensus.bucketKey(forRelativePath: "ag/Columba/\(wrapper)/\(directory)/payload"),
+                    "ag/\(directory)"
+                )
+            }
+        }
+        XCTAssertEqual(NEDiskCensus.bucketKey(forRelativePath: "ag/ne-memory.bin"), "ag")
+        XCTAssertEqual(NEDiskCensus.bucketKey(forRelativePath: "tmp/cache/announces/file"), "tmp/cache/announces")
+        XCTAssertEqual(NEDiskCensus.bucketKey(forRelativePath: "ag/cache/announces/deeper/file"), "ag/cache/announces")
+    }
+
+    func testClosedVocabularyMasksEmbeddedIdentifiersAndArbitraryPII() throws {
+        let hash = "0123456789aBcDeF0123456789aBcDeF"
+        let paths = [
+            "ag/Columba/python-identity-\(hash)/cache/file",
+            "ag/messages/prefix-\(hash)-suffix/file",
+            "ag/alice@example.org/phone-5551234567/file",
+            "ag/\nsecret-user/用户姓名/file",
+            "user-\(hash)/cache/file"
+        ]
+        let keys = paths.map { NEDiskCensus.bucketKey(forRelativePath: $0) }
+        XCTAssertEqual(keys, [
+            "ag/«hash»/cache", "ag/messages/«hash»", "ag/«other»/«other»",
+            "ag/«other»/«other»", "«other»/cache"
+        ])
+        let before = snapshot([])
+        let after = snapshot(keys.map { .init(path: $0, files: 1, bytes: 4096) }, time: 900_000)
+        let lines = NEDiskCensus.renderAbsolute(after) + NEDiskCensus.renderComparison(before: before, after: after)
+        let identifier = try NSRegularExpression(pattern: "[0-9a-fA-F]{16,}")
+        XCTAssertNil(identifier.firstMatch(in: lines, range: NSRange(lines.startIndex..., in: lines)))
+        for secret in [hash, "alice", "5551234567", "secret-user", "用户姓名", "payload"] {
+            XCTAssertFalse(lines.contains(secret))
+        }
+    }
+
+    func testScanAggregatesActualLayoutsWithoutKeepingFileNames() throws {
+        let root = try temporaryRoot()
+        let hash = String(repeating: "a", count: 32)
+        try file("Columba/python-current/cache/announces/first-private-file", in: root, modifiedAt: epoch)
+        try file("Columba/python-\(hash)/cache/announces/second-private-file", in: root, modifiedAt: epoch)
+        try file("Columba/python-current/storage/identities/private-file", in: root, modifiedAt: epoch)
+        try file("Columba/python-current/lxmf-storage/messages/private-file", in: root, modifiedAt: epoch)
+        let result = NEDiskCensus.snapshot(roots: [.init(label: "ag", url: root)], uptimeMs: 0)
+        XCTAssertTrue(result.isComplete)
+        XCTAssertEqual(Set(result.buckets.map(\.path)), [
+            "ag/cache/announces", "ag/storage/identities", "ag/lxmf-storage/messages"
+        ])
+        XCTAssertEqual(result.buckets.first { $0.path == "ag/cache/announces" }?.files, 2)
+        XCTAssertEqual(result.buckets.reduce(0) { $0 + $1.files }, 4)
+        XCTAssertFalse(NEDiskCensus.renderAbsolute(result).contains("private-file"))
+        XCTAssertFalse(NEDiskCensus.renderAbsolute(result).contains(root.path))
+    }
+
+    func testSymlinkRootUsesCanonicalLayoutAndRetainsItsLogicalLabel() throws {
+        let root = try temporaryRoot()
+        let links = try temporaryRoot()
+        try file("cache/announces/private-file", in: root, modifiedAt: epoch)
+        let alias = links.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+
+        let result = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: alias)], uptimeMs: 0
+        )
+
+        XCTAssertTrue(result.isComplete)
+        XCTAssertEqual(result.visitedEntries, 4)
+        XCTAssertEqual(result.buckets.count, 1)
+        XCTAssertEqual(result.buckets.first?.path, "ag/cache/announces")
+        XCTAssertEqual(result.buckets.first?.files, 1)
+        XCTAssertFalse(NEDiskCensus.renderAbsolute(result).contains(alias.path))
+        XCTAssertFalse(NEDiskCensus.renderAbsolute(result).contains(root.path))
+    }
+
+    func testEntryCapCountsDirectoriesEvenWithNoFiles() throws {
+        let root = try temporaryRoot()
+        for index in 0..<20 {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent("directory-\(index)"), withIntermediateDirectories: true
+            )
+        }
+        let result = NEDiskCensus.snapshot(roots: [.init(label: "ag", url: root)], uptimeMs: 0, cap: 4)
+        XCTAssertEqual(result.visitedEntries, 4)
+        XCTAssertTrue(result.buckets.isEmpty)
+        XCTAssertEqual(result.issues, [.entryCap])
+    }
+
+    func testEntryCapIsSharedAcrossRootsAndCountsRootDirectories() throws {
+        let first = try temporaryRoot()
+        let second = try temporaryRoot()
+        try file("one", in: first)
+        try file("two", in: second)
+        let roots = [NEDiskCensus.Root(label: "ag", url: first), .init(label: "tmp", url: second)]
+        let capped = NEDiskCensus.snapshot(roots: roots, uptimeMs: 0, cap: 3)
+        XCTAssertEqual(capped.visitedEntries, 3)
+        XCTAssertEqual(capped.buckets.map(\.path), ["ag"])
+        XCTAssertEqual(capped.issues, [.entryCap])
+        let complete = NEDiskCensus.snapshot(roots: roots, uptimeMs: 0, cap: 4)
+        XCTAssertEqual(complete.visitedEntries, 4)
+        XCTAssertEqual(Set(complete.buckets.map(\.path)), ["ag", "tmp"])
+        XCTAssertTrue(complete.isComplete)
+    }
+
+    func testCancellationInterruptsTraversalBeforeRemainingEntries() throws {
+        let root = try temporaryRoot()
+        for index in 0..<10 { try file("file-\(index)", in: root) }
+        var reads = 0
+        let result = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root)], uptimeMs: 0,
+            isCancelled: { reads >= 2 },
+            readMetadata: { url in
+                reads += 1
+                return .init(isDirectory: url == root, isRegularFile: url != root,
+                             allocatedBytes: 4096, modifiedAt: self.epoch)
+            }
+        )
+        XCTAssertEqual(reads, 2)
+        XCTAssertEqual(result.visitedEntries, 2)
+        XCTAssertEqual(result.issues, [.cancelled])
+    }
+
+    func testMonotonicDeadlineInterruptsTraversalDeterministically() throws {
+        let root = try temporaryRoot()
+        for index in 0..<10 { try file("file-\(index)", in: root) }
+        var clock: TimeInterval = 0
+        let result = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root)], uptimeMs: 0, timeLimit: 1,
+            monotonicNow: { clock },
+            readMetadata: { url in
+                if url != root { clock = 1 }
+                return .init(isDirectory: url == root, isRegularFile: url != root,
+                             allocatedBytes: 4096, modifiedAt: self.epoch)
+            }
+        )
+        XCTAssertEqual(result.visitedEntries, 2)
+        XCTAssertEqual(result.issues, [.timeLimit])
+    }
+
+    func testEnumerationFailureAfterRootDisappearsMarksSnapshotPartial() throws {
+        let root = try temporaryRoot()
+        let result = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root)], uptimeMs: 0,
+            readMetadata: { url in
+                XCTAssertEqual(url, root)
+                try FileManager.default.removeItem(at: root)
+                return .init(isDirectory: true, isRegularFile: false, allocatedBytes: nil, modifiedAt: nil)
+            }
+        )
+        XCTAssertEqual(result.issues, [.enumerationError])
+        XCTAssertFalse(result.isComplete)
+    }
+
+    func testMissingRootsAndResourceFailuresArePartial() throws {
+        let root = try temporaryRoot()
+        try file("unreadable", in: root)
+        let missing = NEDiskCensus.snapshot(roots: [.init(label: "ag", url: nil)], uptimeMs: 0)
+        XCTAssertEqual(missing.issues, [.missingRoot])
+        let nonexistent = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root.appendingPathComponent("missing"))], uptimeMs: 0
+        )
+        XCTAssertTrue(nonexistent.issues.contains(.missingRoot))
+        let unreadable = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root)], uptimeMs: 0,
+            readMetadata: { url in
+                if url != root { throw CocoaError(.fileReadNoPermission) }
+                return .init(isDirectory: true, isRegularFile: false, allocatedBytes: nil, modifiedAt: nil)
+            }
+        )
+        XCTAssertEqual(unreadable.issues, [.resourceError])
+        XCTAssertTrue(unreadable.buckets.isEmpty)
+        let unavailableSize = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root)], uptimeMs: 0,
+            readMetadata: { url in
+                .init(isDirectory: url == root, isRegularFile: url != root,
+                      allocatedBytes: nil, modifiedAt: self.epoch)
+            }
+        )
+        XCTAssertEqual(unavailableSize.issues, [.resourceError])
+        let unavailableMtime = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root)], uptimeMs: 0,
+            readMetadata: { url in
+                .init(isDirectory: url == root, isRegularFile: url != root,
+                      allocatedBytes: 4096, modifiedAt: nil)
+            }
+        )
+        XCTAssertEqual(unavailableMtime.issues, [.resourceError])
+        XCTAssertEqual(unavailableMtime.buckets.first?.files, 1)
+    }
+
+    func testAnyPartialEndpointSuppressesComparisonIncludingPartialBaseline() {
+        let complete = snapshot([.init(path: "ag/cache", files: 1, bytes: 4096)])
+        for reason in [NEDiskCensus.IncompleteReason.entryCap, .timeLimit, .cancelled,
+                       .enumerationError, .resourceError, .missingRoot] {
+            let partial = snapshot([], time: 900_000, issues: [reason])
+            XCTAssertNil(NEDiskCensus.compare(before: complete, after: partial))
+            XCTAssertNil(NEDiskCensus.compare(before: partial, after: complete))
+            XCTAssertTrue(NEDiskCensus.renderComparison(before: partial, after: complete).contains("suppressed"))
+        }
+    }
+
+    func testTotalsIncludeAllBucketsBeforeTopSixAndRankLossesAheadOfZeros() throws {
+        let before = snapshot([
+            .init(path: "ag/storage", files: 1, bytes: 50 * 1024),
+            .init(path: "ag/Library", files: 1, bytes: 1024)
+        ])
+        let categories = ["cache", "messages", "identities", "ratchets", "resources", "packets", "lxmf-storage"]
+        let after = snapshot([
+            .init(path: "ag/Library", files: 1, bytes: 1024)
+        ] + categories.map { .init(path: "ag/\($0)", files: 1, bytes: 10 * 1024) }, time: 900_000)
+        let comparison = try XCTUnwrap(NEDiskCensus.compare(before: before, after: after))
+        XCTAssertEqual(comparison.totalBytes, 20 * 1024)
+        XCTAssertEqual(comparison.totalFiles, 6)
+        XCTAssertEqual(comparison.changes.count, 8)
+        XCTAssertEqual(comparison.changes.first?.path, "ag/storage")
+        XCTAssertEqual(comparison.changes.first?.bytes, -50 * 1024)
+        XCTAssertFalse(comparison.changes.contains { $0.path == "ag/Library" })
+        let line = NEDiskCensus.renderComparison(before: before, after: after)
+        XCTAssertTrue(line.contains("net allocated +20KiB +6f"))
+        XCTAssertEqual(line.components(separatedBy: " mtime=").count - 1, 6)
+        XCTAssertFalse(line.contains("KB/s"))
+        XCTAssertFalse(line.contains("allowance"))
+    }
+
+    func testSameSizeOverwriteIsObservedByMtimeWithoutInventingBytesWritten() throws {
+        let root = try temporaryRoot()
+        let url = try file("Columba/python-current/cache/announces/file", in: root, modifiedAt: epoch.addingTimeInterval(-10))
+        let roots = [NEDiskCensus.Root(label: "ag", url: root)]
+        let before = NEDiskCensus.snapshot(
+            roots: roots, uptimeMs: 0, observedAt: epoch, readMetadata: fixedAllocationMetadata
+        )
+        // Real same-size overwrite. The fixed metadata reader makes allocation
+        // deterministic across filesystems while still reading the real mtime.
+        try Data(repeating: 2, count: 4096).write(to: url)
+        let changedAt = epoch.addingTimeInterval(10)
+        try FileManager.default.setAttributes([.modificationDate: changedAt], ofItemAtPath: url.path)
+        let after = NEDiskCensus.snapshot(
+            roots: roots, uptimeMs: 30_000, observedAt: epoch.addingTimeInterval(30), modifiedSince: before.observedAt,
+            readMetadata: fixedAllocationMetadata
+        )
+        XCTAssertTrue(before.isComplete)
+        XCTAssertTrue(after.isComplete)
+        XCTAssertEqual(before.buckets.first?.bytes, after.buckets.first?.bytes)
+        XCTAssertEqual(after.buckets.first?.modifiedFiles, 1)
+        XCTAssertEqual(after.buckets.first?.latestModification, changedAt)
+        let comparison = try XCTUnwrap(NEDiskCensus.compare(before: before, after: after))
+        XCTAssertEqual(comparison.totalBytes, 0)
+        XCTAssertEqual(comparison.modifiedFiles, 1)
+        XCTAssertEqual(comparison.changes.count, 1)
+        XCTAssertEqual(comparison.changes.first?.path, "ag/cache/announces")
+        let line = NEDiskCensus.renderComparison(before: before, after: after)
+        XCTAssertTrue(line.contains("net allocated +0KiB"))
+        XCTAssertTrue(line.contains("observed-files=1"))
+        XCTAssertTrue(line.contains("incomplete mtime observation"))
+    }
+
+    func testMtimeAggregationCountsOnlySurvivingFilesNewerThanPreviousSnapshot() throws {
+        let root = try temporaryRoot()
+        try file("cache/announces/old", in: root, modifiedAt: epoch.addingTimeInterval(-1))
+        try file("cache/announces/equal", in: root, modifiedAt: epoch)
+        try file("cache/announces/new", in: root, modifiedAt: epoch.addingTimeInterval(2))
+        try file("cache/announces/newer", in: root, modifiedAt: epoch.addingTimeInterval(3))
+        let result = NEDiskCensus.snapshot(
+            roots: [.init(label: "ag", url: root)], uptimeMs: 10_000,
+            observedAt: epoch.addingTimeInterval(10), modifiedSince: epoch
+        )
+        XCTAssertTrue(result.isComplete)
+        XCTAssertEqual(result.buckets.count, 1)
+        XCTAssertEqual(result.buckets.first?.files, 4)
+        XCTAssertEqual(result.buckets.first?.modifiedFiles, 2)
+        XCTAssertEqual(result.buckets.first?.latestModification, epoch.addingTimeInterval(3))
     }
 }

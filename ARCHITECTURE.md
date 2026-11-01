@@ -32,6 +32,8 @@ Before foreground startup, the app stops the existing tunnel, then disables VPN 
 
 Both hosts use the same per-identity App Group directory, shared keychain identity, and GRDB message store. A one-time migration copies missing legacy app-local RNS state without replacing newer shared state. The existing GRDB migration owns SQLite/WAL/SHM consistency.
 
+`NEDiskCensus` observes storage occupancy, net change between complete scans, and modification metadata. It does not attribute writes to individual files, measure iOS-charged write bytes or page accounting, or establish the cause of a resource-budget violation. Its read-only, low-memory scans are bounded and cancellable, and diagnostics contain no PII: only sanitized directory buckets, never raw paths or filenames. Incomplete scans are explicitly marked and excluded from comparisons.
+
 Python projects inbound messages into the shared store. `NodeInboundReplay` runs the common app field-processing path, including reactions, replies, telemetry, and attachments. Propagation synchronization awaits replay catch-up. The durable event inbox remains bounded and is acknowledged only after consumption. Stable send IDs and the durable outbox carry complete fields and propagated fallback across host/process restarts.
 
 App-side GRDB pools opt into explicit suspension notifications. `DatabaseSuspensionController` bridges process-level UIKit background/foreground notifications to GRDB: without foreground execution or a live system background-task grant, writes are interrupted and new lock-taking accesses are refused. The bridge is installed at app launch, independently of SwiftUI scenes. Notifications remain inside the app process; backgrounding the UI does not suspend the Network Extension's database.

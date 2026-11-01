@@ -1,305 +1,309 @@
-//
-// NEDiskCensus.swift
-// Columba Shared
-//
-// Attributes the Network Extension's disk writes to a DIRECTORY.
-//
-// -- WHY THIS EXISTS ---------------------------------------------------------
-// The NE sustains roughly 100 KB/s of writes — measured from the memory ring's
-// `ri_diskio_byteswritten` counter: one 9.4 h generation dirtied 3.9 GB, about
-// 732x the per-day file-backed-write allowance iOS enforces on background
-// processes. Sustaining that is the most likely way this process gets throttled
-// or killed next, and the ring answers only HOW MUCH was written, never WHERE.
-//
-// Nothing outside this process can answer where either. The container lives
-// inside the NE's own sandbox and a non-jailbroken device gives the host no AFC
-// access to another process's files, so `devicectl` can pull a file we already
-// know the path of but cannot enumerate the tree. The NE has to walk its own
-// container and write the answer down.
-//
-// -- WHAT IT RECORDS ---------------------------------------------------------
-// Per-directory file count + total allocated bytes, snapshotted on a 15-minute
-// cadence, with the delta since the previous snapshot logged. Directory
-// granularity is deliberate: it names the writer (RNS's announce cache, LXMF
-// message storage, the SQLite WAL, Python's `__pycache__`) without copying the
-// container's file list into a log that leaves the device.
-//
-// Allocated size, not logical size, is what gets compared. The OS write
-// allowance is charged against file-backed memory, which is page-granular, so
-// thousands of 150-byte files cost far more against the allowance than their
-// byte sum suggests — and a census that reported logical bytes would hide
-// exactly the churn pattern that matters.
-//
-// -- NO-PII CONTRACT (HARD RULE) ---------------------------------------------
-// Lines carry bucket names and numbers ONLY. A bucket name is a container-
-// RELATIVE directory path at bounded depth. File names never appear. Absolute
-// paths never appear. Any component that looks like an identifier (16+ hex
-// chars — a destination hash, a packet hash) is masked, because RNS stores
-// message data under `messages/<dest_hash>/` and LXMF caches announces under
-// their packet hash. See the `ExtensionDiagLog` header for the full contract.
-//
-// -- COST --------------------------------------------------------------------
-// Read-only, one bounded tree walk per interval, on a background-QoS native
-// thread (same reasoning as `NEMemoryTrace`: the NE's main dispatch thread is
-// blocked during bring-up and announce floods). The census must never become
-// the thing it is measuring.
+// Read-only, bounded observations of the NE's directory layout and modification
+// times. Allocated-size changes are not disk writes: overwrites, deletions and
+// filesystem allocation behavior prevent using this census as throughput.
+// Only fixed directory vocabulary is emitted; filenames and arbitrary paths
+// never leave the scanner.
 
 import Foundation
 
-public enum NEDiskCensus {
-
-    // MARK: - Model
-
-    /// One directory bucket: how many files it holds and their allocated size.
-    public struct Bucket: Equatable, Sendable {
-        /// Container-relative directory path, hash-like components masked.
-        public let path: String
-        public let files: Int
-        public let bytes: Int64
-
-        public init(path: String, files: Int, bytes: Int64) {
-            self.path = path
-            self.files = files
-            self.bytes = bytes
-        }
+enum NEDiskCensus {
+    struct Bucket: Equatable, Sendable {
+        let path: String
+        var files: Int = 0
+        var bytes: Int64 = 0
+        var latestModification: Date?
+        var modifiedFiles: Int = 0
     }
 
-    /// A whole-container snapshot.
-    public struct Snapshot: Sendable {
-        public let uptimeMs: Int64
-        public let buckets: [Bucket]
-
-        public init(uptimeMs: Int64, buckets: [Bucket]) {
-            self.uptimeMs = uptimeMs
-            self.buckets = buckets
-        }
+    enum IncompleteReason: String, Hashable, Sendable {
+        case entryCap = "entry-cap"
+        case timeLimit = "time-limit"
+        case cancelled
+        case enumerationError = "enumeration-error"
+        case resourceError = "resource-error"
+        case missingRoot = "missing-root"
     }
 
-    /// Change in one bucket between two snapshots. A bucket that vanished
-    /// entirely reports its whole former contents as a loss — deleting a
-    /// thousand files is churn too, and the sawtooth is the signal.
-    public struct Growth: Equatable, Sendable {
-        public let path: String
-        public let files: Int
-        public let bytes: Int64
+    struct Snapshot: Sendable {
+        let uptimeMs: Int64
+        let observedAt: Date
+        let modifiedSince: Date?
+        let buckets: [Bucket]
+        var issues: Set<IncompleteReason> = []
+        var visitedEntries: Int = 0
 
-        public init(path: String, files: Int, bytes: Int64) {
-            self.path = path
-            self.files = files
-            self.bytes = bytes
-        }
+        var isComplete: Bool { issues.isEmpty }
     }
 
-    // MARK: - Tuning
+    struct Change: Equatable, Sendable {
+        let path: String
+        let files: Int
+        let bytes: Int64
+        let modifiedFiles: Int
+        let latestModification: Date?
+    }
 
-    /// Path components that form a bucket key. Two is enough to separate
-    /// `cache/announces` from `storage/identities` without approaching
-    /// per-file granularity.
+    struct Comparison: Sendable {
+        /// All changes, not just the displayed top buckets.
+        let changes: [Change]
+        let totalFiles: Int
+        let totalBytes: Int64
+        let modifiedFiles: Int
+    }
+
+    struct Root {
+        let label: String
+        let url: URL?
+    }
+
+    struct Metadata {
+        let isDirectory: Bool
+        let isRegularFile: Bool
+        let allocatedBytes: Int64?
+        let modifiedAt: Date?
+    }
+
     static let bucketDepth = 2
-
-    /// Files that look like identifiers get masked, not logged.
-    static let hashComponentMinLength = 16
-
-    /// Walk bound: a churning cache can hold tens of thousands of files, and a
-    /// census that spins the CPU for minutes defeats its own purpose. Truncation
-    /// is reported rather than hidden.
     static let maxEntries = 20_000
-
-    /// Buckets per log line.
+    static let maxScanSeconds: TimeInterval = 5
     static let topBuckets = 6
+    static let intervalSeconds: TimeInterval = 15 * 60
 
-    /// Between snapshots. Matches RNS's `Reticulum.CLEAN_INTERVAL` (15 min) so
-    /// the announce-cache churn shows up as a sawtooth instead of being
-    /// averaged away across a longer window.
-    public static let intervalSeconds: Double = 15 * 60
+    // A closed vocabulary also masks non-hex PII, Unicode, control characters,
+    // and identifier strings with a harmless-looking prefix or suffix.
+    private static let safeDirectories: Set<String> = [
+        "Columba", "cache", "announces", "storage", "identities", "messages",
+        "lxmf-storage", "lxmf", "LXMF", "ratchets", "resources", "packets",
+        "__pycache__", "Library", "Caches", "Application Support", "Documents",
+        "tmp", "logs", "inbox", "outbox", "propagation", "peers", "reticulum"
+    ]
 
-    // MARK: - Pure core (no filesystem, fully testable)
-
-    /// Bucket key for a container-relative file path: the root label plus up to
-    /// `bucketDepth` DIRECTORY components, identifier-like ones masked, file name
-    /// dropped. The label is not part of the depth budget — it is what keeps the
-    /// App-Group container and the temp dir from merging into one bucket, and
-    /// counting it would collapse `ag/cache/announces` into `ag/cache` and throw
-    /// away the attribution the whole census exists to provide. A file sitting at
-    /// a container root buckets under the bare label.
-    public static func bucketKey(forRelativePath path: String) -> String {
-        let components = path.split(separator: "/", omittingEmptySubsequences: true)
-        guard components.count > 1 else { return "/" }
-        let label = String(components[0])
-        let directories = components[1..<(components.count - 1)].prefix(bucketDepth).map { mask($0) }
-        return ([label] + directories).joined(separator: "/")
-    }
-
-    /// `«hash»` for anything that reads as a raw identifier — 16+ hex chars is
-    /// an RNS destination (16 bytes) or packet (16 bytes) hash. Everything else
-    /// passes through: `announces`, `identities`, `Database` are the names we
-    /// need to see.
-    static func mask(_ component: some StringProtocol) -> String {
-        let text = String(component)
-        guard text.count >= hashComponentMinLength else { return text }
-        return text.allSatisfy(\.isHexDigit) ? "«hash»" : text
-    }
-
-    /// Aggregate file entries into buckets, largest first (ties by name, so the
-    /// ordering is stable and the log is diffable).
-    public static func buckets(from entries: [(path: String, size: Int64)]) -> [Bucket] {
-        var fileCount: [String: Int] = [:]
-        var byteCount: [String: Int64] = [:]
-        for entry in entries {
-            let key = bucketKey(forRelativePath: entry.path)
-            fileCount[key, default: 0] += 1
-            byteCount[key, default: 0] += entry.size
+    private static func containsIdentifier(_ text: some StringProtocol) -> Bool {
+        var run = 0
+        for byte in text.utf8 {
+            if (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte) {
+                run += 1
+                if run >= 16 { return true }
+            } else {
+                run = 0
+            }
         }
-        return byteCount
-            .map { Bucket(path: $0.key, files: fileCount[$0.key] ?? 0, bytes: $0.value) }
-            .sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.path < $1.path }
+        return false
     }
 
-    /// Per-bucket change, largest gain first. Buckets present only in `before`
-    /// are included as losses.
-    public static func growth(before: Snapshot, after: Snapshot, limit: Int) -> [Growth] {
-        let afterByKey = Dictionary(after.buckets.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        var deltas: [Growth] = []
-        deltas.reserveCapacity(after.buckets.count + before.buckets.count)
+    private static func isPythonWrapper(_ text: Substring) -> Bool {
+        if text == "python-current" { return true }
+        guard text.hasPrefix("python-") else { return false }
+        let suffix = text.dropFirst("python-".count)
+        return suffix.count >= 16 && suffix.utf8.allSatisfy {
+            (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
+        }
+    }
 
-        for bucket in after.buckets {
-            let previous = before.buckets.first { $0.path == bucket.path }
-            deltas.append(Growth(
-                path: bucket.path,
-                files: bucket.files - (previous?.files ?? 0),
-                bytes: bucket.bytes - (previous?.bytes ?? 0)
+    static func bucketKey(forRelativePath path: String) -> String {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard let first = components.first else { return "«other»" }
+        let label = first == "ag" || first == "tmp" ? String(first) : "«other»"
+        guard components.count > 1 else { return label }
+        var directories = components.dropFirst().dropLast()
+        // The app stores RNS under ag/Columba/python-current (or an identity
+        // generation). These wrappers must not consume the attribution depth.
+        if directories.first == "Columba" {
+            directories = directories.dropFirst()
+        }
+        if let wrapper = directories.first, isPythonWrapper(wrapper) {
+            directories = directories.dropFirst()
+        }
+        let safe = directories.prefix(bucketDepth).map { component -> String in
+            if containsIdentifier(component) { return "«hash»" }
+            let text = String(component)
+            return safeDirectories.contains(text) ? text : "«other»"
+        }
+        return ([label] + safe).joined(separator: "/")
+    }
+
+    static func compare(before: Snapshot, after: Snapshot) -> Comparison? {
+        guard before.isComplete, after.isComplete else { return nil }
+        let old = Dictionary(before.buckets.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let new = Dictionary(after.buckets.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        var changes: [Change] = []
+        var totalFiles = 0
+        var totalBytes: Int64 = 0
+        var modifiedFiles = 0
+        for key in Set(old.keys).union(new.keys) {
+            let files = (new[key]?.files ?? 0) - (old[key]?.files ?? 0)
+            let bytes = (new[key]?.bytes ?? 0) - (old[key]?.bytes ?? 0)
+            let modified = after.modifiedSince == before.observedAt ? (new[key]?.modifiedFiles ?? 0) : 0
+            totalFiles += files
+            totalBytes += bytes
+            modifiedFiles += modified
+            guard files != 0 || bytes != 0 || modified != 0 else { continue }
+            changes.append(Change(
+                path: key, files: files, bytes: bytes, modifiedFiles: modified,
+                latestModification: new[key]?.latestModification
             ))
         }
-        for previous in before.buckets where afterByKey[previous.path] == nil {
-            deltas.append(Growth(path: previous.path, files: -previous.files, bytes: -previous.bytes))
+        changes.sort {
+            if $0.bytes.magnitude != $1.bytes.magnitude { return $0.bytes.magnitude > $1.bytes.magnitude }
+            if $0.modifiedFiles != $1.modifiedFiles { return $0.modifiedFiles > $1.modifiedFiles }
+            if $0.files.magnitude != $1.files.magnitude { return $0.files.magnitude > $1.files.magnitude }
+            return $0.path < $1.path
         }
-        return Array(deltas
-            .sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.path < $1.path }
-            .prefix(limit))
+        return Comparison(changes: changes, totalFiles: totalFiles, totalBytes: totalBytes, modifiedFiles: modifiedFiles)
     }
 
-    /// Boot line: the absolute layout, so the next pull has a starting point.
-    public static func renderAbsolute(_ snapshot: Snapshot, truncated: Bool) -> String {
+    private static func kib(_ bytes: Int64) -> Int64 { bytes / 1024 }
+    private static func signed(_ value: Int64) -> String { value >= 0 ? "+\(value)" : "\(value)" }
+    private static func mtime(_ date: Date?) -> String {
+        date.map { String(Int64($0.timeIntervalSince1970)) } ?? "unknown"
+    }
+
+    static func renderAbsolute(_ snapshot: Snapshot) -> String {
         let totalBytes = snapshot.buckets.reduce(Int64(0)) { $0 + $1.bytes }
         let totalFiles = snapshot.buckets.reduce(0) { $0 + $1.files }
-        let top = snapshot.buckets.prefix(topBuckets)
-            .map { "\($0.path)=\($0.files)f/\(kib($0.bytes))KB" }
-            .joined(separator: " ")
-        return "census boot: \(totalFiles)f/\(kib(totalBytes))KB in \(snapshot.buckets.count) dirs"
-            + (truncated ? " (walk capped at \(maxEntries))" : "")
-            + " [\(top)]"
+        let top = snapshot.buckets.prefix(topBuckets).map {
+            "\($0.path)=\($0.files)f/\(kib($0.bytes))KiB mtime=\(mtime($0.latestModification))"
+        }.joined(separator: " ")
+        let status = snapshot.isComplete ? "complete" : "partial:" + snapshot.issues.map(\.rawValue).sorted().joined(separator: ",")
+        return "census layout \(status) visited=\(snapshot.visitedEntries) \(totalFiles)f/\(kib(totalBytes))KiB allocated [\(top)]"
     }
 
-    /// Delta line: which directory grew, and the resulting rate. The rate is
-    /// printed next to the total so the line can be compared directly against the
-    /// 0.14 KB/s allowance the Memory screen charts — which is also why it carries
-    /// two decimals: at one decimal a quiet window renders as `0.0 KB/s` and the
-    /// comparison against the allowance silently disappears.
-    public static func renderGrowth(_ deltas: [Growth], windowSeconds: Double) -> String {
-        let totalBytes = deltas.reduce(Int64(0)) { $0 + $1.bytes }
-        let rate = windowSeconds > 0 ? Double(totalBytes) / windowSeconds / 1024.0 : 0
-        let top = deltas.map { delta -> String in
-            let sign = delta.bytes < 0 ? "-" : "+"
-            let fileSign = delta.files < 0 ? "-" : "+"
-            return "\(delta.path)=\(fileSign)\(abs(delta.files))f/\(sign)\(kib(abs(delta.bytes)))KB"
-            }
-            .joined(separator: " ")
-        let totalSign = totalBytes < 0 ? "-" : "+"
-        return "census Δ\(Int(windowSeconds))s total \(totalSign)\(kib(abs(totalBytes)))KB "
-            + "(\(String(format: "%.2f", rate)) KB/s) [\(top)]"
-    }
-
-    private static func kib(_ bytes: Int64) -> Int64 {
-        (bytes + 512) / 1024
-    }
-
-    // MARK: - Filesystem
-
-    /// Roots to walk, each with a short label so buckets from different
-    /// containers cannot collide. `nil` roots (no App-Group entitlement, e.g. a
-    /// test runner) are skipped rather than fatal.
-    public static func defaultRoots() -> [(label: String, url: URL)] {
-        var roots: [(String, URL)] = []
-        if let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) {
-            roots.append(("ag", container))
+    static func renderComparison(before: Snapshot, after: Snapshot) -> String {
+        guard let comparison = compare(before: before, after: after) else {
+            return "census comparison suppressed (partial snapshot); " + renderAbsolute(after)
         }
-        roots.append(("tmp", URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)))
-        return roots
+        let top = comparison.changes.prefix(topBuckets).map {
+            "\($0.path)=\(signed(Int64($0.files)))f/\(signed(kib($0.bytes)))KiB modified=\($0.modifiedFiles) mtime=\(mtime($0.latestModification))"
+        }.joined(separator: " ")
+        let observation = after.modifiedSince == before.observedAt
+            ? "modified-since=\(mtime(after.modifiedSince)) observed-files=\(comparison.modifiedFiles)"
+            : "modification-window=unavailable"
+        return "census Δ\(max(0, after.uptimeMs - before.uptimeMs) / 1000)s net allocated \(signed(kib(comparison.totalBytes)))KiB \(signed(Int64(comparison.totalFiles)))f; "
+            + "\(observation) (incomplete mtime observation, not bytes written or throughput) [\(top)]"
     }
 
-    /// Bounded, read-only walk. Returns container-relative paths prefixed with
-    /// the root label, plus allocated size. `truncated` is true when the walk hit
-    /// `cap`, so a capped census is never mistaken for a complete one. `cap` is a
-    /// test seam; production always walks with `maxEntries`.
-    ///
-    /// Internal, not public: a default argument may not reference an `internal`
-    /// bound, and `maxEntries` is an implementation detail, not API. Tests reach
-    /// this through `@testable import`.
-    static func entries(
-        root: URL, label: String, cap: Int = maxEntries
-    ) -> (entries: [(path: String, size: Int64)], truncated: Bool) {
-        let base = root.path
-        guard let walker = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileSizeKey],
-            options: [],
-            errorHandler: { _, _ in true }   // unreadable subdirectory: skip, keep walking
-        ) else {
-            return ([], false)
-        }
-        var collected: [(path: String, size: Int64)] = []
-        for case let url as URL in walker {
-            if collected.count >= cap { return (collected, true) }
-            guard let values = try? url.resourceValues(
-                forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileSizeKey]
-            ), values.isRegularFile == true else { continue }
-            // Allocated size is the page-granular number; logical size is the
-            // fallback for filesystems that do not report it.
-            let size = Int64(values.totalFileAllocatedSize ?? values.fileSize ?? 0)
-            var relative = url.path
-            if relative.hasPrefix(base) { relative.removeFirst(base.count) }
-            while relative.hasPrefix("/") { relative.removeFirst() }
-            guard !relative.isEmpty else { continue }
-            collected.append((path: "\(label)/\(relative)", size: size))
-        }
-        return (collected, false)
+    static func defaultRoots() -> [Root] {
+        [
+            Root(label: "ag", url: FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)),
+            Root(label: "tmp", url: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true))
+        ]
     }
 
-    /// One snapshot across every root. Internal for the same reason as `entries`.
+    private static let resourceKeys: Set<URLResourceKey> = [
+        .isDirectoryKey, .isRegularFileKey, .totalFileAllocatedSizeKey,
+        .fileAllocatedSizeKey, .contentModificationDateKey
+    ]
+
+    private static func metadata(at url: URL) throws -> Metadata {
+        let values = try url.resourceValues(forKeys: resourceKeys)
+        return Metadata(
+            isDirectory: values.isDirectory == true,
+            isRegularFile: values.isRegularFile == true,
+            allocatedBytes: (values.totalFileAllocatedSize ?? values.fileAllocatedSize).map { Int64($0) },
+            modifiedAt: values.contentModificationDate
+        )
+    }
+
+    /// Streaming aggregation retains only bounded, sanitized bucket names.
+    /// The deadline and cancellation are cooperative between filesystem calls.
     static func snapshot(
-        roots: [(label: String, url: URL)], uptimeMs: Int64, cap: Int = maxEntries
-    ) -> (Snapshot, Bool) {
-        var collected: [(path: String, size: Int64)] = []
-        var truncated = false
-        for root in roots {
-            let walk = entries(root: root.url, label: root.label, cap: cap)
-            collected.append(contentsOf: walk.entries)
-            truncated = truncated || walk.truncated
-        }
-        return (Snapshot(uptimeMs: uptimeMs, buckets: buckets(from: collected)), truncated)
-    }
+        roots: [Root], uptimeMs: Int64, observedAt: Date = Date(), modifiedSince: Date? = nil,
+        cap: Int = maxEntries, timeLimit: TimeInterval = maxScanSeconds,
+        isCancelled: @escaping () -> Bool = { false },
+        monotonicNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        readMetadata: (URL) throws -> Metadata = metadata
+    ) -> Snapshot {
+        let deadline = monotonicNow() + max(0, timeLimit)
+        var issues: Set<IncompleteReason> = []
+        var visited = 0
+        var buckets: [String: Bucket] = [:]
 
-    // MARK: - Census thread
+        func interrupted() -> Bool {
+            if isCancelled() { issues.insert(.cancelled); return true }
+            if monotonicNow() >= deadline { issues.insert(.timeLimit); return true }
+            return false
+        }
+        func admitEntry() -> Bool {
+            guard !interrupted() else { return false }
+            guard visited < max(0, cap) else { issues.insert(.entryCap); return false }
+            visited += 1
+            return true
+        }
+
+        if roots.isEmpty { issues.insert(.missingRoot) }
+        rootLoop: for root in roots {
+            guard !interrupted() else { break }
+            guard let requestedURL = root.url else { issues.insert(.missingRoot); continue }
+            // Foundation can enumerate a canonical /private/var URL even when
+            // the requested root uses /var (or another symlink alias).
+            let url = requestedURL.resolvingSymlinksInPath().standardizedFileURL
+            // Root directories count against the same budget as descendants.
+            guard admitEntry() else { break }
+            do {
+                guard try readMetadata(url).isDirectory else { issues.insert(.missingRoot); continue }
+            } catch {
+                issues.insert(.missingRoot)
+                issues.insert(.resourceError)
+                continue
+            }
+            guard !interrupted() else { break }
+            guard let walker = FileManager.default.enumerator(
+                at: url, includingPropertiesForKeys: Array(resourceKeys), options: [],
+                errorHandler: { _, _ in issues.insert(.enumerationError); return !interrupted() }
+            ) else {
+                issues.insert(.enumerationError)
+                continue
+            }
+            let base = url.path.hasSuffix("/") ? url.path : url.path + "/"
+            while !interrupted() {
+                guard let entry = walker.nextObject() as? URL else { break }
+                guard admitEntry() else { break rootLoop }
+                do {
+                    let values = try readMetadata(entry)
+                    guard !interrupted() else { break rootLoop }
+                    guard values.isRegularFile else { continue }
+                    guard let bytes = values.allocatedBytes, bytes >= 0 else {
+                        issues.insert(.resourceError)
+                        continue
+                    }
+                    if values.modifiedAt == nil { issues.insert(.resourceError) }
+                    let entryPath = entry.resolvingSymlinksInPath().standardizedFileURL.path
+                    guard entryPath.hasPrefix(base) else { issues.insert(.resourceError); continue }
+                    let relative = entryPath.dropFirst(base.count)
+                    let key = bucketKey(forRelativePath: "\(root.label)/\(relative)")
+                    var bucket = buckets[key] ?? Bucket(path: key)
+                    bucket.files += 1
+                    bucket.bytes += bytes
+                    if let modified = values.modifiedAt {
+                        if bucket.latestModification == nil || modified > bucket.latestModification! {
+                            bucket.latestModification = modified
+                        }
+                        if let since = modifiedSince, modified > since { bucket.modifiedFiles += 1 }
+                    }
+                    buckets[key] = bucket
+                } catch {
+                    issues.insert(.resourceError)
+                }
+            }
+        }
+        return Snapshot(
+            uptimeMs: uptimeMs, observedAt: observedAt, modifiedSince: modifiedSince,
+            buckets: buckets.values.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.path < $1.path },
+            issues: issues, visitedEntries: visited
+        )
+    }
 
     private static let lock = NSLock()
     private static var censusRunning = false
-    /// Bumped on every `start()`. A thread only keeps running while its OWN
-    /// generation is current — a tunnel reconnect inside one process would
-    /// otherwise leave a second walker behind for the life of the process,
-    /// doubling the very I/O this instrument exists to measure.
     private static var censusGeneration = 0
 
-    /// Start the census. Idempotent within a process.
-    public static func start() {
+    static func start() {
         lock.lock()
         defer { lock.unlock() }
         guard !censusRunning else { return }
         censusRunning = true
         censusGeneration += 1
         let generation = censusGeneration
-
         let thread = Thread { runCensusLoop(generation: generation) }
         thread.name = "columba.disk-census"
         thread.qualityOfService = .background
@@ -307,10 +311,10 @@ public enum NEDiskCensus {
         thread.start()
     }
 
-    /// Ask the census to stop; it exits within one second of its current sleep.
-    public static func stop() {
+    static func stop() {
         lock.lock()
         censusRunning = false
+        censusGeneration += 1
         lock.unlock()
     }
 
@@ -320,32 +324,42 @@ public enum NEDiskCensus {
         return censusRunning && generation == censusGeneration
     }
 
+    private static func logIfCurrent(_ line: String, generation: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        // Serializing publication with stop prevents a completed old scan from
+        // logging after stop or into a later start's generation.
+        guard censusRunning && generation == censusGeneration else { return }
+        ExtensionDiagLog.log(line)
+    }
+
+    private static func scan(roots: [Root], since: Date?, generation: Int) -> Snapshot {
+        #if canImport(Darwin)
+        return autoreleasepool {
+            snapshot(roots: roots, uptimeMs: Clocks.now().uptimeMs, modifiedSince: since,
+                     isCancelled: { !isCurrent(generation) })
+        }
+        #else
+        return snapshot(roots: roots, uptimeMs: Clocks.now().uptimeMs, modifiedSince: since,
+                        isCancelled: { !isCurrent(generation) })
+        #endif
+    }
+
     private static func runCensusLoop(generation: Int) {
+        guard isCurrent(generation) else { return }
         let roots = defaultRoots()
-        guard !roots.isEmpty else { return }
-
-        var (previous, truncated) = snapshot(roots: roots, uptimeMs: Clocks.now().uptimeMs)
-        ExtensionDiagLog.log(renderAbsolute(previous, truncated: truncated))
-        var lastUptimeMs = previous.uptimeMs
-
+        var previous = scan(roots: roots, since: nil, generation: generation)
+        logIfCurrent(renderAbsolute(previous), generation: generation)
         while isCurrent(generation) {
-            var slept: Double = 0
+            var slept: TimeInterval = 0
             while slept < intervalSeconds, isCurrent(generation) {
-                Thread.sleep(forTimeInterval: 1.0)
-                slept += 1.0
+                Thread.sleep(forTimeInterval: 1)
+                slept += 1
             }
-            guard isCurrent(generation) else { break }
-
-            let now = Clocks.now().uptimeMs
-            let (current, capped) = snapshot(roots: roots, uptimeMs: now)
-            // Uptime, not wall clock: the device sleeping must not be reported
-            // as a 15-minute window that wrote nothing.
-            let window = Double(now - lastUptimeMs) / 1000.0
-            let deltas = growth(before: previous, after: current, limit: topBuckets)
-            ExtensionDiagLog.log(renderGrowth(deltas, windowSeconds: window)
-                + (capped ? " (walk capped at \(maxEntries))" : ""))
+            guard isCurrent(generation) else { return }
+            let current = scan(roots: roots, since: previous.observedAt, generation: generation)
+            logIfCurrent(renderComparison(before: previous, after: current), generation: generation)
             previous = current
-            lastUptimeMs = now
         }
     }
 }

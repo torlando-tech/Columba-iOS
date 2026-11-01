@@ -68,11 +68,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // blocked during bring-up and announce floods.
         NEMemoryTrace.start()
 
-        // Disk-write attribution. The memory ring proves the NE writes ~100 KB/s
-        // sustained — ~732x the daily file-backed-write allowance — but cannot
-        // say which directory. Only this process can enumerate its own container,
-        // so the census walks it on a 15-minute cadence and logs the per-directory
-        // delta to ext-diag.log. Read-only, background QoS, bounded walk.
+        // Storage census: occupancy, net change, and modification metadata,
+        // not per-file write attribution or bytes charged by iOS. The read-only,
+        // low-memory scan is bounded and cancellable; logs contain no PII.
+        // Incomplete scans are marked and excluded from comparisons.
         NEDiskCensus.start()
 
         // SINGLE RUNTIME: Python RNS is the only Reticulum runtime in the NE.
