@@ -68,6 +68,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // blocked during bring-up and announce floods.
         NEMemoryTrace.start()
 
+        // Storage census: occupancy, net change, and modification metadata,
+        // not per-file write attribution or bytes charged by iOS. The read-only,
+        // low-memory scan is bounded and cancellable; logs contain no PII.
+        // Incomplete scans are marked and excluded from comparisons.
+        NEDiskCensus.start()
+
         // SINGLE RUNTIME: Python RNS is the only Reticulum runtime in the NE.
         // Initialize CPython here (non-blocking - it must never gate tunnel
         // bring-up). The actual node is brought up lazily when the app's first
@@ -139,6 +145,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // Writing this marker is what lets the app tell a clean teardown from a
         // kill. A memory kill never reaches here, so its absence is the signal.
         NEMemoryTrace.recordStop(reason: reason.rawValue)
+        NEDiskCensus.stop()
 
         // Track C3: tear down the in-NE node. Stopping the node drops its TCP
         // relay interface + AppGroupBridge. Fire-and-forget — teardown is

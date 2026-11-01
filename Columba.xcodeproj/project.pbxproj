@@ -263,6 +263,9 @@
 		NMT1B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
 		NMT2B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
 		NMTTB /* NEMemoryTraceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTTSF /* NEMemoryTraceTests.swift */; };
+		NDC1B /* NEDiskCensus.swift in Sources */ = {isa = PBXBuildFile; fileRef = NDCF /* NEDiskCensus.swift */; };
+		NDC2B /* NEDiskCensus.swift in Sources */ = {isa = PBXBuildFile; fileRef = NDCF /* NEDiskCensus.swift */; };
+		NDCTB /* NEDiskCensusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = NDCTSF /* NEDiskCensusTests.swift */; };
 		NMV1B /* NEMemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMVF /* NEMemoryView.swift */; };
 		NRRB_NE /* PythonRNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */; };
 		OBQ2B /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
@@ -559,6 +562,8 @@
 		NMHF /* NEMemoryHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/NEMemoryHistory.swift; sourceTree = SOURCE_ROOT; };
 		NMTF /* NEMemoryTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NEMemoryTrace.swift; sourceTree = SOURCE_ROOT; };
 		NMTTSF /* NEMemoryTraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/NEMemoryTraceTests.swift; sourceTree = SOURCE_ROOT; };
+		NDCF /* NEDiskCensus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NEDiskCensus.swift; sourceTree = SOURCE_ROOT; };
+		NDCTSF /* NEDiskCensusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/NEDiskCensusTests.swift; sourceTree = SOURCE_ROOT; };
 		NMVF /* NEMemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Settings/NEMemoryView.swift; sourceTree = SOURCE_ROOT; };
 		OBQF /* OutboxQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/OutboxQueue.swift; sourceTree = SOURCE_ROOT; };
 		OGFWR01 /* OggOpusFileWriterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/OggOpusFileWriterTests.swift; sourceTree = SOURCE_ROOT; };
@@ -1033,6 +1038,7 @@
 				F076 /* SharedFrameQueue.swift */,
 				EDLF /* ExtensionDiagLog.swift */,
 				NMTF /* NEMemoryTrace.swift */,
+				NDCF /* NEDiskCensus.swift */,
 				NMHF /* NEMemoryHistory.swift */,
 				NMVF /* NEMemoryView.swift */,
 				AGPF /* AppGroupPaths.swift */,
@@ -1110,6 +1116,7 @@
 				498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */,
 				CHF001 /* CallHistoryFormattingTests.swift */,
 				NMTTSF /* NEMemoryTraceTests.swift */,
+				NDCTSF /* NEDiskCensusTests.swift */,
 				CHRT01 /* CallHistoryRepositoryTests.swift */,
 				BGPSYNCTESTREF001 /* BackgroundPropagationSyncTests.swift */,
 				FT03 /* MicronParserTests.swift */,
@@ -1392,6 +1399,7 @@
 				NDDI_NE /* NERNodeDiagLogShim.swift in Sources */,
 				EDL2B /* ExtensionDiagLog.swift in Sources */,
 				NMT2B /* NEMemoryTrace.swift in Sources */,
+				NDC2B /* NEDiskCensus.swift in Sources */,
 				AGP2B /* AppGroupPaths.swift in Sources */,
 				AGB2B /* AppGroupBridgeInterface.swift in Sources */,
 				PXI2B /* ProxyIPC.swift in Sources */,
@@ -1531,6 +1539,7 @@
 				076B /* SharedFrameQueue.swift in Sources */,
 				EDL1B /* ExtensionDiagLog.swift in Sources */,
 				NMT1B /* NEMemoryTrace.swift in Sources */,
+				NDC1B /* NEDiskCensus.swift in Sources */,
 				NMH1B /* NEMemoryHistory.swift in Sources */,
 				NMV1B /* NEMemoryView.swift in Sources */,
 				AGP1B /* AppGroupPaths.swift in Sources */,
@@ -1613,6 +1622,7 @@
 				CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */,
 				CHF002 /* CallHistoryFormattingTests.swift in Sources */,
 				NMTTB /* NEMemoryTraceTests.swift in Sources */,
+				NDCTB /* NEDiskCensusTests.swift in Sources */,
 				CHRT02 /* CallHistoryRepositoryTests.swift in Sources */,
 				BGPSYNCTESTBUILD001 /* BackgroundPropagationSyncTests.swift in Sources */,
 				T003 /* MicronParserTests.swift in Sources */,
