@@ -61,10 +61,10 @@ if [ -n "${RETICULUM_LOCAL:-}" ]; then
 else
     RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_REF}"
 fi
-# LXMF is likewise pinned to the cooperative external-stamp producer commit.
+# LXMF includes coalesced stamp-cost persistence on the existing maintenance loop.
 # Point at a local working copy only when explicitly developing the fork:
 #   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh
-LXMF_REF="${LXMF_REF:-8912186e48b482a76bf04e2ac4b6c8940991aecc}"
+LXMF_REF="${LXMF_REF:-532558cc84b1435c958734ea4c509984bfd1e73e}"
 if [ -n "${LXMF_LOCAL:-}" ]; then
     echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
     LXMF_SPEC="$LXMF_LOCAL"
