@@ -1780,40 +1780,11 @@ def _delivery_callback(message: "LXMF.LXMessage") -> None:
     )
 
 
-# [MEM-LIMITS] Caps for the RNS tables that otherwise keep one record per peer
-# ever heard. RNS has NO config key for any of these -- every [reticulum]
-# option lives in Reticulum.py's config block and none of them bounds the path
-# table -- but they are plain `RNS.Transport` class attributes read at use time,
-# so a host can bound them without patching the fork.
-#
-# Why they are needed (2026-10-27 overnight trace): the NE footprint climbed
-# 21.2 MB -> 48.3 MB in 12 h with `limit_bytes_remaining` down to 1.7 MB at the
-# stop marker. The Linux harness reproduces it: `known_destinations` +
-# `path_table` + `path_states` retain ~967 B of live objects (424 B RSS) per
-# never-before-seen peer, the hub feeds ~1 new peer/s, and the only bound RNS
-# applies by default is a 7-day path timeout, which an overnight run never
-# reaches (12 h at 1/s is ~40k peers).
-#
-# Every value below is enforced by an existing RNS cull loop -- only the
-# threshold changes, not the policy. The NAMES differ by RNS version, so each
-# cap is applied only when the running RNS actually defines it (see
-# `_apply_memory_limits`): the payload on a device is whatever
-# `support/fetch-wheels.sh` unpacked, and RNS <= 1.5.x calls the path timeout
-# `DESTINATION_TIMEOUT` while 1.6.0 renamed it to `PATH_TIMEOUT` and added the
-# unused-pool target. Writing a name the running RNS never reads would make the
-# `[MEM] limits` line lie, so absent names are reported as skipped instead.
-#
-# Caveat on 1.6.0: `PATH_POOL_UNUSED_TARGET` and both linger rules key off
-# `path_used == 0`, so a peer we ever sent to (Transport.py sets IDX_PT_USED)
-# escapes them and is retained until `path_expiry`, stamped from PATH_TIMEOUT at
-# insert time. A week of retention is desktop policy; an hour is right for a
-# phone that can re-request a path on demand.
+# [MEM-LIMITS] Bound peer-cache occupancy without overriding RNS's
+# interface-dependent path expiry policy. These are Transport class attributes,
+# not reticulum.conf options; unsupported attributes are reported as inert.
+# The unused-path pool only bounds never-used paths, not all retained routes.
 _MEMORY_LIMITS: tuple[tuple[str, int], ...] = (
-    # Path retention after the last announce/liveness event, used or not
-    # (default 7 days in both layouts). Bounds known_destinations too: a
-    # pathless record is dropped shortly after its path goes.
-    ("DESTINATION_TIMEOUT", 60 * 60),   # RNS <= 1.5.x
-    ("PATH_TIMEOUT", 60 * 60),          # RNS >= 1.6.0
     # Unused path-table entries retained before the pool cull kicks in
     # (default 2048; each entry drags a known_destinations record with it).
     ("PATH_POOL_UNUSED_TARGET", 512),   # RNS >= 1.6.0
@@ -1838,13 +1809,10 @@ _MEMORY_LIMITS_DISABLED_ENV = "COLUMBA_RNS_UNCAPPED"
 
 
 def _apply_memory_limits() -> dict[str, int]:
-    """Set the leaf-appropriate memory caps on `RNS.Transport`. Idempotent.
+    """Apply supported cache caps without changing path expiration policy.
 
-    Only attributes the running RNS already defines are written: a cap RNS does
-    not read is inert. Must run before `RNS.Reticulum(...)` because 1.6.0 stamps
-    path expiry at insert time. Values are NOT reset on stop(): the class
-    attributes are process-global and a later start() without the caps would
-    silently regrow.
+    Set before runtime startup so the caps cover initial traffic. Attributes
+    are process-global and are not reset on stop().
     """
     import os as _os
     if _os.environ.get(_MEMORY_LIMITS_DISABLED_ENV, "") not in ("", "0", "false"):
@@ -2481,9 +2449,7 @@ def start(
         _signal.signal = lambda *_a, **_kw: None
         try:
             _t0 = time.perf_counter()
-            # Before Reticulum(): path expiry is stamped AT INSERT time from
-            # PATH_TIMEOUT (Transport.py:3404), so a later override would leave
-            # the first few minutes of paths on the 7-day default.
+            # Apply cache limits before the runtime starts receiving traffic.
             applied_limits = _apply_memory_limits()
             reticulum = RNS.Reticulum(config_dir)
             _state["reticulum"] = reticulum

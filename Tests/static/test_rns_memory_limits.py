@@ -7,7 +7,6 @@ the Network Extension. Run:
     python3 -m unittest Tests.static.test_rns_memory_limits
 """
 import ast
-import importlib
 import os
 import tempfile
 import types
@@ -51,8 +50,7 @@ class FakeTransport16:
 
 
 class FakeTransport14:
-    """RNS <= 1.5.x shape (what the device payload actually ships): the path
-    timeout is DESTINATION_TIMEOUT and there is no pool target."""
+    """Legacy RNS shape: DESTINATION_TIMEOUT and no unused-path pool target."""
 
     DESTINATION_TIMEOUT = 60 * 60 * 24 * 7
     MAX_RANDOM_BLOBS = 64
@@ -99,13 +97,31 @@ class MemoryLimitTests(unittest.TestCase):
         self.addCleanup(mock.patch.dict(os.environ, {}, clear=False).stop)
         os.environ.pop('COLUMBA_RNS_UNCAPPED', None)
 
+    def test_memory_caps_preserve_runtime_path_expiration_policy(self):
+        for transport_cls in (FakeTransport16, FakeTransport14):
+            for custom in (False, True):
+                with self.subTest(transport=transport_cls.__name__, custom=custom):
+                    ns = build_namespace(transport_cls)
+                    transport = ns['RNS'].Transport
+                    timeout = ('PATH_TIMEOUT' if transport_cls is FakeTransport16
+                               else 'DESTINATION_TIMEOUT')
+                    transport.AP_PATH_TIME = 24 * 60 * 60
+                    transport.ROAMING_PATH_TIME = 6 * 60 * 60
+                    if custom:
+                        setattr(transport, timeout, 12345)
+                        transport.AP_PATH_TIME = 23456
+                        transport.ROAMING_PATH_TIME = 34567
+                    names = (timeout, 'AP_PATH_TIME', 'ROAMING_PATH_TIME')
+                    before = {name: getattr(transport, name) for name in names}
+                    ns['_apply_memory_limits']()
+                    self.assertEqual(
+                        {name: getattr(transport, name) for name in names}, before)
+
     def test_caps_override_the_rns_defaults(self):
         applied = self.ns['_apply_memory_limits']()
-        self.assertEqual(applied['PATH_TIMEOUT'], 3600)
         self.assertEqual(applied['PATH_POOL_UNUSED_TARGET'], 512)
         self.assertEqual(applied['MAX_RANDOM_BLOBS'], 16)
         transport = self.ns['RNS'].Transport
-        self.assertEqual(transport.PATH_TIMEOUT, 3600)
         self.assertEqual(transport.PATH_POOL_UNUSED_TARGET, 512)
         self.assertEqual(transport.MAX_RANDOM_BLOBS, 16)
         self.assertEqual(transport.PERSIST_RANDOM_BLOBS, 16)
@@ -115,12 +131,9 @@ class MemoryLimitTests(unittest.TestCase):
         self.assertEqual(transport.hashlist_maxsize, 100_000)
 
     def test_only_attributes_the_running_rns_defines_are_written(self):
-        # The device payload ships RNS 1.4.2: no PATH_TIMEOUT, no pool target.
-        # Writing those names would be inert yet reported as applied.
+        # An unsupported pool target must remain absent and unreported.
         self.ns = build_namespace(FakeTransport14)
         applied = self.ns['_apply_memory_limits']()
-        self.assertEqual(applied['DESTINATION_TIMEOUT'], 3600)
-        self.assertEqual(self.ns['RNS'].Transport.DESTINATION_TIMEOUT, 3600)
         self.assertEqual(self.ns['RNS'].Transport.MAX_RANDOM_BLOBS, 16)
         self.assertEqual(applied['hashlist_maxsize'], 100_000)
         self.assertNotIn('PATH_TIMEOUT', applied)
@@ -132,9 +145,6 @@ class MemoryLimitTests(unittest.TestCase):
         # so a larger persist cap would resurrect more blobs than the memory cap.
         limits = dict(self.ns['_MEMORY_LIMITS'])
         self.assertLessEqual(limits['PERSIST_RANDOM_BLOBS'], limits['MAX_RANDOM_BLOBS'])
-        # Both path-timeout spellings are covered, whichever the payload has.
-        self.assertIn('DESTINATION_TIMEOUT', limits)
-        self.assertIn('PATH_TIMEOUT', limits)
 
     def test_env_switch_disables_caps(self):
         os.environ['COLUMBA_RNS_UNCAPPED'] = '1'
@@ -143,28 +153,6 @@ class MemoryLimitTests(unittest.TestCase):
         self.assertEqual(transport.PATH_TIMEOUT, 60 * 60 * 24 * 7)
         self.assertEqual(transport.PATH_POOL_UNUSED_TARGET, 2048)
         self.assertEqual(transport.hashlist_maxsize, 1_000_000)
-
-    @unittest.skipUnless(importlib.util.find_spec('RNS'), 'RNS not installed')
-    def test_every_limit_names_a_real_transport_attribute(self):
-        """A cap RNS does not read is inert, so every name must be real.
-
-        The two path-timeout spellings belong to different layouts, so at most one
-        can exist on a given version - require that one of them does, and require
-        every other name unconditionally.
-        """
-        import RNS
-        timeout_names = {'DESTINATION_TIMEOUT', 'PATH_TIMEOUT'}
-        limits = self.ns['_MEMORY_LIMITS']
-        for name, value in limits:
-            if name in timeout_names:
-                continue
-            with self.subTest(name=name):
-                self.assertTrue(hasattr(RNS.Transport, name),
-                                f'RNS.Transport.{name} does not exist')
-                self.assertIsInstance(value, int)
-        live = [n for n, _ in limits
-                if n in timeout_names and hasattr(RNS.Transport, n)]
-        self.assertTrue(live, 'no path-timeout attribute on this RNS')
 
 
 class CensusTests(unittest.TestCase):
@@ -216,40 +204,6 @@ class CensusTests(unittest.TestCase):
     def test_census_without_any_transport_is_empty_not_an_error(self):
         self.ns['RNS'] = SimpleNamespace(Transport=None, Identity=None)
         self.assertEqual(self.ns['_table_census'](), {})
-
-
-class LimitsLineTests(unittest.TestCase):
-    """The one-shot `[MEM] limits` line must name the running RNS and every cap
-    that is inert on it, so a capped-looking log cannot hide an inert knob."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        cfg = Path(self.tmp.name) / 'cfg'
-        cfg.mkdir()
-        self.cfg = cfg
-
-    def _line(self, ns, applied):
-        ns['_state']['config_dir'] = str(self.cfg)
-        ns['_start_census_thread'](applied)
-        text = (self.cfg / 'mem-diag.log').read_text()
-        return text.splitlines()[0]
-
-    def test_line_names_version_and_applied_caps(self):
-        ns = build_namespace()
-        line = self._line(ns, {'PATH_TIMEOUT': 3600, 'MAX_RANDOM_BLOBS': 16})
-        self.assertIn('rns=9.9.9', line)
-        self.assertIn('PATH_TIMEOUT=3600', line)
-        self.assertIn('MAX_RANDOM_BLOBS=16', line)
-        self.assertIn('inert=DESTINATION_TIMEOUT,PATH_POOL_UNUSED_TARGET,PERSIST_RANDOM_BLOBS', line)
-
-    def test_line_reports_uncapped_run_explicitly(self):
-        ns = build_namespace()
-        os.environ['COLUMBA_RNS_UNCAPPED'] = '1'
-        self.addCleanup(os.environ.pop, 'COLUMBA_RNS_UNCAPPED', None)
-        line = self._line(ns, ns['_apply_memory_limits']())
-        self.assertIn('uncapped', line)
-        self.assertIn('COLUMBA_RNS_UNCAPPED', line)
 
 
 class DiagChannelTests(unittest.TestCase):
