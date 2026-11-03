@@ -2107,12 +2107,16 @@ def _memory_attribution_lines() -> list[str]:
     lines = [f"{prefix} category=allocator allocated_blocks={blocks} elapsed_ms={elapsed_ms} " +
              " ".join(f"{key}={value}" for key, value in allocator.items())]
     roots = _memory_attribution_roots()
-    deadline = time.monotonic() + _MEMORY_SAMPLE_SECONDS
+    graph_start = time.monotonic()
+    deadline = graph_start + _MEMORY_SAMPLE_SECONDS
     for category, root in roots:
         metrics = ({"status": "unavailable"} if root is None else
                    _bounded_graph_size(root, deadline=deadline))
         lines.append(f"{prefix} category={category} " +
                      " ".join(f"{key}={value}" for key, value in metrics.items()))
+    lines.append(f"{prefix} category=sample "
+                 f"graph_elapsed_ms={int((time.monotonic() - graph_start) * 1000)} "
+                 f"elapsed_ms={int((time.monotonic() - scan_start) * 1000)}")
     return lines
 
 
