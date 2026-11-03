@@ -324,70 +324,73 @@ public enum NEMemoryTrace {
         #endif
 
         while isRunning(generation: generation) {
-            Thread.sleep(forTimeInterval: sampleIntervalSeconds)
-            guard isRunning(generation: generation) else { return }
+            // Foundation temporaries must not live for this thread's lifetime.
+            autoreleasepool {
+                Thread.sleep(forTimeInterval: sampleIntervalSeconds)
+                guard isRunning(generation: generation) else { return }
 
-            let snap = MemoryFootprint.sample()
-            // Probe failure → sentinel, never 0: a zero between real readings
-            // would fake a counter reset and inflate the next interval's rate.
-            let diskWritten = DiskIO.sample()?.writtenBytes ?? diskWrittenUnavailable
-            let now = Clocks.now()
-            let pid = UInt32(getpid())
-            // A jump is measured against what the last bucket recorded, so a
-            // sustained climb keeps flushing instead of tripping once.
-            let jumped = snap.footprint >= lastFlushedFootprint &+ jumpTriggerBytes
-            windowMax = max(windowMax, snap.footprint)
-            #if DEBUG
-            // All-zone allocator introspection can take allocator locks. Never
-            // hold the trace lock while reading it, including across a restart.
-            let attribution: NativeMemoryAttribution.Snapshot?
-            if attributionEnabled, NativeMemoryAttribution.shouldSample(
-                sinceLastMs: lastAttributionUptimeMs.map { now.uptimeMs &- $0 }
-            ) {
-                attribution = NativeMemoryAttribution.sample()
-                lastAttributionUptimeMs = Clocks.now().uptimeMs
-            } else {
-                attribution = nil
+                let snap = MemoryFootprint.sample()
+                // Probe failure → sentinel, never 0: a zero between real readings
+                // would fake a counter reset and inflate the next interval's rate.
+                let diskWritten = DiskIO.sample()?.writtenBytes ?? diskWrittenUnavailable
+                let now = Clocks.now()
+                let pid = UInt32(getpid())
+                // A jump is measured against what the last bucket recorded, so a
+                // sustained climb keeps flushing instead of tripping once.
+                let jumped = snap.footprint >= lastFlushedFootprint &+ jumpTriggerBytes
+                windowMax = max(windowMax, snap.footprint)
+                #if DEBUG
+                // All-zone allocator introspection can take allocator locks. Never
+                // hold the trace lock while reading it, including across a restart.
+                let attribution: NativeMemoryAttribution.Snapshot?
+                if attributionEnabled, NativeMemoryAttribution.shouldSample(
+                    sinceLastMs: lastAttributionUptimeMs.map { now.uptimeMs &- $0 }
+                ) {
+                    attribution = NativeMemoryAttribution.sample()
+                    lastAttributionUptimeMs = Clocks.now().uptimeMs
+                } else {
+                    attribution = nil
+                }
+                #endif
+
+                lock.lock()
+                guard samplerRunning, samplerGeneration == generation else { lock.unlock(); return }
+                #if DEBUG
+                // Keep the generation guard and emission together: an old sampler
+                // must not log its completed read after stop/start creates a new one.
+                if let attribution { NativeMemoryAttribution.log(attribution) }
+                #endif
+
+                if shouldWriteLive(sinceLiveMs: now.uptimeMs &- lastLiveUptimeMs, jumped: jumped) {
+                    writeLive(Record(
+                        kind: .live, reason: 0,
+                        wallMs: now.wallMs, uptimeMs: now.uptimeMs,
+                        footprint: snap.footprint, windowMax: windowMax,
+                        lifetimePeak: snap.lifetimePeak,
+                        limitRemaining: snap.limitRemaining,
+                        diskWritten: diskWritten,
+                        pid: pid
+                    ))
+                    lastLiveUptimeMs = now.uptimeMs
+                }
+
+                if shouldFlushBucket(sinceFlushMs: now.uptimeMs &- lastFlushUptimeMs, jumped: jumped) {
+                    append(Record(
+                        kind: .bucket, reason: 0,
+                        wallMs: now.wallMs, uptimeMs: now.uptimeMs,
+                        footprint: snap.footprint, windowMax: windowMax,
+                        lifetimePeak: snap.lifetimePeak,
+                        limitRemaining: snap.limitRemaining,
+                        diskWritten: diskWritten,
+                        pid: pid
+                    ), header: &header)
+                    writeHeader(header)
+                    lastFlushUptimeMs = now.uptimeMs
+                    lastFlushedFootprint = snap.footprint
+                    windowMax = 0
+                }
+                lock.unlock()
             }
-            #endif
-
-            lock.lock()
-            guard samplerRunning, samplerGeneration == generation else { lock.unlock(); return }
-            #if DEBUG
-            // Keep the generation guard and emission together: an old sampler
-            // must not log its completed read after stop/start creates a new one.
-            if let attribution { NativeMemoryAttribution.log(attribution) }
-            #endif
-
-            if shouldWriteLive(sinceLiveMs: now.uptimeMs &- lastLiveUptimeMs, jumped: jumped) {
-                writeLive(Record(
-                    kind: .live, reason: 0,
-                    wallMs: now.wallMs, uptimeMs: now.uptimeMs,
-                    footprint: snap.footprint, windowMax: windowMax,
-                    lifetimePeak: snap.lifetimePeak,
-                    limitRemaining: snap.limitRemaining,
-                    diskWritten: diskWritten,
-                    pid: pid
-                ))
-                lastLiveUptimeMs = now.uptimeMs
-            }
-
-            if shouldFlushBucket(sinceFlushMs: now.uptimeMs &- lastFlushUptimeMs, jumped: jumped) {
-                append(Record(
-                    kind: .bucket, reason: 0,
-                    wallMs: now.wallMs, uptimeMs: now.uptimeMs,
-                    footprint: snap.footprint, windowMax: windowMax,
-                    lifetimePeak: snap.lifetimePeak,
-                    limitRemaining: snap.limitRemaining,
-                    diskWritten: diskWritten,
-                    pid: pid
-                ), header: &header)
-                writeHeader(header)
-                lastFlushUptimeMs = now.uptimeMs
-                lastFlushedFootprint = snap.footprint
-                windowMax = 0
-            }
-            lock.unlock()
         }
     }
 
