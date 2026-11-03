@@ -16,11 +16,13 @@ sole signal for typing peers vs relays vs audio vs sites.
 from __future__ import annotations
 
 import copy
-import ctypes
+from array import array
+from collections import deque
 import gc
 import json
 import os
 import queue
+import re
 import resource
 import sqlite3
 import threading
@@ -1869,6 +1871,249 @@ def _apply_memory_limits() -> dict[str, int]:
 # only, no hashes, no paths.
 _CENSUS_EVERY_SECONDS = 60.0
 _CENSUS_STARTED = [False]
+_MEMORY_ATTRIBUTION_ENV = "COLUMBA_MEMORY_ATTRIBUTION"
+_MEMORY_ATTRIBUTION_SECONDS = 300.0
+_MEMORY_GRAPH_NODES = 2048
+_MEMORY_GRAPH_REFS = 16384
+_MEMORY_GRAPH_DEPTH = 16
+_MEMORY_GRAPH_SECONDS = 0.010
+_MEMORY_SAMPLE_SECONDS = 0.100
+_PYMALLOC_BUFFER_BYTES = 8192
+
+
+def _memory_children(obj):
+    """Only exact built-ins: never dispatch user iteration or inspect __dict__."""
+    kind = type(obj)
+    if kind is dict:
+        for key, value in obj.items():
+            yield key
+            yield value
+    elif kind in (list, tuple, set, frozenset, deque):
+        yield from obj
+    elif kind is memoryview:
+        # Count the backing object once, not nbytes again for each sliced view.
+        yield obj.obj
+
+
+def _bounded_graph_size(root, *, max_nodes=_MEMORY_GRAPH_NODES,
+                        max_refs=_MEMORY_GRAPH_REFS, max_depth=_MEMORY_GRAPH_DEPTH,
+                        seconds=_MEMORY_GRAPH_SECONDS, deadline=None) -> dict:
+    """Sample reachable built-in bytes, not ownership or a process footprint.
+
+    Per-root dedup means categories overlap. Mutable roots are not snapshots.
+    The seen set is node-capped; DFS keeps only depth-capped iterators, never a
+    list of the contents. Unknown objects (including subclasses) stay opaque.
+    """
+    end = time.monotonic() + max(0.0, seconds)
+    if deadline is not None:
+        end = min(end, deadline)
+    result = dict(root_bytes=-1, root_len=-1, reachable_bytes=0, visited=0,
+                  examined=0, duplicates=0, opaque=0, capped_nodes=0,
+                  capped_refs=0, capped_depth=0, deadline=0, mutated=0)
+    containers = (dict, list, tuple, set, frozenset, deque, memoryview)
+    sized = containers + (bytes, str, bytearray, array, int, bool, float, complex, type(None))
+    root_kind = type(root)
+    if root_kind in sized:
+        result["root_bytes"] = sys.getsizeof(root)
+        if root_kind in containers + (bytes, str, bytearray, array):
+            try:
+                result["root_len"] = len(root)
+            except ValueError:  # Released memoryview.
+                result["mutated"] = 1
+    seen = set()
+    stack = [(iter((root,)), 0)]
+    while stack:
+        if time.monotonic() >= end:
+            result["deadline"] = 1
+            break
+        if result["examined"] >= max_refs:
+            result["capped_refs"] = 1
+            break
+        children, depth = stack[-1]
+        try:
+            obj = next(children)
+        except StopIteration:
+            stack.pop()
+            continue
+        except (RuntimeError, ValueError):
+            result["mutated"] = 1
+            stack.pop()
+            continue
+        result["examined"] += 1
+        identity = id(obj)
+        if identity in seen:
+            result["duplicates"] += 1
+            continue
+        if result["visited"] >= max_nodes:
+            result["capped_nodes"] = 1
+            break
+        seen.add(identity)
+        result["visited"] += 1
+        kind = type(obj)
+        if kind not in sized:
+            result["opaque"] += 1
+            continue
+        result["reachable_bytes"] += sys.getsizeof(obj)
+        if kind in containers:
+            try:
+                nonempty = kind is memoryview or len(obj) > 0
+            except ValueError:
+                result["mutated"] = 1
+                continue
+            if nonempty:
+                if depth >= max_depth:
+                    result["capped_depth"] = 1
+                else:
+                    stack.append((iter(_memory_children(obj)), depth + 1))
+    partial = any(result[key] for key in (
+        "capped_nodes", "capped_refs", "capped_depth", "deadline", "mutated"))
+    result["status"] = ("partial_opaque" if partial else "opaque") if result["opaque"] else (
+        "partial" if partial else "complete")
+    return result
+
+
+def _parse_pymalloc_stats(raw: bytes, *, truncated=False) -> dict:
+    """Accept only the verified 3.13 pymalloc labels; never return report text."""
+    if type(raw) is not bytes:
+        return {"status": "unavailable"}
+    if truncated or len(raw) >= _PYMALLOC_BUFFER_BYTES:
+        return {"status": "truncated"}
+    try:
+        def number(value):
+            if not re.fullmatch(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)", value):
+                raise ValueError("unsupported numeric format")
+            return int(value.replace(",", ""))
+
+        text = raw.decode("ascii")
+        patterns = {
+            "arenas_current": r"# arenas allocated current\s*=\s*([0-9,]+)",
+            "allocated_block_bytes": r"# bytes in allocated blocks\s*=\s*([0-9,]+)",
+            "available_block_bytes": r"# bytes in available blocks\s*=\s*([0-9,]+)",
+        }
+        metrics = {}
+        for name, pattern in patterns.items():
+            matches = re.findall(r"^" + pattern + r"$", text, re.MULTILINE)
+            if len(matches) != 1:
+                return {"status": "unavailable"}
+            metrics[name] = number(matches[0])
+        arenas = re.findall(
+            r"^([0-9,]+) arenas \* ([0-9,]+) bytes/arena\s*=\s*([0-9,]+)$",
+            text, re.MULTILINE)
+        pools = re.findall(
+            r"^([0-9,]+) unused pools \* ([0-9,]+) bytes\s*=\s*([0-9,]+)$",
+            text, re.MULTILINE)
+        if len(arenas) != 1 or len(pools) != 1:
+            return {"status": "unavailable"}
+        arena_count, arena_size, arena_bytes = (number(value) for value in arenas[0])
+        unused_pools, pool_size, pool_bytes = (number(value) for value in pools[0])
+        if (arena_count != metrics["arenas_current"] or arena_size <= 0 or pool_size <= 0
+                or arena_count * arena_size != arena_bytes
+                or unused_pools * pool_size != pool_bytes
+                or (metrics["allocated_block_bytes"] + metrics["available_block_bytes"]
+                    + pool_bytes > arena_bytes)):
+            return {"status": "unavailable"}
+        metrics.update(arena_bytes=arena_bytes, arena_size=arena_size,
+                       unused_pools=unused_pools, unused_pool_bytes=pool_bytes,
+                       pool_size=pool_size, status="complete")
+        return metrics
+    except (UnicodeError, ValueError, TypeError, OverflowError):
+        return {"status": "unavailable"}
+
+
+def _pymalloc_stats() -> dict:
+    """3.13's int _PyObject_DebugMallocStats(FILE*), with the GIL held.
+
+    This is an allocator pool scan, not a heap walk; its runtime is not capped.
+    Fixed memory FILE only: no stderr redirection, disk file, or private structs.
+    Arena bytes include allocated/free blocks and pools, not additional memory.
+    """
+    if sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 13):
+        return {"status": "unavailable"}
+    stream = None
+    try:
+        report = ctypes.pythonapi._PyObject_DebugMallocStats
+        report.argtypes = [ctypes.c_void_p]
+        report.restype = ctypes.c_int
+        libc = ctypes.CDLL(None)
+        libc.fmemopen.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p]
+        libc.fmemopen.restype = ctypes.c_void_p
+        libc.fflush.argtypes = [ctypes.c_void_p]
+        libc.fflush.restype = ctypes.c_int
+        libc.ftell.argtypes = [ctypes.c_void_p]
+        libc.ftell.restype = ctypes.c_long
+        libc.fclose.argtypes = [ctypes.c_void_p]
+        libc.fclose.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(_PYMALLOC_BUFFER_BYTES)
+        stream = libc.fmemopen(buffer, len(buffer), b"w")
+        if not stream:
+            return {"status": "unavailable"}
+        supported = report(stream)  # PyDLL keeps the GIL across the private call.
+        flushed = libc.fflush(stream)
+        length = libc.ftell(stream)
+        if not supported:
+            return {"status": "unavailable"}
+        if flushed != 0 or length < 0 or length >= len(buffer) - 1:
+            return {"status": "truncated"}
+        return _parse_pymalloc_stats(buffer.raw[:length])
+    except (AttributeError, OSError, TypeError, ValueError):
+        return {"status": "unavailable"}
+    finally:
+        if stream:
+            libc.fclose(stream)
+
+
+def _memory_attribution_roots() -> list:
+    """Capture only fixed, inspected tables; never hold _lock during sizing."""
+    roots = []
+    with _lock:
+        tr = getattr(RNS, "Transport", None)
+        for name in ("path_table", "path_states", "held_announces", "reverse_table",
+                     "link_table", "tunnels", "path_requests", "announce_table"):
+            roots.append(("rns_" + name, getattr(tr, name, None)))
+        roots.append(("rns_known_destinations",
+                      getattr(getattr(RNS, "Identity", None), "known_destinations", None)))
+        # Pinned RNS.Storage uses dense backing buffers, not built-in tables.
+        hashes = getattr(tr, "packet_hashlist", None)
+        roots.extend((("rns_hash_current", getattr(hashes, "_cur", None)),
+                      ("rns_hash_previous", getattr(hashes, "_prv", None))))
+        rates = getattr(tr, "announce_rate_table", None)
+        for label, field in (("index", "_index"), ("keys", "_keys"),
+                             ("last", "_last"), ("blocked", "_blocked"),
+                             ("violations", "_viol"), ("timestamps", "_ts"),
+                             ("lengths", "_ts_len"), ("heads", "_ts_head")):
+            roots.append(("rns_rate_" + label, getattr(rates, field, None)))
+        router = _state.get("router")
+        # Pinned LXMRouter initializes these as dict/list containers. Message
+        # instances inside pending queues deliberately remain opaque.
+        for name in ("outbound_stamp_costs", "available_tickets", "pending_inbound",
+                     "pending_outbound", "pending_deferred_stamps"):
+            roots.append(("lxmf_" + name, getattr(router, name, None)))
+        # Queue.queue is the standard queue.Queue deque; no copy or drain.
+        roots.append(("bridge_events", _events.queue))
+    return roots
+
+
+def _memory_attribution_lines() -> list[str]:
+    """Fixed names + numbers/status only; reachable estimates are non-additive."""
+    wall_ms, pid = int(time.time() * 1000), os.getpid()
+    prefix = f"[PYMEM] wall_ms={wall_ms} pid={pid}"
+    try:
+        blocks = int(sys.getallocatedblocks())
+    except (AttributeError, ValueError):
+        blocks = -1
+    scan_start = time.monotonic()
+    allocator = _pymalloc_stats()
+    elapsed_ms = int((time.monotonic() - scan_start) * 1000)
+    lines = [f"{prefix} category=allocator allocated_blocks={blocks} elapsed_ms={elapsed_ms} " +
+             " ".join(f"{key}={value}" for key, value in allocator.items())]
+    roots = _memory_attribution_roots()
+    deadline = time.monotonic() + _MEMORY_SAMPLE_SECONDS
+    for category, root in roots:
+        metrics = ({"status": "unavailable"} if root is None else
+                   _bounded_graph_size(root, deadline=deadline))
+        lines.append(f"{prefix} category={category} " +
+                     " ".join(f"{key}={value}" for key, value in metrics.items()))
+    return lines
 
 
 def _ne_diag_path() -> str | None:
@@ -1974,14 +2219,29 @@ def _start_census_thread(applied_limits: dict[str, int]) -> None:
     parts += [f"{k}={v}" for k, v in applied_limits.items()]
     if skipped:
         parts.append("inert=" + ",".join(skipped))
-    line = "[MEM] limits " + " ".join(parts)
+    limits_line = "[MEM] limits " + " ".join(parts)
     if not applied_limits:
-        line = f"[MEM] limits rns={version} uncapped ({_MEMORY_LIMITS_DISABLED_ENV} set)"
-    print(line, flush=True)
-    _diag_append(line)
+        limits_line = f"[MEM] limits rns={version} uncapped ({_MEMORY_LIMITS_DISABLED_ENV} set)"
+    print(limits_line, flush=True)
+    _diag_append(limits_line)
 
     def _loop() -> None:
+        next_attribution = 0.0
         while True:
+            if (os.environ.get(_MEMORY_ATTRIBUTION_ENV) == "1"
+                    and time.monotonic() >= next_attribution):
+                try:
+                    attribution = "\n".join(_memory_attribution_lines())
+                    print(attribution, flush=True)
+                    _diag_append(attribution)
+                except Exception:
+                    # No exception text: it may contain keys, paths, or reprs.
+                    line = (f"[PYMEM] wall_ms={int(time.time() * 1000)} pid={os.getpid()} "
+                            "category=sample status=unavailable")
+                    print(line, flush=True)
+                    _diag_append(line)
+                finally:
+                    next_attribution = time.monotonic() + _MEMORY_ATTRIBUTION_SECONDS
             time.sleep(_CENSUS_EVERY_SECONDS)
             try:
                 counts = _table_census()
@@ -2009,9 +2269,9 @@ _STEP_WATCHDOG_STARTED = [False]
 def _peak_rss_bytes() -> int:
     """This process's peak resident size in bytes (Darwin reports bytes, not KB).
 
-    Peak, not current: the jetsam ledger cares about the high-water mark, and a
-    new peak is the one instant the allocation that set it is certain to still be
-    alive. Never raises; without `getrusage` it reports 0 and the watchdog idles.
+    RSS is not the jetsam metric (phys_footprint is); its lifetime peak only
+    signals that a resident high-water mark changed, possibly before this poll.
+    Never raises; without getrusage it reports 0 and the watchdog idles.
     """
     try:
         return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
@@ -2023,10 +2283,9 @@ def _heap_top_types() -> tuple[list[tuple[str, int]], int]:
     """`(top, total)`: the most numerous gc-visible types, and how many were seen.
 
     A full heap walk (~100 ms plus a list as long as the heap), so it belongs on
-    the step path only, never the sampling path. Note what it cannot see: `bytes`
-    and `str` are not gc-tracked, so a step whose type census is flat is evidence
-    the growth is a mapping (SQLite WAL / -shm) or an allocator arena rather than
-    Python containers - a useful answer on its own.
+    the step path only, never the sampling path. Untracked bytes/str and payload
+    growth inside existing containers are invisible to type counts. Flat counts
+    cannot distinguish Python payloads, allocator slack, or native/mapped memory.
     """
     try:
         counts: dict[str, int] = {}
@@ -2357,12 +2616,12 @@ def start(
                 target=_ingress_retry_loop, args=(_ingress_retry_gen,),
                 daemon=True,
             ).start()
-        # [MEM] Table census for post-mortem attribution of a jetsam kill.
-        _start_census_thread(applied_limits)
-        # [STEP] Attribution for the one-second multi-MB jumps the census misses.
-        _start_step_watchdog()
         _put("state", value="connected")
-        return _local_info()
+        info = _local_info()
+    # Diagnostics may traverse/log; startup must release the bridge lock first.
+    _start_census_thread(applied_limits)
+    _start_step_watchdog()
+    return info
 
 
 def set_propagation_node(dest_hash_hex: str, stamp_cost: int = 0) -> dict[str, Any]:

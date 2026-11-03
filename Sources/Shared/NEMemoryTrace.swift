@@ -39,8 +39,9 @@
 //  The ring is fixed-size and never rotates: bounded disk, bounded memory, and
 //  the pre-kill value survives because the jump trigger fires during a ramp.
 //
-//  This file imports ONLY Foundation and is compiled into BOTH the ColumbaApp
-//  and ColumbaNetworkExtension targets (like `ExtensionDiagLog` / `AppGroupPaths`).
+//  This file imports Foundation (plus Darwin for DEBUG diagnostics) and
+//  is compiled into BOTH ColumbaApp and ColumbaNetworkExtension (like
+//  `ExtensionDiagLog` / `AppGroupPaths`).
 //  It MUST stay free of ReticulumSwift / RNSAPI / LXMFSwift so it compiles in the
 //  NE target, which links none of those.
 //
@@ -48,6 +49,9 @@
 //
 
 import Foundation
+#if DEBUG
+import Darwin
+#endif
 
 /// Fixed-layout memory trajectory: a header, one live record rewritten in place,
 /// and a ring of bucket records. Written by the NE, read by the app.
@@ -314,6 +318,10 @@ public enum NEMemoryTrace {
         var lastLiveUptimeMs: Int64 = 0
         var lastFlushUptimeMs = Clocks.now().uptimeMs
         var lastFlushedFootprint: UInt64 = MemoryFootprint.sample().footprint
+        #if DEBUG
+        let attributionEnabled = NativeMemoryAttribution.isEnabled
+        var lastAttributionUptimeMs: Int64?
+        #endif
 
         while isRunning(generation: generation) {
             Thread.sleep(forTimeInterval: sampleIntervalSeconds)
@@ -329,9 +337,27 @@ public enum NEMemoryTrace {
             // sustained climb keeps flushing instead of tripping once.
             let jumped = snap.footprint >= lastFlushedFootprint &+ jumpTriggerBytes
             windowMax = max(windowMax, snap.footprint)
+            #if DEBUG
+            // All-zone allocator introspection can take allocator locks. Never
+            // hold the trace lock while reading it, including across a restart.
+            let attribution: NativeMemoryAttribution.Snapshot?
+            if attributionEnabled, NativeMemoryAttribution.shouldSample(
+                sinceLastMs: lastAttributionUptimeMs.map { now.uptimeMs &- $0 }
+            ) {
+                attribution = NativeMemoryAttribution.sample()
+                lastAttributionUptimeMs = Clocks.now().uptimeMs
+            } else {
+                attribution = nil
+            }
+            #endif
 
             lock.lock()
             guard samplerRunning, samplerGeneration == generation else { lock.unlock(); return }
+            #if DEBUG
+            // Keep the generation guard and emission together: an old sampler
+            // must not log its completed read after stop/start creates a new one.
+            if let attribution { NativeMemoryAttribution.log(attribution) }
+            #endif
 
             if shouldWriteLive(sinceLiveMs: now.uptimeMs &- lastLiveUptimeMs, jumped: jumped) {
                 writeLive(Record(
@@ -708,6 +734,13 @@ enum MemoryFootprint {
         var lifetimePeak: UInt64 = 0
         /// Headroom to the current limit; 0 = unknown (see `NEMemoryTrace` header).
         var limitRemaining: UInt64 = 0
+        /// Diagnostic-only values; these do not change the persisted ring.
+        var resident: UInt64 = 0
+        var virtual: UInt64 = 0
+        var compressed: UInt64 = 0
+        /// Unlike the ring's historical zero fallback, diagnostic logging must
+        /// distinguish an unavailable task_info result from real zero bytes.
+        var status: kern_return_t = KERN_FAILURE
     }
 
     static func sample() -> Snapshot {
@@ -720,16 +753,88 @@ enum MemoryFootprint {
                 task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), words, &count)
             }
         }
-        guard kr == KERN_SUCCESS else { return Snapshot() }
+        guard kr == KERN_SUCCESS else { return Snapshot(status: kr) }
         return Snapshot(
             footprint: UInt64(info.phys_footprint),
             // bitPattern: the ledger value is an int64 and a trap on a negative
             // read would take the sampler down inside the NE.
             lifetimePeak: UInt64(bitPattern: info.ledger_phys_footprint_peak),
-            limitRemaining: UInt64(info.limit_bytes_remaining)
+            limitRemaining: UInt64(info.limit_bytes_remaining),
+            resident: UInt64(info.resident_size),
+            virtual: UInt64(info.virtual_size),
+            compressed: UInt64(info.compressed),
+            status: kr
         )
     }
 }
+
+#if DEBUG
+/// Low-frequency accounting, not a heap/object walk or a reclamation request.
+/// `malloc_zone_statistics(nil, ...)` sums all malloc zones, including Python's
+/// raw malloc allocations. Python pymalloc arenas may instead be VM mappings;
+/// these metrics overlap and MUST NOT be added to/subtracted from arena bytes
+/// to infer "native-only" memory. Reserved malloc bytes are not resident bytes,
+/// and sequential malloc / task_info reads are not an atomic process snapshot.
+enum NativeMemoryAttribution {
+    static let intervalMs: Int64 = 300_000
+
+    static var isEnabled: Bool {
+        guard let value = getenv("COLUMBA_MEMORY_ATTRIBUTION") else { return false }
+        return strcmp(value, "1") == 0
+    }
+
+    struct Snapshot {
+        var wallMs: Int64
+        var pid: Int32
+        var sizeInUse: UInt64
+        var sizeAllocated: UInt64
+        var blocksInUse: UInt64
+        var memory: MemoryFootprint.Snapshot
+        var elapsedMs: Int64
+    }
+
+    /// Sample on the first eligible sampler tick, then at most every five
+    /// minutes of awake uptime. No wall-clock sensitivity or catch-up bursts.
+    static func shouldSample(sinceLastMs: Int64?) -> Bool {
+        guard let sinceLastMs else { return true }
+        return sinceLastMs >= intervalMs
+    }
+
+    static func sample() -> Snapshot {
+        let started = Clocks.now()
+        var statistics = malloc_statistics_t()
+        // Apple's malloc/malloc.h declares a void return and documents nil as
+        // summing all zones. There is no malloc failure/status return to test.
+        malloc_zone_statistics(nil, &statistics)
+        let memory = MemoryFootprint.sample()
+        return Snapshot(
+            wallMs: started.wallMs,
+            pid: getpid(),
+            sizeInUse: UInt64(statistics.size_in_use),
+            sizeAllocated: UInt64(statistics.size_allocated),
+            blocksInUse: UInt64(statistics.blocks_in_use),
+            memory: memory,
+            elapsedMs: Clocks.now().uptimeMs &- started.uptimeMs
+        )
+    }
+
+    static func log(_ snapshot: Snapshot) {
+        let memory = snapshot.memory
+        let vmMetrics: String
+        if memory.status == KERN_SUCCESS {
+            vmMetrics = "vm_status=ok phys_footprint=\(memory.footprint) resident_bytes=\(memory.resident) virtual_bytes=\(memory.virtual) compressed_bytes=\(memory.compressed)"
+        } else {
+            vmMetrics = "vm_status=unavailable phys_footprint=unavailable resident_bytes=unavailable virtual_bytes=unavailable compressed_bytes=unavailable"
+        }
+        ExtensionDiagLog.log(
+            "[MEM-NATIVE] wall_ms=\(snapshot.wallMs) pid=\(snapshot.pid) "
+                + "malloc_status=reported size_in_use=\(snapshot.sizeInUse) size_allocated=\(snapshot.sizeAllocated) blocks_in_use=\(snapshot.blocksInUse) "
+                + "\(vmMetrics) task_info_kr=\(memory.status) elapsed_ms=\(snapshot.elapsedMs) "
+                + "malloc_includes_python_raw=1 python_arena_arithmetic=unsupported coherent_snapshot=0 malloc_error_status=unavailable"
+        )
+    }
+}
+#endif
 
 // MARK: - Disk I/O sampling
 
