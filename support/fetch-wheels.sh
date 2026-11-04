@@ -55,7 +55,7 @@ fi
 # Upstream SQLite storage plus Columba native-stamp and receiving-metadata hooks.
 # Point at a local working copy only when explicitly developing the fork:
 #   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh
-LXMF_REF="${LXMF_REF:-8d56727e47b5f0609d505ee84989942ca3b348be}"
+LXMF_REF="${LXMF_REF:-22dc5eaf6330cf35fbc0e40ab19fc6bd6c630753}"
 if [ -n "${LXMF_LOCAL:-}" ]; then
     echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
     LXMF_SPEC="$LXMF_LOCAL"
