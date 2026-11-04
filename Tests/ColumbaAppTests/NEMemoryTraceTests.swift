@@ -177,6 +177,22 @@ final class NEMemoryTraceTests: XCTestCase {
         XCTAssertTrue(NEMemoryTrace.shouldFlushBucket(sinceFlushMs: 0, jumped: true))
     }
 
+    func testNativeAttributionSamplesInitiallyAndAtFiveMinuteBoundary() {
+        XCTAssertTrue(NativeMemoryAttribution.shouldSample(sinceLastMs: nil))
+        XCTAssertFalse(NativeMemoryAttribution.shouldSample(sinceLastMs: 0))
+        XCTAssertFalse(NativeMemoryAttribution.shouldSample(sinceLastMs: 299_999))
+        XCTAssertTrue(NativeMemoryAttribution.shouldSample(sinceLastMs: 300_000))
+    }
+
+    func testNativeAttributionIntervalHandlesLongGapAndBackwardTime() {
+        // A delayed tick is eligible once; the loop resets its baseline after
+        // completing that sample instead of scheduling catch-up reads.
+        XCTAssertTrue(NativeMemoryAttribution.shouldSample(sinceLastMs: Int64.max))
+        XCTAssertFalse(NativeMemoryAttribution.shouldSample(sinceLastMs: 0))
+        XCTAssertFalse(NativeMemoryAttribution.shouldSample(sinceLastMs: -1))
+        XCTAssertFalse(NativeMemoryAttribution.shouldSample(sinceLastMs: Int64.min))
+    }
+
     // MARK: - Kill attribution
 
     func testGenerationWithoutStopMarkerIsAttributedAsKill() throws {

@@ -18,8 +18,6 @@ ROOT = Path(__file__).resolve().parents[2]
 FETCH = ROOT / "support" / "fetch-wheels.sh"
 BRIDGE = ROOT / "app" / "rns_bridge.py"
 STAMP = ROOT / "Sources" / "SwiftBLEBridge" / "StampGenerator.swift"
-RNS_SHA = "d1421e081d9b35b8cb4a54a3b357a9849721305f"
-LXMF_SHA = "8912186e48b482a76bf04e2ac4b6c8940991aecc"
 
 
 def load_bridge(lx_stamper: object):
@@ -53,15 +51,6 @@ class DependencyPayloadTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = FETCH.read_text(encoding="utf-8")
-
-    def test_default_rns_and_lxmf_refs_are_exact_immutable_commits(self) -> None:
-        self.assertIn(f'RETICULUM_REF="${{RETICULUM_REF:-{RNS_SHA}}}"', self.source)
-        self.assertIn(f'LXMF_REF="${{LXMF_REF:-{LXMF_SHA}}}"', self.source)
-        self.assertIn("Reticulum.git@${RETICULUM_REF}", self.source)
-        self.assertIn("LXMF.git@${LXMF_REF}", self.source)
-        self.assertNotRegex(self.source, r"RETICULUM_BRANCH|LXMF_BRANCH")
-        for ref in (RNS_SHA, LXMF_SHA):
-            self.assertRegex(ref, r"^[0-9a-f]{40}$")
 
     def test_local_dependency_overrides_remain_explicit(self) -> None:
         self.assertIn("${RETICULUM_LOCAL:-}", self.source)

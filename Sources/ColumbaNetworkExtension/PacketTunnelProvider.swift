@@ -61,6 +61,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 userInfo: [NSLocalizedDescriptionKey: "Foreground-only mode is selected"]))
             return
         }
+#if DEBUG
+        // Diagnostic branch only; enable before the sampler and Python boot.
+        setenv("COLUMBA_MEMORY_ATTRIBUTION", "1", 1)
+#endif
         // Self-reported memory trajectory. The app cannot measure this process
         // from outside its own sandbox, and a jetsam kill delivers no callback,
         // so the NE is the only thing that can record what it was using. The
