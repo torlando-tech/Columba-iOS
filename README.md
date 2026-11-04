@@ -71,8 +71,8 @@ The Python bridge passes Reticulum's authoritative 256-bit target to the native
 stamper, which accepts `SHA-256(workblock || stamp) <= target`. This preserves
 fractional costs without duplicating Reticulum's fixed-point conversion in Swift.
 
-Both integer C entry points remain available, and the current integer-only
-RNS/LXMF pins remain supported. With fractional-aware dependencies but an older
+Both integer C entry points remain available, and earlier integer-only
+RNS/LXMF versions remain supported. With fractional-aware dependencies but an older
 native binary, the bridge rounds difficulty up, never down. Fractional requests
 with integer-only dependencies fail explicitly instead of truncating the cost.
 The difficulty cap of 32 and cancellable native-job lifecycle are unchanged.
