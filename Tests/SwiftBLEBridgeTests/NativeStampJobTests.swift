@@ -104,6 +104,94 @@ final class NativeStampJobTests: XCTestCase {
         )
     }
 
+    func testTargetComparisonIsInclusiveAndUnsignedBigEndian() throws {
+        let bytes: [UInt8] = [0x00, 0xb5, 0x04, 0xf3, 0x33, 0xc0] + Array(repeating: 0, count: 26)
+        let target = try XCTUnwrap(StampTarget(bytes: bytes))
+        XCTAssertTrue(target.accepts(bytes))
+        var below = bytes
+        below[5] -= 1
+        below[31] = 0xff
+        XCTAssertTrue(target.accepts(below))
+        var above = bytes
+        above[31] = 1
+        XCTAssertFalse(target.accepts(above))
+        above = bytes
+        above[0] = 1
+        above[1] = 0
+        XCTAssertFalse(target.accepts(above))
+        for index in [8, 16, 24] {
+            var laterWord = bytes
+            laterWord[index] = 1
+            XCTAssertFalse(target.accepts(laterWord))
+        }
+    }
+
+    func testFractionalTargetJobProducesAnIndependentlyValidProof() throws {
+        let workblock = Data("fractional-native-proof".utf8)
+        var target = Data([0x00, 0xb5, 0x04, 0xf3, 0x33, 0xc0] + Array(repeating: 0, count: 26))
+        let expectedTarget = target
+        let jobID = startTargetJob(workblock: workblock, target: target)
+        XCTAssertNotEqual(jobID, 0)
+        target.resetBytes(in: 0..<target.count)
+        defer { XCTAssertEqual(columba_stamp_job_release(jobID), 0) }
+        let result = try waitForTerminalStatus(jobID)
+        XCTAssertEqual(result.status, 32)
+        let digest = Data(SHA256.hash(data: workblock + result.stamp))
+        XCTAssertTrue(digest == expectedTarget || digest.lexicographicallyPrecedes(expectedTarget))
+    }
+
+    func testMaximumTargetReturnsZeroStamp() throws {
+        let jobID = startTargetJob(workblock: Data("any-proof".utf8), target: Data(repeating: 255, count: 32))
+        XCTAssertNotEqual(jobID, 0)
+        defer { XCTAssertEqual(columba_stamp_job_release(jobID), 0) }
+        let result = try waitForTerminalStatus(jobID)
+        XCTAssertEqual(result.status, 32)
+        XCTAssertEqual(result.stamp, Data(repeating: 0, count: 32))
+    }
+
+    func testTargetABIRejectsInvalidAndHarderThanCapTargets() {
+        let workblock = Data("invalid-target".utf8)
+        for count in [0, 31, 33] {
+            XCTAssertEqual(startTargetJob(workblock: workblock, target: Data(repeating: 255, count: count)), 0)
+        }
+        XCTAssertEqual(startTargetJob(workblock: workblock, target: Data(repeating: 0, count: 32)), 0)
+        let harder = Data([0, 0, 0, 0] + Array(repeating: 255, count: 28))
+        XCTAssertEqual(startTargetJob(workblock: workblock, target: harder), 0)
+        var byte: CChar = 0
+        withUnsafePointer(to: &byte) { pointer in
+            XCTAssertEqual(columba_stamp_job_start_target(pointer, 1, nil, 32), 0)
+            XCTAssertEqual(columba_stamp_job_start_target(nil, 1, pointer, 32), 0)
+            XCTAssertEqual(columba_stamp_job_start_target(pointer, -1, pointer, 32), 0)
+            XCTAssertEqual(columba_stamp_job_start_target(pointer, 1, pointer, -1), 0)
+        }
+    }
+
+    func testTargetJobsPreserveCancellationAndRelease() throws {
+        let minimum = Data([0, 0, 0, 1] + Array(repeating: 0, count: 28))
+        let jobID = startTargetJob(workblock: Data("target-cancel".utf8), target: minimum)
+        XCTAssertNotEqual(jobID, 0)
+        XCTAssertEqual(columba_stamp_job_cancel(jobID), 0)
+        XCTAssertEqual(columba_stamp_job_cancel(jobID), 0)
+        XCTAssertEqual(try waitForTerminalStatus(jobID).status, -2)
+        XCTAssertEqual(columba_stamp_job_release(jobID), 0)
+        XCTAssertEqual(columba_stamp_job_cancel(jobID), -1)
+        let released = startTargetJob(workblock: Data("target-release".utf8), target: minimum)
+        XCTAssertNotEqual(released, 0)
+        XCTAssertEqual(columba_stamp_job_release(released), 0)
+        XCTAssertEqual(try waitForTerminalStatus(released).status, -1)
+    }
+
+    private func startTargetJob(workblock: Data, target: Data) -> UInt64 {
+        workblock.withUnsafeBytes { work in
+            target.withUnsafeBytes { bytes in
+                columba_stamp_job_start_target(
+                    work.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(work.count),
+                    bytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(bytes.count)
+                )
+            }
+        }
+    }
+
     private func startJob(workblock: Data, cost: Int32) -> UInt64 {
         workblock.withUnsafeBytes { raw in
             columba_stamp_job_start(

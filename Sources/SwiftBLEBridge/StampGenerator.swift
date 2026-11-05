@@ -13,12 +13,12 @@
 //
 //  This mirrors Columba Android's Kotlin `StampGenerator` (offloading the PoW
 //  to native code via LXMF's external-generator hook): brute-force a 32-byte
-//  stamp across all CPU cores until SHA-256(workblock ‖ stamp) has `cost`
-//  leading zero bits — exactly the condition LXMF's `stamp_valid` (and the
-//  receiving Sideband) check. Lives in this module next to the other
+//  stamp across all CPU cores against an exact unsigned 256-bit SHA-256
+//  threshold. Legacy integer callers retain their leading-zero condition.
+//  Lives in this module next to the other
 //  `columba_*` C-ABI shims so `ctypes.CDLL(None)` resolves it the same proven
-//  way. `rns_bridge.py` monkeypatches `LXStamper.generate_stamp` to call in
-//  here (keeping LXMF's workblock + value math byte-exact).
+//  way. `rns_bridge.py` registers LXMF's external-generator hook, keeping
+//  workblock derivation and stamp validation in LXMF/Reticulum.
 //
 //  Optimisation over the Android version: the (~750 KB) workblock is absorbed
 //  into a SHA-256 context ONCE, then each attempt clones that context (a flat
@@ -29,6 +29,63 @@
 import Foundation
 import CommonCrypto
 import os
+
+/// An owned unsigned 256-bit threshold, decoded in network byte order.
+struct StampTarget: Sendable {
+    private let a: UInt64
+    private let b: UInt64
+    private let c: UInt64
+    private let d: UInt64
+
+    init?(bytes: [UInt8]) {
+        guard let target = bytes.withUnsafeBytes({ Self(bytes: $0) }) else { return nil }
+        self = target
+    }
+
+    init?(bytes: UnsafeRawBufferPointer) {
+        guard bytes.count == 32 else { return nil }
+        let first = Self.word(bytes, at: 0)
+        guard first >= 0x0000000100000000 else { return nil }
+        a = first
+        b = Self.word(bytes, at: 8)
+        c = Self.word(bytes, at: 16)
+        d = Self.word(bytes, at: 24)
+    }
+
+    private init(a: UInt64, b: UInt64, c: UInt64, d: UInt64) {
+        self.a = a
+        self.b = b
+        self.c = c
+        self.d = d
+    }
+
+    /// Legacy leading-zero search is strict at the canonical power of two.
+    static func legacy(cost: Int) -> StampTarget {
+        StampTarget(a: UInt64.max >> cost, b: .max, c: .max, d: .max)
+    }
+
+    var acceptsEveryDigest: Bool {
+        a == .max && b == .max && c == .max && d == .max
+    }
+
+    @inline(__always)
+    private static func word(_ bytes: UnsafeRawBufferPointer, at offset: Int) -> UInt64 {
+        UInt64(bigEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt64.self))
+    }
+
+    @inline(__always)
+    func accepts(_ digest: [UInt8]) -> Bool {
+        digest.withUnsafeBytes { bytes in
+            let first = Self.word(bytes, at: 0)
+            if first != a { return first < a }
+            let second = Self.word(bytes, at: 8)
+            if second != b { return second < b }
+            let third = Self.word(bytes, at: 16)
+            if third != c { return third < c }
+            return Self.word(bytes, at: 24) <= d
+        }
+    }
+}
 
 enum StampGenerator {
 
@@ -50,8 +107,16 @@ enum StampGenerator {
         cancellation: StampCancellationState = StampCancellationState()
     ) -> Data? {
         guard cost >= 0, cost <= maxCost else { return nil }
+        return generate(workblock: workblock, target: .legacy(cost: cost), cancellation: cancellation)
+    }
+
+    static func generate(
+        workblock: Data,
+        target: StampTarget,
+        cancellation: StampCancellationState = StampCancellationState()
+    ) -> Data? {
         guard !cancellation.isCancelled else { return nil }
-        if cost == 0 { return Data(repeating: 0, count: stampSize) }
+        if target.acceptsEveryDigest { return Data(repeating: 0, count: stampSize) }
 
         // Absorb the workblock once. CC_SHA256_CTX is a flat value struct with
         // no internal pointers, so `var ctx = base` is a valid clone of the
@@ -83,7 +148,7 @@ enum StampGenerator {
                 _ = candidate.withUnsafeBufferPointer { CC_SHA256_Update(&ctx, $0.baseAddress, CC_LONG(stampSize)) }
                 CC_SHA256_Final(&digest, &ctx)
 
-                if leadingZeroBits(digest) >= cost {
+                if target.accepts(digest) {
                     // Cancellation wins if it raced the proof. StampResultBox
                     // also refuses a proof after any sibling observed cancel.
                     if cancellation.isCancelled {
@@ -115,15 +180,6 @@ enum StampGenerator {
         return result.get()
     }
 
-    /// Leading zero BITS of a 32-byte big-endian digest.
-    @inline(__always)
-    private static func leadingZeroBits(_ d: [UInt8]) -> Int {
-        var count = 0
-        for b in d {
-            if b == 0 { count += 8 } else { count += b.leadingZeroBitCount; break }
-        }
-        return count
-    }
 }
 
 /// Native cancellation state shared by the job registry and every PoW worker.
@@ -218,21 +274,32 @@ final class NativeStampJob: @unchecked Sendable {
     private let cancellation = StampCancellationState()
     private let completion = DispatchSemaphore(value: 0)
     private let workblock: Data
-    private let cost: Int
+    private let target: StampTarget
 
-    init(workblock: Data, cost: Int) {
+    convenience init(workblock: Data, cost: Int) {
+        self.init(
+            workblock: workblock,
+            target: .legacy(cost: max(0, min(cost, StampGenerator.maxCost))),
+            validCost: (0...StampGenerator.maxCost).contains(cost)
+        )
+    }
+
+    private let validCost: Bool
+
+    init(workblock: Data, target: StampTarget, validCost: Bool = true) {
         self.workblock = workblock
-        self.cost = cost
+        self.target = target
+        self.validCost = validCost
     }
 
     func start() {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             defer { completion.signal() }
-            let stamp = StampGenerator.generate(
+            let stamp = validCost ? StampGenerator.generate(
                 workblock: workblock,
-                cost: cost,
+                target: target,
                 cancellation: cancellation
-            )
+            ) : nil
             state.withLock { status in
                 guard status == .running else { return }
                 if cancellation.isCancelled {
@@ -309,6 +376,14 @@ enum NativeStampJobRegistry {
     static func start(workblock: Data, cost: Int) -> UInt64 {
         guard cost >= 0, cost <= StampGenerator.maxCost else { return 0 }
         let job = NativeStampJob(workblock: workblock, cost: cost)
+        return start(job: job)
+    }
+
+    static func start(workblock: Data, target: StampTarget) -> UInt64 {
+        start(job: NativeStampJob(workblock: workblock, target: target))
+    }
+
+    private static func start(job: NativeStampJob) -> UInt64 {
         let jobID = state.withLock { registry -> UInt64 in
             var candidate = registry.nextID
             repeat {
@@ -373,6 +448,23 @@ public func columba_stamp_job_start(
         Data(bytes: $0, count: Int(workblockLen))
     }
     return NativeStampJobRegistry.start(workblock: data, cost: Int(stampCost))
+}
+
+/// Start a job using an inclusive unsigned 256-bit big-endian threshold.
+@_cdecl("columba_stamp_job_start_target")
+public func columba_stamp_job_start_target(
+    _ workblock: UnsafePointer<CChar>?,
+    _ workblockLen: Int32,
+    _ target: UnsafePointer<CChar>?,
+    _ targetLen: Int32
+) -> UInt64 {
+    guard let workblock, workblockLen >= 0, let target, targetLen == 32 else { return 0 }
+    let bytes = UnsafeRawBufferPointer(start: target, count: 32)
+    guard let threshold = StampTarget(bytes: bytes) else { return 0 }
+    let data = workblock.withMemoryRebound(to: UInt8.self, capacity: Int(workblockLen)) {
+        Data(bytes: $0, count: Int(workblockLen))
+    }
+    return NativeStampJobRegistry.start(workblock: data, target: threshold)
 }
 
 /// Poll a native job. Returns 0 while running, 32 after copying a completed

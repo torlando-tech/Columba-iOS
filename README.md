@@ -65,6 +65,31 @@ SPM resolves the listed URLs to local checkouts, so library changes are picked u
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for target ownership and dependency boundaries.
 
+### Native stamp proof-of-work
+
+The Python bridge passes Reticulum's authoritative 256-bit target to the native
+stamper, which accepts `SHA-256(workblock || stamp) <= target`. This preserves
+fractional costs without duplicating Reticulum's fixed-point conversion in Swift.
+
+Both integer C entry points remain available, and earlier integer-only
+RNS/LXMF versions remain supported. With fractional-aware dependencies but an older
+native binary, the bridge rounds difficulty up, never down. Fractional requests
+with integer-only dependencies fail explicitly instead of truncating the cost.
+The difficulty cap of 32 and cancellable native-job lifecycle are unchanged.
+
+On macOS, the native/reference regression compiles the production Swift stamper,
+generates a separate proof with Python RNS, and submits both signed messages to
+an LXMF receiver with stamp enforcement enabled. It also checks that a proof
+valid at cost 8 is rejected at cost 8.5:
+
+```sh
+python3 -B -m unittest Tests.static.test_native_stamp_reference -v
+```
+
+Use host-compatible `cryptography` and `pyserial`, with the pinned pure-Python
+RNS/LXMF packages on `PYTHONPATH`. The macOS CI job prepares these separately
+from the iOS binary wheels.
+
 ## Acknowledgements
 
 - This work was partially funded by the [Solarpunk Pioneers Fund](https://solarpunk-pioneers.org)

@@ -43,28 +43,19 @@ source "$POC_ROOT/support/bootstrap-pip.sh"
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
 #
-# Pinned to the branch `rebase/columba-1.6.0` (head d1421e08): RNS 1.6.0 plus the
-# SAME six columba embedded-runtime hardening commits the previous pin
-# (3759488e, RNS 1.5.5 + 6) carried, re-applied on top of 1.6.0, plus the
-# receive-assembly memory fix (Resource.assemble releases the parts list after
-# the join and strips the random hash via memoryview — ~1x payload less peak
-# RSS on large inbound attachments) and its behavioral contract test
-# (tests/test_resource_assemble.py). 1.6.0 adds heap trimming
-# (malloc_zone_pressure_relief on darwin), GC throttling, path-table culling,
-# columnar announce bookkeeping, and a SQLite-WAL Storage.py for identity
-# ratchets + known destinations. Bump deliberately; the commit is on the same
-# remote this script pulls from.
-RETICULUM_REF="${RETICULUM_REF:-d1421e081d9b35b8cb4a54a3b357a9849721305f}"
+# Upstream refresh plus Columba runtime hardening and bounded receive assembly.
+# Pair with the LXMF pin below for RNS.Stamps' fractional-cost and size APIs.
+RETICULUM_REF="${RETICULUM_REF:-dc694ce6090d4f36b516ba30e2115ecdc14584b3}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
 else
     RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_REF}"
 fi
-# LXMF includes coalesced stamp-cost persistence on the existing maintenance loop.
+# Upstream SQLite storage plus Columba native-stamp and receiving-metadata hooks.
 # Point at a local working copy only when explicitly developing the fork:
 #   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh
-LXMF_REF="${LXMF_REF:-532558cc84b1435c958734ea4c509984bfd1e73e}"
+LXMF_REF="${LXMF_REF:-22dc5eaf6330cf35fbc0e40ab19fc6bd6c630753}"
 if [ -n "${LXMF_LOCAL:-}" ]; then
     echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
     LXMF_SPEC="$LXMF_LOCAL"

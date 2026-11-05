@@ -20,6 +20,7 @@ from array import array
 from collections import deque
 import gc
 import json
+import math
 import os
 import queue
 import re
@@ -115,6 +116,11 @@ _stamp_job_start_fn = _bind_stamp_fn(
     [ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32],
     ctypes.c_uint64,
 )
+_stamp_job_start_target_fn = _bind_stamp_fn(
+    "columba_stamp_job_start_target",
+    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32],
+    ctypes.c_uint64,
+)
 _stamp_job_poll_fn = _bind_stamp_fn(
     "columba_stamp_job_poll",
     [ctypes.c_uint64, ctypes.c_char_p],
@@ -134,10 +140,11 @@ _stamp_jobs_cancel_all_fn = _bind_stamp_fn(
 
 
 def _native_stamp_jobs_available() -> bool:
-    return all(
+    return (
+        _stamp_job_start_target_fn is not None or _stamp_job_start_fn is not None
+    ) and all(
         fn is not None
         for fn in (
-            _stamp_job_start_fn,
             _stamp_job_poll_fn,
             _stamp_job_cancel_fn,
             _stamp_job_release_fn,
@@ -154,22 +161,55 @@ def _token_is_cancelled(cancellation_token: Any) -> bool:
         return True
 
 
-def _native_stamp_pow(workblock: bytes, stamp_cost: int, cancellation_token: Any):
-    """Run native multi-threaded PoW with job-owned native cancellation."""
+def _native_stamp_pow(workblock: bytes, stamp_cost: int | float, cancellation_token: Any):
+    """Run native PoW using RNS's exact target when the native ABI supports it."""
+    if (
+        not isinstance(stamp_cost, (int, float))
+        or not 0 <= stamp_cost <= 32
+        or not math.isfinite(stamp_cost)
+    ):
+        return None
     if not _native_stamp_jobs_available():
         return None
 
+    start_target_job = _stamp_job_start_target_fn
     start_job = _stamp_job_start_fn
     poll_job = _stamp_job_poll_fn
     cancel_job = _stamp_job_cancel_fn
     release_job = _stamp_job_release_fn
-    assert start_job is not None
     assert poll_job is not None
     assert cancel_job is not None
     assert release_job is not None
 
+    target_from_cost = getattr(getattr(RNS, "Stamps", None), "target_from_cost", None)
+    integral_cost = int(stamp_cost) == stamp_cost
+    if not callable(target_from_cost) and not integral_cost:
+        RNS.log(
+            "native stamp gen: fractional cost requires RNS.Stamps.target_from_cost",
+            RNS.LOG_WARNING,
+        )
+        return None
+
+    target_bytes = None
+    if start_target_job is not None:
+        try:
+            target = (
+                target_from_cost(stamp_cost)
+                if callable(target_from_cost)
+                else 1 << (256 - int(stamp_cost))
+            )
+            target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
+        except Exception as e:
+            RNS.log(f"native stamp gen: target derivation failed: {e}", RNS.LOG_WARNING)
+            return None
+
     payload = bytes(workblock)
-    job_id = int(start_job(payload, len(payload), int(stamp_cost)))
+    if start_target_job is not None:
+        job_id = int(start_target_job(payload, len(payload), target_bytes, 32))
+    else:
+        assert start_job is not None
+        # Old binaries only support integer difficulty; never weaken a fraction.
+        job_id = int(start_job(payload, len(payload), math.ceil(stamp_cost)))
     if job_id == 0:
         return None
 
@@ -233,7 +273,7 @@ def _install_native_stamp_generator() -> None:
         # LXStamper contract: (workblock, cost, token) -> (stamp, rounds).
         _t0 = time.time()
         stamp = _native_stamp_pow(
-            bytes(workblock), int(stamp_cost), cancellation_token
+            workblock, stamp_cost, cancellation_token
         )
         RNS.log(
             f"native stamp: cost={stamp_cost} in {round((time.time()-_t0)*1000)}ms"

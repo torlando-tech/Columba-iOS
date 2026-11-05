@@ -34,4 +34,5 @@ _columba_stamp_job_cancel
 _columba_stamp_job_poll
 _columba_stamp_job_release
 _columba_stamp_job_start
+_columba_stamp_job_start_target
 _columba_stamp_jobs_cancel_all
