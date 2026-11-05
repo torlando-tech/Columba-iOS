@@ -46,6 +46,18 @@ jobs:
           set -euo pipefail
           swift test --filter NativeStampJobTests
 
+      - name: Compare native stamps with Python RNS and receiving LXMF
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/stamp-reference"
+          "$RUNNER_TEMP/stamp-reference/bin/python" -m pip install \
+            "cryptography==47.0.0" "pyserial>=3.5"
+          mkdir -p "$RUNNER_TEMP/stamp-reference-packages"
+          cp -R wheels-iphoneos/RNS wheels-iphoneos/LXMF "$RUNNER_TEMP/stamp-reference-packages/"
+          PYTHONPATH="$RUNNER_TEMP/stamp-reference-packages" \
+            "$RUNNER_TEMP/stamp-reference/bin/python" -B -m unittest \
+            Tests.static.test_native_stamp_reference -v
+
       - name: Resolve shipping Swift packages
         run: |
           set -euo pipefail
