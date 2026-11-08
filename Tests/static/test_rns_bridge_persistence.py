@@ -321,7 +321,7 @@ class RnsBridgeStartPersistenceModeTest(unittest.TestCase):
             "_coalesced_events_ping": lambda: None,
             "_post_link_events_ping": lambda: None,
             "_local_info": lambda: {},
-            "_uninstall_native_stamp_generator": lambda: None,
+            "_uninstall_native_stamp_search": lambda: None,
         }
         exec(
             compile(

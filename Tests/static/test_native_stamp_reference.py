@@ -18,26 +18,41 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def native_stamp(library, workblock, target):
-    start = library.columba_stamp_job_start_target
-    start.argtypes = [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32]
+def native_stamp(library, workblock, target, size, stop_check):
+    start = library.columba_stamp_job_start
+    start.argtypes = [
+        ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32,
+    ]
     start.restype = ctypes.c_uint64
     poll = library.columba_stamp_job_poll
-    poll.argtypes = [ctypes.c_uint64, ctypes.c_char_p]
+    poll.argtypes = [
+        ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_uint64),
+    ]
     poll.restype = ctypes.c_int32
+    cancel = library.columba_stamp_job_cancel
+    cancel.argtypes = [ctypes.c_uint64]
+    cancel.restype = ctypes.c_int32
     release = library.columba_stamp_job_release
     release.argtypes = [ctypes.c_uint64]
     release.restype = ctypes.c_int32
-    job = start(workblock, len(workblock), target.to_bytes(32, "big"), 32)
+    target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
+    job = start(workblock, len(workblock), target_bytes, len(target_bytes), size)
     if not job:
-        raise RuntimeError("Native stamper refused the fractional target")
+        raise RuntimeError("Native stamper refused the search")
     try:
-        output = ctypes.create_string_buffer(32)
+        output = ctypes.create_string_buffer(size)
+        rounds = ctypes.c_uint64()
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            status = poll(job, output)
-            if status == 32:
-                return output.raw
+            if stop_check():
+                cancel(job)
+            status = poll(job, output, size, ctypes.byref(rounds))
+            if status > 0:
+                if status != size:
+                    raise RuntimeError(f"Native stamper returned an invalid size: {status}")
+                return output.raw[:status], rounds.value
+            if status == -2:
+                return None, rounds.value
             if status != 0:
                 raise RuntimeError(f"Native stamp job failed: {status}")
             time.sleep(0.001)
@@ -74,6 +89,7 @@ def receiver_comparison(library_path, cost, insufficient=False):
             target = stamps.target_from_cost(cost)
             deliveries = []
             router.register_delivery_callback(deliveries.append)
+            native_calls = []
 
             if insufficient:
                 # Find an integer-cost proof that does not satisfy the fraction.
@@ -83,19 +99,34 @@ def receiver_comparison(library_path, cost, insufficient=False):
                     digest = base.copy()
                     digest.update(candidate)
                     if target < int.from_bytes(digest.digest(), "big") <= stamps.target_from_cost(8):
-                        proofs = [("floored", candidate)]
+                        proofs = [("floored", candidate, None)]
                         break
                 else:
                     raise RuntimeError("Could not construct the insufficient-proof control")
             else:
                 library = ctypes.CDLL(library_path)
-                native = native_stamp(library, workblock, target)
-                # RNS itself generates the reference; no external LXMF hook is installed.
+                native_rounds = []
+
+                def search(workblock, target, size, stop_check):
+                    native_calls.append((workblock, target, size))
+                    result = native_stamp(library, workblock, target, size, stop_check)
+                    native_rounds.append(result[1])
+                    return result
+
+                stamps.native_stamp_search = search
+                try:
+                    native, _ = stamps.generate_stamp(message.message_id, cost)
+                finally:
+                    stamps.native_stamp_search = None
+                if native_calls != [(workblock, target, 32)]:
+                    raise RuntimeError("RNS did not dispatch through the native hash-search hook")
+                if message.message_id in stamps.active_jobs:
+                    raise RuntimeError("RNS did not release the native search's active job")
                 reference, _ = stamps.generate_stamp(message.message_id, cost)
-                proofs = [("native", native), ("python", reference)]
+                proofs = [("native", native, native_rounds[0]), ("python", reference, None)]
 
             results = []
-            for name, proof in proofs:
+            for name, proof, rounds in proofs:
                 wire = (message.destination_hash + message.source_hash + message.signature
                         + umsgpack.packb(message.payload + [proof]))
                 # Both solutions have the same message ID. Bypass only duplicate
@@ -105,6 +136,7 @@ def receiver_comparison(library_path, cost, insufficient=False):
                 results.append({
                     "generator": name,
                     "proof_size": len(proof),
+                    "rounds": rounds,
                     "value": stamps.stamp_value(workblock, proof),
                     "rns_valid": stamps.stamp_valid(proof, cost, workblock),
                     "integer_valid": stamps.stamp_valid(proof, 8, workblock),
@@ -117,7 +149,7 @@ def receiver_comparison(library_path, cost, insufficient=False):
                         "same_proof": received.stamp == proof,
                     },
                 })
-            return {"cost": cost, "results": results}
+            return {"cost": cost, "native_hook_calls": len(native_calls), "results": results}
         finally:
             try:
                 if router is not None:
@@ -150,6 +182,7 @@ class NativeStampReferenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
         print(json.dumps(report, sort_keys=True))
+        self.assertEqual(report["native_hook_calls"], 0 if insufficient else 1)
         return report["results"]
 
     def test_native_and_python_fractional_proofs_are_accepted_by_real_receiver(self):
@@ -159,6 +192,9 @@ class NativeStampReferenceTests(unittest.TestCase):
                 self.assertEqual([r["generator"] for r in results], ["native", "python"])
                 for result in results:
                     self.assertEqual(result["proof_size"], 32)
+                    if result["generator"] == "native":
+                        self.assertIsInstance(result["rounds"], int)
+                        self.assertGreaterEqual(result["rounds"], 0)
                     self.assertTrue(result["rns_valid"], result)
                     self.assertTrue(result["receiver_accepted"], result)
                     self.assertEqual(result["delivered"], {

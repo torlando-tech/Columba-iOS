@@ -43,19 +43,18 @@ source "$POC_ROOT/support/bootstrap-pip.sh"
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
 #
-# Upstream refresh plus Columba runtime hardening and bounded receive assembly.
-# Pair with the LXMF pin below for RNS.Stamps' fractional-cost and size APIs.
-RETICULUM_REF="${RETICULUM_REF:-dc694ce6090d4f36b516ba30e2115ecdc14584b3}"
+# RNS 1.6.0 plus embedded hardening, bounded receive assembly and native hash search.
+RETICULUM_REF="${RETICULUM_REF:-17c2e2919c09632ddff6a3e433122282e0544535}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
 else
     RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_REF}"
 fi
-# Upstream SQLite storage plus Columba native-stamp and receiving-metadata hooks.
+# LXMF 1.3.0 plus receiving metadata and mutex-serialized SQLite compatibility.
 # Point at a local working copy only when explicitly developing the fork:
 #   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh
-LXMF_REF="${LXMF_REF:-22dc5eaf6330cf35fbc0e40ab19fc6bd6c630753}"
+LXMF_REF="${LXMF_REF:-09cd6be4324345ed07964e9f6e5372308f6d6883}"
 if [ -n "${LXMF_LOCAL:-}" ]; then
     echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
     LXMF_SPEC="$LXMF_LOCAL"
