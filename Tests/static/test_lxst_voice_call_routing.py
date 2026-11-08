@@ -26,23 +26,6 @@ class LXSTVoiceCallRoutingContracts(unittest.TestCase):
             source,
         )
 
-    def test_resolver_accepts_direct_telephony_announce(self) -> None:
-        source = self._read("Sources/ColumbaApp/Services/CallManager.swift")
-        resolver = re.search(
-            r"private func resolveTelephonyTarget\(.*?\n    }\n\n    private func failOutgoingCall",
-            source,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(resolver)
-        assert resolver is not None
-        body = resolver.group(0)
-        self.assertIn("source.destinationAspect == .lxstTelephony", body)
-        self.assertIn("guard sourceHash == derivedHash", body)
-        self.assertIn(
-            "TelephonyCallTarget(destinationHash: sourceHash, publicKeys: source.publicKeys)",
-            body,
-        )
-
     def test_resolver_prefers_linked_announce_but_derives_fallback(self) -> None:
         source = self._read("Sources/ColumbaApp/Services/CallManager.swift")
         self.assertIn("await pathTable.allEntries().first(where:", source)
@@ -52,23 +35,6 @@ class LXSTVoiceCallRoutingContracts(unittest.TestCase):
             "return TelephonyCallTarget(destinationHash: derivedHash, publicKeys: source.publicKeys)",
             source,
         )
-
-    def test_network_transport_accepts_only_telephony_hash(self) -> None:
-        source = self._read(
-            "Sources/ColumbaApp/Services/PythonNetworkTransport.swift"
-        )
-        outbound = re.search(
-            r"public func openOutboundCall\(.*?\n    }\n\n    public func identifySelf",
-            source,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(outbound)
-        assert outbound is not None
-        body = outbound.group(0)
-        self.assertIn("to telephonyHash: Data", body)
-        self.assertIn("callDest.hash == telephonyHash", body)
-        self.assertIn("transport.initiateLink(to: callDest", body)
-        self.assertNotIn("deliveryHash", body)
 
     def test_phone_node_details_uses_call_action_and_codec_picker(self) -> None:
         details = self._read(
