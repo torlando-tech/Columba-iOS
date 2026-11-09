@@ -19,17 +19,10 @@ DEV_DIR="$POC_ROOT/wheels-iphoneos"
 
 BEEWARE_INDEX="https://pypi.anaconda.org/beeware/simple"
 CRYPTO_VERSION="47.0.0"
+CFFI_VERSION="2.0.0"
 PYTHON_TAG="cp313"
 PLATFORM_SIM="ios_13_0_arm64_iphonesimulator"
 PLATFORM_DEV="ios_13_0_arm64_iphoneos"
-
-# Bootstrap a usable pip into a fresh venv. The host-python-version-aware
-# logic (rolling zipapp + pip==26.2.1 pin on >= 3.10; pypa per-version
-# get-pip channel on older hosts like the 3.9.6 system python on Xcode
-# Cloud runners) lives in support/bootstrap-pip.sh so it can be tested
-# standalone (Tests/static/test_fetch_wheels_pip_bootstrap.py). Sets
-# PIP_VENV / PIP_PYTHON here.
-source "$POC_ROOT/support/bootstrap-pip.sh"
 
 # Pure-Python pinned versions — empty means latest. Pin in production.
 # (msgpack intentionally NOT installed: RNS and LXMF use the vendored pure-Python
@@ -81,10 +74,6 @@ else
     BLE_RETICULUM_SPEC="git+https://github.com/torlando-tech/ble-reticulum.git@${BLE_RETICULUM_REF}"
 fi
 
-rm -rf "$SIM_DIR" "$DEV_DIR"
-mkdir -p "$SIM_DIR" "$DEV_DIR"
-PURE_DIR="$PIP_VENV/pure-python"
-mkdir -p "$PURE_DIR"
 
 install_binary_wheel() {
     # $1 platform tag, $2 destination dir, $3+ pkg specs
@@ -113,7 +102,7 @@ install_pure_python() {
         "$@"
 }
 
-validate_pure_python() {
+validate_wheels() {
     local dst=$1
     for payload in \
         RNS/__init__.py \
@@ -137,7 +126,8 @@ validate_pure_python() {
     "$PIP_PYTHON" - "$dst" \
         "${RETICULUM_LOCAL:+LOCAL}${RETICULUM_LOCAL:-$RETICULUM_REF}" \
         "${LXMF_LOCAL:+LOCAL}${LXMF_LOCAL:-$LXMF_REF}" \
-        "${BLE_RETICULUM_LOCAL:+LOCAL}${BLE_RETICULUM_LOCAL:-$BLE_RETICULUM_REF}" <<'PY'
+        "${BLE_RETICULUM_LOCAL:+LOCAL}${BLE_RETICULUM_LOCAL:-$BLE_RETICULUM_REF}" \
+        "${2:-}" "$PYTHON_TAG" "$CRYPTO_VERSION" "$CFFI_VERSION" <<'PY'
 import email.parser
 import json
 from pathlib import Path
@@ -146,7 +136,9 @@ import sys
 
 root = Path(sys.argv[1])
 expected_refs = dict(zip(("rns", "lxmf", "ble-reticulum"), sys.argv[2:]))
-expected_names = {"rns", "lxmf", "pyserial", "ble-reticulum"}
+platform_tag, python_tag, crypto_version, cffi_version = sys.argv[5:]
+binary_versions = {"cryptography": crypto_version, "cffi": cffi_version} if platform_tag else {}
+expected_names = {"rns", "lxmf", "pyserial", "ble-reticulum"} | binary_versions.keys()
 found = {}
 
 
@@ -161,6 +153,8 @@ for metadata_path in root.glob("*.dist-info/METADATA"):
     if name in expected_names:
         if not version or version in {"unknown", "0.0.0"}:
             raise SystemExit(f"error: invalid {name} package version: {version!r}")
+        if name in binary_versions and version != binary_versions[name]:
+            raise SystemExit(f"error: {name} version {version!r} does not match {binary_versions[name]!r}")
         if name in found:
             raise SystemExit(f"error: duplicate package metadata for {name}")
         found[name] = metadata_path.parent
@@ -182,13 +176,37 @@ for name, expected_ref in expected_refs.items():
         raise SystemExit(
             f"error: {name} VCS revision {commit_id!r} does not match {expected_ref!r}"
         )
+
+for name, pattern in (("cryptography", "cryptography/**/*.so"), ("cffi", "_cffi_backend*.so")):
+    if name not in binary_versions:
+        continue
+    wheel = email.parser.Parser().parsestr((found[name] / "WHEEL").read_text(encoding="utf-8"))
+    if not any(tag.startswith(python_tag + "-") and tag.endswith("-" + platform_tag)
+               for tag in wheel.get_all("Tag", [])):
+        raise SystemExit(f"error: {name} wheel does not match {python_tag}/{platform_tag}")
+    if not any(path.is_file() and path.stat().st_size > 0 for path in root.glob(pattern)):
+        raise SystemExit(f"error: missing native module for {name}")
 PY
 }
+
+PIP_PYTHON=python3
+if [ -z "${RETICULUM_LOCAL:-}${LXMF_LOCAL:-}${BLE_RETICULUM_LOCAL:-}" ] &&
+   (validate_wheels "$SIM_DIR" "$PLATFORM_SIM" &&
+    validate_wheels "$DEV_DIR" "$PLATFORM_DEV") >/dev/null 2>&1; then
+    echo "Python wheels match pinned revisions and platforms, reusing."
+    exit 0
+fi
+
+source "$POC_ROOT/support/bootstrap-pip.sh"
+rm -rf "$SIM_DIR" "$DEV_DIR"
+mkdir -p "$SIM_DIR" "$DEV_DIR"
+PURE_DIR="$PIP_VENV/pure-python"
+mkdir -p "$PURE_DIR"
 
 copy_pure_python() {
     local src=$1 dst=$2
     cp -R "$src/." "$dst/"
-    validate_pure_python "$dst"
+    validate_wheels "$dst" "$3"
 }
 
 # cffi is needed because cryptography $CRYPTO_VERSION still depends on cffi for
@@ -196,15 +214,15 @@ copy_pure_python() {
 # availability on BeeWare).
 BINARY_WHEELS=(
     "cryptography==$CRYPTO_VERSION"
-    "cffi==2.0.0"
+    "cffi==$CFFI_VERSION"
 )
 install_binary_wheel "$PLATFORM_SIM" "$SIM_DIR" "${BINARY_WHEELS[@]}"
 install_binary_wheel "$PLATFORM_DEV" "$DEV_DIR" "${BINARY_WHEELS[@]}"
 
 install_pure_python "$PURE_DIR" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC" "$BLE_RETICULUM_SPEC"
-validate_pure_python "$PURE_DIR"
-copy_pure_python "$PURE_DIR" "$SIM_DIR"
-copy_pure_python "$PURE_DIR" "$DEV_DIR"
+validate_wheels "$PURE_DIR"
+copy_pure_python "$PURE_DIR" "$SIM_DIR" "$PLATFORM_SIM"
+copy_pure_python "$PURE_DIR" "$DEV_DIR" "$PLATFORM_DEV"
 
 echo
 echo "Wheels installed:"

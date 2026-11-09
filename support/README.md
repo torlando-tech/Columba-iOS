@@ -20,6 +20,12 @@ all three at build time, copying the stdlib into `<app>/python/lib/` and
 processing each `.so` extension module into a per-module `.framework` so iOS
 codesigning is happy.
 
+Both the post-clone hook and Xcode staging run `fetch-wheels.sh`. Matching device
+and simulator payloads are reused without network access; stale VCS revisions,
+missing metadata or modules, and mismatched binary versions or platform tags
+trigger a rebuild. Explicit local-checkout overrides always rebuild so local
+edits are not hidden by the cache.
+
 ## Pinned versions
 
 | Component               | Source                                                              | Version              |
@@ -27,8 +33,8 @@ codesigning is happy.
 | Python-Apple-support    | github.com/beeware/Python-Apple-support                             | 3.13-b13             |
 | CPython                 | bundled                                                             | 3.13.11              |
 | OpenSSL                 | bundled                                                             | 3.0.18-1             |
-| rns                     | PyPI                                                                | latest at fetch time |
-| lxmf                    | PyPI                                                                | latest at fetch time |
+| rns                     | torlando-tech/Reticulum, immutable commit in fetch-wheels.sh          | 1.6.0                |
+| lxmf                    | torlando-tech/LXMF, immutable commit in fetch-wheels.sh               | 1.3.0                |
 | cryptography (iOS)      | BeeWare anaconda channel (pypi.anaconda.org/beeware/simple)         | 47.0.0 (pinned)      |
 | cffi (iOS)              | BeeWare anaconda channel                                            | 2.0.0 (pinned)       |
 | pyserial                | PyPI (pure Python)                                                  | latest at fetch time |
