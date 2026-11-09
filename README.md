@@ -67,15 +67,29 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for target ownership and dependency bound
 
 ### Native stamp proof-of-work
 
-The Python bridge passes Reticulum's authoritative 256-bit target to the native
-stamper, which accepts `SHA-256(workblock || stamp) <= target`. This preserves
-fractional costs without duplicating Reticulum's fixed-point conversion in Swift.
+The embedded dependencies are immutable commits from the `torlando-tech` forks:
 
-Both integer C entry points remain available, and earlier integer-only
-RNS/LXMF versions remain supported. With fractional-aware dependencies but an older
-native binary, the bridge rounds difficulty up, never down. Fractional requests
-with integer-only dependencies fail explicitly instead of truncating the cost.
-The difficulty cap of 32 and cancellable native-job lifecycle are unchanged.
+- [Reticulum 1.6.0, `0816be02b5f43b643b980e8262c7c7f2a4fc3d56`](https://github.com/torlando-tech/Reticulum/commit/0816be02b5f43b643b980e8262c7c7f2a4fc3d56) is based directly on upstream 1.6.0 and retains only the native hash-search hook, AutoInterface lifecycle fixes and receive-assembly allocation reductions. Ratchet-file handling, TCP/backbone connection handling and PHY telemetry use unchanged upstream code.
+- [LXMF 1.3.0, `09cd6be4324345ed07964e9f6e5372308f6d6883`](https://github.com/torlando-tech/LXMF/commit/09cd6be4324345ed07964e9f6e5372308f6d6883) retains opportunistic receiving metadata and mutex-serialized SQLite compatibility. `LXStamper` is the unchanged upstream wrapper around `RNS.Stamps`; there is no LXMF native-generator registration.
+
+Reticulum owns workblock expansion, fractional-cost quantization, proof validation
+and cancellation through its existing stamp jobs. The Python bridge registers
+`RNS.Stamps.native_stamp_search(workblock, target, size, stop_check)` once at
+startup. Swift only searches for candidate bytes satisfying
+`SHA-256(workblock || stamp) <= target`, returning the proof and actual failed
+attempt count. The digest is always 32 bytes; candidate sizes are not restricted
+to LXMF's 32-byte proofs. There is no integer-cost compatibility path or cost-32
+ceiling. Reticulum's X25519 stamped-key search remains upstream.
+
+The bridge passes the full 256-bit target to Swift, clamping Reticulum's
+cost-zero target of `2**256` to `2**256-1`, which accepts the same SHA-256 digests.
+Swift reuses the hashed workblock prefix, and the bridge polls signed native job
+entry points for completion and cancellation without Python callback trampolines.
+
+Receive assembly still uses complete resource buffers and existing bytes/file
+callback interfaces. The retained allocation reductions do not make resource
+reception constant-memory or eliminate file I/O; upstream decompression limits
+remain in force.
 
 On macOS, the native/reference regression compiles the production Swift stamper,
 generates a separate proof with Python RNS, and submits both signed messages to

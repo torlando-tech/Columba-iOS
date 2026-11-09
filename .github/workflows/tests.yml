@@ -52,8 +52,10 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/stamp-reference"
           "$RUNNER_TEMP/stamp-reference/bin/python" -m pip install \
             "cryptography==47.0.0" "pyserial>=3.5"
+          support/fetch-wheels.sh --stage -iphoneos "$RUNNER_TEMP/stamp-reference-wheels"
           mkdir -p "$RUNNER_TEMP/stamp-reference-packages"
-          cp -R wheels-iphoneos/RNS wheels-iphoneos/LXMF "$RUNNER_TEMP/stamp-reference-packages/"
+          cp -R "$RUNNER_TEMP/stamp-reference-wheels/RNS" \
+            "$RUNNER_TEMP/stamp-reference-wheels/LXMF" "$RUNNER_TEMP/stamp-reference-packages/"
           PYTHONPATH="$RUNNER_TEMP/stamp-reference-packages" \
             "$RUNNER_TEMP/stamp-reference/bin/python" -B -m unittest \
             Tests.static.test_native_stamp_reference -v
@@ -88,6 +90,7 @@ jobs:
             Tests.static.test_ios_ble_driver_callbacks \
             Tests.static.test_fetch_python_resilience \
             Tests.static.test_fetch_wheels_pip_bootstrap \
+            Tests.static.test_wheel_cache_freshness \
             Tests.static.test_migration_export_flow \
             Tests.static.test_ios_stamp_runtime_hardening \
             Tests.static.test_async_propagation_fallback \

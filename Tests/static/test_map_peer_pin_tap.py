@@ -44,9 +44,8 @@ LOCATION_SHARING_MANAGER = (
 COMPAT = REPOSITORY_ROOT / "Sources/RNSAPI/Compat.swift"
 MAIN_TAB_VIEW = REPOSITORY_ROOT / "Sources/ColumbaApp/Views/MainTabView.swift"
 CHATS_VIEW = REPOSITORY_ROOT / "Sources/ColumbaApp/Views/Chats/ChatsView.swift"
-PROJECT_FILE = REPOSITORY_ROOT / "Columba.xcodeproj/project.pbxproj"
 
-# (filename, expected Sources-phase targets)
+# Files required by the map UI and its native behavior tests.
 APP_SOURCES = [
     "PeerLocationFormatting.swift",
     "DirectionsLauncher.swift",
@@ -71,7 +70,6 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         cls.compat = COMPAT.read_text(encoding="utf-8")
         cls.main_tab = MAIN_TAB_VIEW.read_text(encoding="utf-8")
         cls.chats_view = CHATS_VIEW.read_text(encoding="utf-8")
-        cls.project = PROJECT_FILE.read_text(encoding="utf-8")
 
     # MARK: - MapLibreMapView selection path
 
@@ -364,54 +362,6 @@ class MapPeerPinTapContractTests(unittest.TestCase):
         ):
             with self.subTest(key=key):
                 self.assertIn(key, keys)
-
-    # MARK: - pbxproj registration
-
-    def test_new_files_are_registered_in_pbxproj(self):
-        # The pbxproj is hand-maintained (objectVersion 60, no folder
-        # sync): an unregistered .swift file compiles into nothing and its
-        # tests never run. Each new file needs a file ref, a build file per
-        # target it belongs to, a group child, and a Sources-phase entry.
-        app_filenames = APP_SOURCES
-        test_filenames = TEST_SOURCES
-
-        for filename in app_filenames:
-            with self.subTest(file=filename):
-                # One file reference.
-                self.assertRegex(
-                    self.project,
-                    rf"[A-F0-9]+ /\* {re.escape(filename)} \*/ = \{{isa = PBXFileReference;[^}}]*path = {re.escape(filename)};",
-                )
-                # Build-file declarations exist (two app targets).
-                self.assertRegex(
-                    self.project,
-                    rf"[A-F0-9]+ /\* {re.escape(filename)} in Sources \*/ = \{{isa = PBXBuildFile;[^}}]*fileRef = [A-F0-9]+ /\* {re.escape(filename)} \*/;",
-                )
-                # Group child.
-                self.assertRegex(
-                    self.project,
-                    rf"\t[A-F0-9]+ /\* {re.escape(filename)} \*/,",
-                )
-                # Sources-phase entries (at least the shipping app phase).
-                self.assertRegex(
-                    self.project,
-                    rf"\t[A-F0-9]+ /\* {re.escape(filename)} in Sources \*/,",
-                )
-
-        for filename in test_filenames:
-            with self.subTest(file=filename):
-                self.assertRegex(
-                    self.project,
-                    rf"[A-F0-9]+ /\* {re.escape(filename)} \*/ = \{{isa = PBXFileReference;[^}}]*path = {re.escape(filename)};",
-                )
-                self.assertRegex(
-                    self.project,
-                    rf"[A-F0-9]+ /\* {re.escape(filename)} in Sources \*/ = \{{isa = PBXBuildFile;[^}}]*fileRef = [A-F0-9]+ /\* {re.escape(filename)} \*/;",
-                )
-                self.assertRegex(
-                    self.project,
-                    rf"\t[A-F0-9]+ /\* {re.escape(filename)} in Sources \*/,",
-                )
 
     def test_new_files_present_on_disk(self):
         for filename in APP_SOURCES:

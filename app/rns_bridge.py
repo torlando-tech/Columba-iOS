@@ -77,16 +77,9 @@ import RNS
 import LXMF
 
 
-# ── Native multi-threaded stamp PoW (iOS) ──────────────────────────────────
-# iOS's embedded CPython ships no `_multiprocessing`, so upstream LXMF's
-# `LXStamper.job_linux` throws `ModuleNotFoundError: _multiprocessing` and no
-# stamp is ever produced — messages to peers that require a stamp cost (e.g.
-# Sideband) never deliver. (iOS reports `sys.platform == "ios"`, which misses
-# LXStamper's macOS `job_simple` branch.) We offload the proof-of-work to a
-# native, multi-threaded Swift implementation reached via ctypes — the iOS
-# analog of Columba Android's `event_bridge.install_external_stamp_generator`
-# + Kotlin `StampGenerator`. The `columba_stamp_job_*` @_cdecl shims live in
-# SwiftBLEBridge and are statically linked so `CDLL(None)` can resolve them.
+# Native hash search only. RNS owns workblock derivation, targets, validation,
+# and Python job cancellation; Swift owns parallel hashing behind signed C ABI
+# entry points resolved from the statically linked executable.
 import ctypes
 
 try:
@@ -113,17 +106,15 @@ def _bind_stamp_fn(symbol: str, argtypes: list[Any], restype: Any = ctypes.c_int
 # code-signing policy and terminate the process with an invalid-page error.
 _stamp_job_start_fn = _bind_stamp_fn(
     "columba_stamp_job_start",
-    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_int32],
-    ctypes.c_uint64,
-)
-_stamp_job_start_target_fn = _bind_stamp_fn(
-    "columba_stamp_job_start_target",
-    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32],
+    [
+        ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32,
+        ctypes.c_int32,
+    ],
     ctypes.c_uint64,
 )
 _stamp_job_poll_fn = _bind_stamp_fn(
     "columba_stamp_job_poll",
-    [ctypes.c_uint64, ctypes.c_char_p],
+    [ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_uint64)],
 )
 _stamp_job_cancel_fn = _bind_stamp_fn(
     "columba_stamp_job_cancel",
@@ -140,11 +131,10 @@ _stamp_jobs_cancel_all_fn = _bind_stamp_fn(
 
 
 def _native_stamp_jobs_available() -> bool:
-    return (
-        _stamp_job_start_target_fn is not None or _stamp_job_start_fn is not None
-    ) and all(
+    return all(
         fn is not None
         for fn in (
+            _stamp_job_start_fn,
             _stamp_job_poll_fn,
             _stamp_job_cancel_fn,
             _stamp_job_release_fn,
@@ -153,176 +143,96 @@ def _native_stamp_jobs_available() -> bool:
     )
 
 
-def _token_is_cancelled(cancellation_token: Any) -> bool:
-    """Treat an invalid or expired foreign token as cancellation."""
-    try:
-        return bool(cancellation_token.is_cancelled())
-    except Exception:
-        return True
-
-
-def _native_stamp_pow(workblock: bytes, stamp_cost: int | float, cancellation_token: Any):
-    """Run native PoW using RNS's exact target when the native ABI supports it."""
-    if (
-        not isinstance(stamp_cost, (int, float))
-        or not 0 <= stamp_cost <= 32
-        or not math.isfinite(stamp_cost)
-    ):
-        return None
-    if not _native_stamp_jobs_available():
-        return None
-
-    start_target_job = _stamp_job_start_target_fn
-    start_job = _stamp_job_start_fn
-    poll_job = _stamp_job_poll_fn
-    cancel_job = _stamp_job_cancel_fn
-    release_job = _stamp_job_release_fn
-    assert poll_job is not None
-    assert cancel_job is not None
-    assert release_job is not None
-
-    target_from_cost = getattr(getattr(RNS, "Stamps", None), "target_from_cost", None)
-    integral_cost = int(stamp_cost) == stamp_cost
-    if not callable(target_from_cost) and not integral_cost:
-        RNS.log(
-            "native stamp gen: fractional cost requires RNS.Stamps.target_from_cost",
-            RNS.LOG_WARNING,
-        )
-        return None
-
-    target_bytes = None
-    if start_target_job is not None:
-        try:
-            target = (
-                target_from_cost(stamp_cost)
-                if callable(target_from_cost)
-                else 1 << (256 - int(stamp_cost))
-            )
-            target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
-        except Exception as e:
-            RNS.log(f"native stamp gen: target derivation failed: {e}", RNS.LOG_WARNING)
-            return None
+def _native_stamp_search(workblock, target, size, stop_check):
+    """Search RNS's exact target without moving its job lifecycle into Python."""
+    if size <= 0 or size > 0x7FFFFFFF or len(workblock) > 0x7FFFFFFF:
+        stamp, rounds, found = RNS.Stamps._loop_hash(workblock, target, size, stop_check)
+        return (stamp if found else None), rounds
+    if _runtime_teardown_requested.is_set():
+        return None, 0
 
     payload = bytes(workblock)
-    if start_target_job is not None:
-        job_id = int(start_target_job(payload, len(payload), target_bytes, 32))
-    else:
-        assert start_job is not None
-        # Old binaries only support integer difficulty; never weaken a fraction.
-        job_id = int(start_job(payload, len(payload), math.ceil(stamp_cost)))
+    target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
+    job_id = int(_stamp_job_start_fn(payload, len(payload), target_bytes, 32, size))
     if job_id == 0:
-        return None
+        return None, 0
 
-    out = ctypes.create_string_buffer(32)
     try:
+        output = ctypes.create_string_buffer(size)
+        rounds = ctypes.c_uint64()
         while True:
-            if _token_is_cancelled(cancellation_token):
-                cancel_job(job_id)
+            if _runtime_teardown_requested.is_set() or stop_check():
+                _stamp_job_cancel_fn(job_id)
 
-            status = int(poll_job(job_id, out))
-            if status == 32:
-                # Close the race where cancellation arrives after the pre-poll
-                # check but before Python observes a completed native proof.
-                if _token_is_cancelled(cancellation_token):
-                    cancel_job(job_id)
-                    return None
-                return out.raw[:32]
+            status = int(_stamp_job_poll_fn(job_id, output, size, ctypes.byref(rounds)))
+            if status == size:
+                # Cancellation can arrive while the completed proof is polled.
+                if _runtime_teardown_requested.is_set() or stop_check():
+                    _stamp_job_cancel_fn(job_id)
+                    return None, rounds.value
+                return output.raw[:status], rounds.value
             if status < 0:
-                return None
+                return None, rounds.value
             if status != 0:
                 RNS.log(
-                    f"native stamp gen: unexpected poll status {status}",
+                    f"native stamp search: unexpected poll status {status}",
                     RNS.LOG_WARNING,
                 )
-                return None
+                return None, rounds.value
             time.sleep(0.01)
     finally:
-        release_job(job_id)
+        _stamp_job_release_fn(job_id)
 
 
-def _install_native_stamp_generator() -> None:
-    """Register the native (Swift, multi-threaded) PoW as LXMF's external stamp
-    generator. The torlando-tech LXMF fork's `LXStamper.set_external_generator`
-    hook makes `generate_stamp` delegate its proof-of-work to us — necessary on
-    iOS, whose embedded CPython has no `_multiprocessing` (stock `job_linux`
-    raises `ModuleNotFoundError`). LXMF still does its own workblock derivation +
-    value calc, so the stamp is byte-identical to what the receiver validates.
-    iOS analog of Android's `event_bridge.install_external_stamp_generator`.
-    No-ops (warning) if the native symbol or the fork hook is absent."""
-    try:
-        LXStamper = LXMF.LXStamper
-    except Exception as e:  # noqa: BLE001
-        RNS.log(f"native stamp gen: LXStamper unavailable: {e}", RNS.LOG_DEBUG)
-        return
+def _install_native_stamp_search() -> bool:
+    """Install the RNS hash-search seam only after runtime startup."""
     if not _native_stamp_jobs_available():
         RNS.log(
-            "native stamp gen: native job symbols not found; stamp generation "
-            "will fail on iOS",
-            RNS.LOG_WARNING,
+            "native stamp search: required native job symbols not found; "
+            "stamp generation will fail on iOS",
+            RNS.LOG_ERROR,
         )
-        return
-    if not hasattr(LXStamper, "set_external_generator"):
+        return False
+    if not hasattr(RNS.Stamps, "native_stamp_search"):
         RNS.log(
-            "native stamp gen: LXStamper has no set_external_generator — this is "
-            "stock LXMF, not the torlando fork; stamps will fail on iOS",
-            RNS.LOG_WARNING,
+            "native stamp search: RNS.Stamps.native_stamp_search is missing",
+            RNS.LOG_ERROR,
         )
-        return
+        return False
+    RNS.Stamps.native_stamp_search = _native_stamp_search
+    RNS.log("native stamp search registered", RNS.LOG_INFO)
+    return True
 
-    def _external_generator(workblock, stamp_cost, cancellation_token):
-        # LXStamper contract: (workblock, cost, token) -> (stamp, rounds).
-        _t0 = time.time()
-        stamp = _native_stamp_pow(
-            workblock, stamp_cost, cancellation_token
-        )
-        RNS.log(
-            f"native stamp: cost={stamp_cost} in {round((time.time()-_t0)*1000)}ms"
-            + ("" if stamp is not None else " (cancelled or no stamp)"),
-            RNS.LOG_INFO,
-        )
-        return (stamp, 0) if stamp is not None else (None, 0)
 
+def _uninstall_native_stamp_search() -> None:
+    """Detach the hook and cancel RNS jobs before draining native work."""
+    RNS.Stamps.native_stamp_search = None
     try:
-        LXStamper.set_external_generator(
-            _external_generator, pass_cancellation_token=True
-        )
-    except Exception as e:  # noqa: BLE001
-        RNS.log(f"native stamp gen: registration failed: {e}", RNS.LOG_WARNING)
-        return
-    RNS.log("native cancellable stamp generator registered", RNS.LOG_INFO)
+        # RNS's cancellation state outlives the teardown event, so a search
+        # paused before native start cannot escape a completed stop().
+        for message_id in list(RNS.Stamps.active_jobs):
+            try:
+                RNS.Stamps.cancel_work(message_id)
+            except Exception as e:  # noqa: BLE001
+                RNS.log(f"native stamp search: RNS cancellation failed: {e}", RNS.LOG_DEBUG)
+    finally:
+        try:
+            if _stamp_jobs_cancel_all_fn is not None:
+                _stamp_jobs_cancel_all_fn()
+        except Exception as e:  # noqa: BLE001
+            RNS.log(f"native stamp search: cancel-all failed: {e}", RNS.LOG_DEBUG)
 
 
-def _uninstall_native_stamp_generator() -> None:
-    """Clear LXMF's process-global callback and cooperatively cancel its jobs."""
-    try:
-        if _stamp_jobs_cancel_all_fn is not None:
-            _stamp_jobs_cancel_all_fn()
-    except Exception as e:  # noqa: BLE001
-        RNS.log(f"native stamp gen: cancel-all failed: {e}", RNS.LOG_DEBUG)
-
-    # Always attempt process-global callback removal, even when native cleanup
-    # fails. Retaining it can reference stale embedded-runtime state.
-    try:
-        LXStamper = LXMF.LXStamper
-        setter = getattr(LXStamper, "set_external_generator", None)
-        if setter is not None:
-            setter(None)
-    except Exception as e:  # noqa: BLE001
-        # Teardown is best-effort and must never prevent the remaining bridge
-        # state from being released.
-        RNS.log(f"native stamp gen: unregister failed: {e}", RNS.LOG_DEBUG)
-
-
-def _install_native_stamp_generator_unless_stopping() -> bool:
+def _install_native_stamp_search_unless_stopping() -> bool:
     """Install only while this startup still owns the runtime lifecycle."""
     if _runtime_teardown_requested.is_set():
         return False
-    _install_native_stamp_generator()
+    installed = _install_native_stamp_search()
     # Teardown may have begun during registration while waiting for `_lock`.
     if _runtime_teardown_requested.is_set():
-        _uninstall_native_stamp_generator()
+        _uninstall_native_stamp_search()
         return False
-    return True
+    return installed
 
 
 # Per-stage startup timings in milliseconds, recorded by start() and read back
@@ -2441,12 +2351,11 @@ def start(
       3. Neither — generate a fresh identity and persist to `identity_path` (PoC
          and CLI use; iOS production should never hit this branch since the
          Keychain entry is created on first launch by Swift)."""
-    # Registration is process-global. Clear stale callbacks/jobs outside the
-    # bridge lock so LXMF cancellation cannot deadlock against bridge teardown.
+    # Clear stale native work outside the bridge lock before a new startup.
     with _lock:
         if _state["started"]:
             return _local_info()
-    _uninstall_native_stamp_generator()
+    _uninstall_native_stamp_search()
 
     with _lock:
         # A concurrent start may have completed while cancellation ran.
@@ -2611,7 +2520,7 @@ def start(
 
         # Install only after startup has fully assembled all state, so an
         # exception during partial startup cannot retain a global callback.
-        _install_native_stamp_generator_unless_stopping()
+        _install_native_stamp_search_unless_stopping()
         _state["started"] = True
         # P1 #9: in NE mode (durable ingress-retry file), arm the periodic
         # retry loop so retained inbound mail is projected into the GRDB store
@@ -3234,9 +3143,8 @@ def _clear_transport_class_state() -> None:
 
 @_balanced_runtime_teardown
 def stop() -> None:
-    # LXMF owns a process-global callback and may synchronously notify/cancel
-    # jobs while clearing it. Never hold the bridge lock across that operation.
-    _uninstall_native_stamp_generator()
+    # Native cancellation must not participate in bridge lock ordering.
+    _uninstall_native_stamp_search()
     # Persist the newest announce batch before teardown, or a clean stop drops
     # up to one flush window of announce events.
     try:
@@ -4070,10 +3978,8 @@ def nomadnet_fetch_op(dest_hash_hex: str, path: str,
 def reset_identity(identity_path: str) -> None:
     """Delete identity bytes on disk and tear down state. Caller must call
     start() again after this. Safe to call when not started."""
-    # Cancel native stamp work before acquiring the bridge lock; cancellation
-    # callbacks are foreign process-global state and must not participate in
-    # bridge lock ordering.
-    _uninstall_native_stamp_generator()
+    # Cancel native work before acquiring the bridge lock.
+    _uninstall_native_stamp_search()
     global _telephony_destination
     with _lock:
         # Tear down the router first (stops its LXMRouter background threads),

@@ -65,6 +65,7 @@ class InboundDeliveryMethodTests(unittest.TestCase):
                 Transport=types.SimpleNamespace(path_table={}),
             ),
             "_put": lambda kind, **payload: events.append((kind, payload)),
+            "_durable_mode": False,
         }
         module = ast.Module(
             body=[

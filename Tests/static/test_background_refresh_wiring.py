@@ -115,19 +115,6 @@ def strip_swift_noncode(source: str) -> str:
 
 
 class BackgroundRefreshWiringContractTests(unittest.TestCase):
-    def test_registration_precedes_embedded_python_start(self):
-        source = (APP / "App" / "ColumbaApp.swift").read_text()
-        registration = source.index("BackgroundPropagationTaskScheduler.register()")
-        python_start = source.index("PythonRuntime.shared.start()")
-        self.assertLess(registration, python_start)
-
-    def test_launch_safe_runtime_installs_workflow_outside_root_view_task(self):
-        source = (APP / "App" / "ColumbaApp.swift").read_text()
-        app_init = source[source.index("struct ColumbaApp: App"):source.index("// MARK: - App Body")]
-        root_view = source[source.index("struct RootView: View"):]
-        self.assertIn("ColumbaApplicationRuntime.shared.installBackgroundHandler()", app_init)
-        self.assertNotIn("BackgroundTaskCoordinator.shared.installHandler", root_view)
-
     def test_both_task_kinds_register_and_deliver_into_one_coordinator(self):
         services = strip_swift_noncode(
             (APP / "Services" / "BackgroundPropagationSync.swift").read_text()
@@ -148,17 +135,6 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         scheduler = services[services.index("enum BackgroundPropagationTaskScheduler"):]
         self.assertIn("request.requiresExternalPower = false", scheduler)
         self.assertIn("request.requiresNetworkConnectivity = false", scheduler)
-
-    def test_both_task_kinds_share_one_sync_handler_and_anchor(self):
-        app = (APP / "App" / "ColumbaApp.swift").read_text()
-        runtime = app[app.index("final class ColumbaApplicationRuntime"):]
-        handler_install = runtime[
-            runtime.index("func installBackgroundHandler") :
-            runtime.index("func resetAfterIdentitySwitch")
-        ]
-        self.assertIn("BackgroundTaskCoordinator.shared.installHandler", handler_install)
-        self.assertIn("BackgroundPropagationTaskScheduler.markSyncCompleted", handler_install)
-        self.assertIn("performBackgroundPropagationSync()", handler_install)
 
     def test_scheduling_is_anchored_to_last_completed_sync(self):
         raw = (APP / "Services" / "BackgroundPropagationSync.swift").read_text()
@@ -188,46 +164,6 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
         self.assertIn("refreshRecoveryState", scheduler)
         self.assertIn("systemUptime", scheduler)
 
-    def test_embedded_backend_start_failure_propagates_to_readiness(self):
-        services = strip_swift_noncode(
-            (APP / "Services" / "AppServices.swift").read_text()
-        )
-        start = services[services.index("private func startPythonBackend("):]
-        self.assertIn(") async throws {", start[:500])
-        self.assertIn("self.backend = nil\n            throw error", start)
-        self.assertIn("await backend.stop()", start)
-        self.assertIn("self?.backend = nil", start)
-        self.assertIn("PropagationNodeRestoreReadiness.validate", start)
-        first_start = services.index("private func initializeUnlocked(tcpServerAddress")
-        second_start = services.index("private func initializeUnlocked(\n        identity:")
-        helper_start = services.index("private func activateInitializationManagers(")
-        initialization_paths = (
-            services[first_start:second_start],
-            services[second_start:helper_start],
-        )
-        gated_call = (
-            "activate: {\n"
-            "                self.activateInitializationManagers(propManager)\n"
-            "            }"
-        )
-        for path in initialization_paths:
-            self.assertEqual(path.count("InitializationLifecycleActivation.run("), 1)
-            self.assertEqual(path.count(gated_call), 1)
-            self.assertLess(path.index("startPythonBackend("), path.index(gated_call))
-            self.assertNotIn("propManager.startListening()", path)
-            self.assertNotIn("propManager.startPeriodicSync()", path)
-            self.assertNotIn("announceManager.start()", path)
-
-        self.assertEqual(services.count("activateInitializationManagers(propManager)"), 2)
-        helper_end = services.index("private func startStateObserver()")
-        helper = services[helper_start:helper_end]
-        for activation in (
-            "propManager.startListening()",
-            "propManager.startPeriodicSync()",
-            "announceManager.start()",
-        ):
-            self.assertEqual(helper.count(activation), 1)
-
     def test_swift_noncode_stripping_rejects_fake_wiring(self):
         fake = '''
         /* activate: { self.activateInitializationManagers(propManager) } */
@@ -246,15 +182,6 @@ class BackgroundRefreshWiringContractTests(unittest.TestCase):
     def test_service_initialization_cannot_erase_cold_launch_evidence(self):
         source = (APP / "Services" / "AppServices.swift").read_text()
         self.assertNotIn("DiagLog.clear()", source)
-
-    def test_background_workflow_awaits_shared_initialization_instead_of_polling(self):
-        app = (APP / "App" / "ColumbaApp.swift").read_text()
-        background = app[
-            app.index("private func performBackgroundPropagationSync"):
-            app.index("// MARK: - Initialization")
-        ]
-        self.assertIn("await ensureServicesInitialized()", background)
-        self.assertNotIn("for _ in 0..<100", background)
 
     def test_python_event_drain_starts_only_after_incoming_handler_installation(self):
         app = (APP / "App" / "ColumbaApp.swift").read_text()

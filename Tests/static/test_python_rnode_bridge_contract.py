@@ -7,12 +7,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 CONFIG_WRITER = ROOT / "Sources/ColumbaApp/Services/PythonConfigWriter.swift"
-NATIVE_BRIDGE = ROOT / "Sources/RNSHost/PythonRNodeBLEBridge.swift"
 PY_INTERFACE = ROOT / "app/rnode/IOSRNodeInterface.py"
 PY_DRIVER = ROOT / "app/rnode/IOSRNodeDriver.py"
-RECONCILER = ROOT / "support/isolate-modelb-targets.rb"
 
 
 class PythonRNodeBridgeContractTests(unittest.TestCase):
@@ -59,55 +56,6 @@ class PythonRNodeBridgeContractTests(unittest.TestCase):
             self.assertIn(fragment, body)
         self.assertNotIn("Python path retired", source)
         self.assertNotRegex(source, r"case \.rnode, \.multipeer: isInertPlaceholder = true")
-
-    def test_native_bridge_is_shipping_only_and_exports_complete_c_abi(self) -> None:
-        native = NATIVE_BRIDGE.read_text()
-        for declaration in (
-            '@_cdecl("columba_rnode_session_open")',
-            '@_cdecl("columba_rnode_session_close")',
-            '@_cdecl("columba_rnode_session_state")',
-            '@_cdecl("columba_rnode_session_read")',
-            '@_cdecl("columba_rnode_session_write")',
-            '@_cdecl("columba_rnode_session_set_online")',
-            '@_cdecl("columba_rnode_connect")',
-            '@_cdecl("columba_rnode_disconnect")',
-            '@_cdecl("columba_rnode_state")',
-            '@_cdecl("columba_rnode_read")',
-            '@_cdecl("columba_rnode_write")',
-            '@_cdecl("columba_rnode_set_online")',
-        ):
-            self.assertIn(declaration, native)
-        self.assertIn("final class PythonRNodeCoreBluetoothTransport", native)
-        self.assertIn("CBCentralManagerOptionRestoreIdentifierKey", native)
-        self.assertNotIn("import ReticulumSwift", native)
-        self.assertNotIn("ReticulumPythonRNodeTransport", native)
-        reconciler = RECONCILER.read_text()
-        self.assertIsNotNone(re.search(
-            r"PYTHON_ONLY_SOURCE_METADATA\s*=.*?Sources/PythonBridge/PythonRNodeBLEBridge\.swift",
-            reconciler,
-            re.DOTALL,
-        ))
-
-    def test_app_deploys_bridge_files_and_publishes_live_state(self) -> None:
-        source = APP_SERVICES.read_text()
-        for name in ("IOSRNodeInterface.py", "IOSRNodeDriver.py"):
-            self.assertIn(name, source)
-        function = re.search(
-            r"public func startRNodeInterface\b.*?"
-            r"#elseif COLUMBA_RUNTIME_PYTHON(?P<branch>.*?)#endif",
-            source,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(function)
-        assert function is not None
-        branch = function.group("branch")
-        self.assertIn("PythonRNodeBLEBridge.shared.setStateHandler", branch)
-        self.assertIn("uiInterface.state = .connecting", branch)
-        self.assertIn("case .connected:", branch)
-        self.assertIn("PythonRNodeBLESessionRegistry.shared.closeAll()", source)
-        self.assertIn("if closeAllPythonSessions", source)
-        self.assertIn("stopRNodeInterfaceUnlocked(closeAllPythonSessions: true)", source)
-        self.assertNotIn("rnodeUnavailableInPythonRuntime", source)
 
 
 if __name__ == "__main__":

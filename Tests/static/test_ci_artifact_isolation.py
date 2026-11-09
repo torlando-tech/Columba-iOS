@@ -236,8 +236,11 @@ class ArtifactCheckerTests(unittest.TestCase):
         for symbol in (
             b"_columba_ble_send",
             b"_columba_rnode_write",
-            b"_columba_stamp_generate",
             b"_columba_stamp_job_start",
+            b"_columba_stamp_job_poll",
+            b"_columba_stamp_job_cancel",
+            b"_columba_stamp_job_release",
+            b"_columba_stamp_jobs_cancel_all",
         ):
             with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as directory:
                 fixture = ArtifactFixture(Path(directory), "shipping")

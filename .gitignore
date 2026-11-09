@@ -37,6 +37,8 @@ Frameworks/VERSIONS
 # iOS Python wheels (fetched by support/fetch-wheels.sh)
 wheels-iphoneos/
 wheels-iphonesimulator/
+.wheel-cache.lock
+.wheel-build.*/
 
 # Python build artifacts
 __pycache__/

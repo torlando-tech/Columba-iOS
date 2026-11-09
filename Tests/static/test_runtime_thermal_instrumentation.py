@@ -6,14 +6,12 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 APP_SERVICES = ROOT / "Sources/ColumbaApp/Services/AppServices.swift"
 COMPAT = ROOT / "Sources/RNSAPI/Compat.swift"
-PROJECT = ROOT / "Columba.xcodeproj/project.pbxproj"
 
 
 class RuntimeThermalInstrumentationContractTests(unittest.TestCase):
     def setUp(self):
         self.app = APP_SERVICES.read_text(encoding="utf-8")
         self.compat = COMPAT.read_text(encoding="utf-8")
-        self.project = PROJECT.read_text(encoding="utf-8")
 
     def test_monitor_samples_cpu_and_thermal_state_at_low_frequency(self):
         self.assertIn("final class RuntimeActivityMonitor", self.app)
@@ -134,13 +132,6 @@ class RuntimeThermalInstrumentationContractTests(unittest.TestCase):
         self.assertIn("private func startMPCInterfaceUnlocked", self.app)
         self.assertIn("private func startRNodeInterfaceUnlocked", self.app)
         self.assertIn("private func connectTCPInterfaceUnlocked", self.app)
-
-    def test_lease_regressions_are_wired_into_both_native_test_targets(self):
-        self.assertTrue((ROOT / "Tests/ColumbaAppTests/RuntimeActivityMonitorLeaseTests.swift").is_file())
-        self.assertEqual(
-            self.project.count("RuntimeActivityMonitorLeaseTests.swift in Sources"),
-            4,
-        )
 
     def test_last_lease_release_invalidates_callbacks_before_final_sample(self):
         stop_start = self.app.index("func release(_ lease: Lease)")

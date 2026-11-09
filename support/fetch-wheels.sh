@@ -14,22 +14,46 @@
 set -euo pipefail
 
 POC_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ "${1:-}" != "--locked" ]; then
+    exec python3 - "$POC_ROOT" "$@" <<'PY'
+import fcntl
+from pathlib import Path
+import subprocess
+import sys
+
+root = Path(sys.argv[1])
+args = sys.argv[2:]
+if args and (len(args) != 3 or args[0] != "--stage"
+             or args[1] not in ("-iphoneos", "-iphonesimulator")):
+    raise SystemExit("usage: fetch-wheels.sh [--stage <-iphoneos|-iphonesimulator> <destination>]")
+
+with (root / ".wheel-cache.lock").open("a") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    result = subprocess.run(["bash", str(root / "support/fetch-wheels.sh"), "--locked"],
+                            pass_fds=(lock.fileno(),))
+    if result.returncode:
+        raise SystemExit(result.returncode)
+    if args:
+        destination = Path(args[2])
+        destination.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["rsync", "-a", "--delete", str(root / ("wheels" + args[1])) + "/", str(destination) + "/"],
+            pass_fds=(lock.fileno(),),
+        )
+        raise SystemExit(result.returncode)
+PY
+fi
+shift
 SIM_DIR="$POC_ROOT/wheels-iphonesimulator"
 DEV_DIR="$POC_ROOT/wheels-iphoneos"
 
 BEEWARE_INDEX="https://pypi.anaconda.org/beeware/simple"
 CRYPTO_VERSION="47.0.0"
+CFFI_VERSION="2.0.0"
 PYTHON_TAG="cp313"
 PLATFORM_SIM="ios_13_0_arm64_iphonesimulator"
 PLATFORM_DEV="ios_13_0_arm64_iphoneos"
-
-# Bootstrap a usable pip into a fresh venv. The host-python-version-aware
-# logic (rolling zipapp + pip==26.2.1 pin on >= 3.10; pypa per-version
-# get-pip channel on older hosts like the 3.9.6 system python on Xcode
-# Cloud runners) lives in support/bootstrap-pip.sh so it can be tested
-# standalone (Tests/static/test_fetch_wheels_pip_bootstrap.py). Sets
-# PIP_VENV / PIP_PYTHON here.
-source "$POC_ROOT/support/bootstrap-pip.sh"
 
 # Pure-Python pinned versions — empty means latest. Pin in production.
 # (msgpack intentionally NOT installed: RNS and LXMF use the vendored pure-Python
@@ -43,19 +67,18 @@ source "$POC_ROOT/support/bootstrap-pip.sh"
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
 #
-# Upstream refresh plus Columba runtime hardening and bounded receive assembly.
-# Pair with the LXMF pin below for RNS.Stamps' fractional-cost and size APIs.
-RETICULUM_REF="${RETICULUM_REF:-dc694ce6090d4f36b516ba30e2115ecdc14584b3}"
+# RNS 1.6.0 plus native hash search, AutoInterface lifecycle fixes and reduced receive copies.
+RETICULUM_REF="${RETICULUM_REF:-0816be02b5f43b643b980e8262c7c7f2a4fc3d56}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
 else
     RNS_SPEC="git+https://github.com/torlando-tech/Reticulum.git@${RETICULUM_REF}"
 fi
-# Upstream SQLite storage plus Columba native-stamp and receiving-metadata hooks.
+# LXMF 1.3.0 plus receiving metadata and mutex-serialized SQLite compatibility.
 # Point at a local working copy only when explicitly developing the fork:
 #   LXMF_LOCAL=~/repos/LXMF support/fetch-wheels.sh
-LXMF_REF="${LXMF_REF:-22dc5eaf6330cf35fbc0e40ab19fc6bd6c630753}"
+LXMF_REF="${LXMF_REF:-09cd6be4324345ed07964e9f6e5372308f6d6883}"
 if [ -n "${LXMF_LOCAL:-}" ]; then
     echo "==> LXMF_LOCAL set — using local LXMF checkout: $LXMF_LOCAL"
     LXMF_SPEC="$LXMF_LOCAL"
@@ -82,10 +105,6 @@ else
     BLE_RETICULUM_SPEC="git+https://github.com/torlando-tech/ble-reticulum.git@${BLE_RETICULUM_REF}"
 fi
 
-rm -rf "$SIM_DIR" "$DEV_DIR"
-mkdir -p "$SIM_DIR" "$DEV_DIR"
-PURE_DIR="$PIP_VENV/pure-python"
-mkdir -p "$PURE_DIR"
 
 install_binary_wheel() {
     # $1 platform tag, $2 destination dir, $3+ pkg specs
@@ -114,7 +133,7 @@ install_pure_python() {
         "$@"
 }
 
-validate_pure_python() {
+validate_wheels() {
     local dst=$1
     for payload in \
         RNS/__init__.py \
@@ -138,7 +157,8 @@ validate_pure_python() {
     "$PIP_PYTHON" - "$dst" \
         "${RETICULUM_LOCAL:+LOCAL}${RETICULUM_LOCAL:-$RETICULUM_REF}" \
         "${LXMF_LOCAL:+LOCAL}${LXMF_LOCAL:-$LXMF_REF}" \
-        "${BLE_RETICULUM_LOCAL:+LOCAL}${BLE_RETICULUM_LOCAL:-$BLE_RETICULUM_REF}" <<'PY'
+        "${BLE_RETICULUM_LOCAL:+LOCAL}${BLE_RETICULUM_LOCAL:-$BLE_RETICULUM_REF}" \
+        "${2:-}" "$PYTHON_TAG" "$CRYPTO_VERSION" "$CFFI_VERSION" <<'PY'
 import email.parser
 import json
 from pathlib import Path
@@ -147,7 +167,9 @@ import sys
 
 root = Path(sys.argv[1])
 expected_refs = dict(zip(("rns", "lxmf", "ble-reticulum"), sys.argv[2:]))
-expected_names = {"rns", "lxmf", "pyserial", "ble-reticulum"}
+platform_tag, python_tag, crypto_version, cffi_version = sys.argv[5:]
+binary_versions = {"cryptography": crypto_version, "cffi": cffi_version} if platform_tag else {}
+expected_names = {"rns", "lxmf", "pyserial", "ble-reticulum"} | binary_versions.keys()
 found = {}
 
 
@@ -162,6 +184,8 @@ for metadata_path in root.glob("*.dist-info/METADATA"):
     if name in expected_names:
         if not version or version in {"unknown", "0.0.0"}:
             raise SystemExit(f"error: invalid {name} package version: {version!r}")
+        if name in binary_versions and version != binary_versions[name]:
+            raise SystemExit(f"error: {name} version {version!r} does not match {binary_versions[name]!r}")
         if name in found:
             raise SystemExit(f"error: duplicate package metadata for {name}")
         found[name] = metadata_path.parent
@@ -183,13 +207,39 @@ for name, expected_ref in expected_refs.items():
         raise SystemExit(
             f"error: {name} VCS revision {commit_id!r} does not match {expected_ref!r}"
         )
+
+for name, pattern in (("cryptography", "cryptography/**/*.so"), ("cffi", "_cffi_backend*.so")):
+    if name not in binary_versions:
+        continue
+    wheel = email.parser.Parser().parsestr((found[name] / "WHEEL").read_text(encoding="utf-8"))
+    if not any(tag.startswith(python_tag + "-") and tag.endswith("-" + platform_tag)
+               for tag in wheel.get_all("Tag", [])):
+        raise SystemExit(f"error: {name} wheel does not match {python_tag}/{platform_tag}")
+    if not any(path.is_file() and path.stat().st_size > 0 for path in root.glob(pattern)):
+        raise SystemExit(f"error: missing native module for {name}")
 PY
 }
+
+PIP_PYTHON=python3
+if [ -z "${RETICULUM_LOCAL:-}${LXMF_LOCAL:-}${BLE_RETICULUM_LOCAL:-}" ] &&
+   (validate_wheels "$SIM_DIR" "$PLATFORM_SIM" &&
+    validate_wheels "$DEV_DIR" "$PLATFORM_DEV") >/dev/null 2>&1; then
+    echo "Python wheels match pinned revisions and platforms, reusing."
+    exit 0
+fi
+
+source "$POC_ROOT/support/bootstrap-pip.sh"
+BUILD_DIR="$(mktemp -d "$POC_ROOT/.wheel-build.XXXXXX")"
+trap 'rm -rf "$BUILD_DIR" "$PIP_VENV"' EXIT
+BUILD_SIM_DIR="$BUILD_DIR/iphonesimulator"
+BUILD_DEV_DIR="$BUILD_DIR/iphoneos"
+PURE_DIR="$BUILD_DIR/pure-python"
+mkdir -p "$BUILD_SIM_DIR" "$BUILD_DEV_DIR"
 
 copy_pure_python() {
     local src=$1 dst=$2
     cp -R "$src/." "$dst/"
-    validate_pure_python "$dst"
+    validate_wheels "$dst" "$3"
 }
 
 # cffi is needed because cryptography $CRYPTO_VERSION still depends on cffi for
@@ -197,15 +247,19 @@ copy_pure_python() {
 # availability on BeeWare).
 BINARY_WHEELS=(
     "cryptography==$CRYPTO_VERSION"
-    "cffi==2.0.0"
+    "cffi==$CFFI_VERSION"
 )
-install_binary_wheel "$PLATFORM_SIM" "$SIM_DIR" "${BINARY_WHEELS[@]}"
-install_binary_wheel "$PLATFORM_DEV" "$DEV_DIR" "${BINARY_WHEELS[@]}"
+install_binary_wheel "$PLATFORM_SIM" "$BUILD_SIM_DIR" "${BINARY_WHEELS[@]}"
+install_binary_wheel "$PLATFORM_DEV" "$BUILD_DEV_DIR" "${BINARY_WHEELS[@]}"
 
 install_pure_python "$PURE_DIR" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC" "$BLE_RETICULUM_SPEC"
-validate_pure_python "$PURE_DIR"
-copy_pure_python "$PURE_DIR" "$SIM_DIR"
-copy_pure_python "$PURE_DIR" "$DEV_DIR"
+validate_wheels "$PURE_DIR"
+copy_pure_python "$PURE_DIR" "$BUILD_SIM_DIR" "$PLATFORM_SIM"
+copy_pure_python "$PURE_DIR" "$BUILD_DEV_DIR" "$PLATFORM_DEV"
+
+rm -rf "$SIM_DIR" "$DEV_DIR"
+mv "$BUILD_SIM_DIR" "$SIM_DIR"
+mv "$BUILD_DEV_DIR" "$DEV_DIR"
 
 echo
 echo "Wheels installed:"
