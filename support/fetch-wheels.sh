@@ -43,8 +43,8 @@ source "$POC_ROOT/support/bootstrap-pip.sh"
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
 #
-# RNS 1.6.0 plus embedded hardening, bounded receive assembly and native hash search.
-RETICULUM_REF="${RETICULUM_REF:-17c2e2919c09632ddff6a3e433122282e0544535}"
+# RNS 1.6.0 plus native hash search, AutoInterface lifecycle fixes and reduced receive copies.
+RETICULUM_REF="${RETICULUM_REF:-0816be02b5f43b643b980e8262c7c7f2a4fc3d56}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"
