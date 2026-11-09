@@ -14,6 +14,37 @@
 set -euo pipefail
 
 POC_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ "${1:-}" != "--locked" ]; then
+    exec python3 - "$POC_ROOT" "$@" <<'PY'
+import fcntl
+from pathlib import Path
+import subprocess
+import sys
+
+root = Path(sys.argv[1])
+args = sys.argv[2:]
+if args and (len(args) != 3 or args[0] != "--stage"
+             or args[1] not in ("-iphoneos", "-iphonesimulator")):
+    raise SystemExit("usage: fetch-wheels.sh [--stage <-iphoneos|-iphonesimulator> <destination>]")
+
+with (root / ".wheel-cache.lock").open("a") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    result = subprocess.run(["bash", str(root / "support/fetch-wheels.sh"), "--locked"],
+                            pass_fds=(lock.fileno(),))
+    if result.returncode:
+        raise SystemExit(result.returncode)
+    if args:
+        destination = Path(args[2])
+        destination.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["rsync", "-a", "--delete", str(root / ("wheels" + args[1])) + "/", str(destination) + "/"],
+            pass_fds=(lock.fileno(),),
+        )
+        raise SystemExit(result.returncode)
+PY
+fi
+shift
 SIM_DIR="$POC_ROOT/wheels-iphonesimulator"
 DEV_DIR="$POC_ROOT/wheels-iphoneos"
 
@@ -198,10 +229,12 @@ if [ -z "${RETICULUM_LOCAL:-}${LXMF_LOCAL:-}${BLE_RETICULUM_LOCAL:-}" ] &&
 fi
 
 source "$POC_ROOT/support/bootstrap-pip.sh"
-rm -rf "$SIM_DIR" "$DEV_DIR"
-mkdir -p "$SIM_DIR" "$DEV_DIR"
-PURE_DIR="$PIP_VENV/pure-python"
-mkdir -p "$PURE_DIR"
+BUILD_DIR="$(mktemp -d "$POC_ROOT/.wheel-build.XXXXXX")"
+trap 'rm -rf "$BUILD_DIR" "$PIP_VENV"' EXIT
+BUILD_SIM_DIR="$BUILD_DIR/iphonesimulator"
+BUILD_DEV_DIR="$BUILD_DIR/iphoneos"
+PURE_DIR="$BUILD_DIR/pure-python"
+mkdir -p "$BUILD_SIM_DIR" "$BUILD_DEV_DIR"
 
 copy_pure_python() {
     local src=$1 dst=$2
@@ -216,13 +249,17 @@ BINARY_WHEELS=(
     "cryptography==$CRYPTO_VERSION"
     "cffi==$CFFI_VERSION"
 )
-install_binary_wheel "$PLATFORM_SIM" "$SIM_DIR" "${BINARY_WHEELS[@]}"
-install_binary_wheel "$PLATFORM_DEV" "$DEV_DIR" "${BINARY_WHEELS[@]}"
+install_binary_wheel "$PLATFORM_SIM" "$BUILD_SIM_DIR" "${BINARY_WHEELS[@]}"
+install_binary_wheel "$PLATFORM_DEV" "$BUILD_DEV_DIR" "${BINARY_WHEELS[@]}"
 
 install_pure_python "$PURE_DIR" "$RNS_SPEC" "$LXMF_SPEC" "$PYSERIAL_SPEC" "$BLE_RETICULUM_SPEC"
 validate_wheels "$PURE_DIR"
-copy_pure_python "$PURE_DIR" "$SIM_DIR" "$PLATFORM_SIM"
-copy_pure_python "$PURE_DIR" "$DEV_DIR" "$PLATFORM_DEV"
+copy_pure_python "$PURE_DIR" "$BUILD_SIM_DIR" "$PLATFORM_SIM"
+copy_pure_python "$PURE_DIR" "$BUILD_DEV_DIR" "$PLATFORM_DEV"
+
+rm -rf "$SIM_DIR" "$DEV_DIR"
+mv "$BUILD_SIM_DIR" "$SIM_DIR"
+mv "$BUILD_DEV_DIR" "$DEV_DIR"
 
 echo
 echo "Wheels installed:"

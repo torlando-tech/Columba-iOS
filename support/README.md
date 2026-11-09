@@ -26,6 +26,23 @@ missing metadata or modules, and mismatched binary versions or platform tags
 trigger a rebuild. Explicit local-checkout overrides always rebuild so local
 edits are not hidden by the cache.
 
+Rebuilds prepare and validate both platforms privately before replacing either
+cache. A checkout-scoped kernel lock serializes validation, publication, and
+consumer copies, including concurrent device and simulator builds. Failed
+downloads or package validation leave the previous caches untouched.
+
+Use the staging API for consumers instead of copying shared wheel directories:
+
+```bash
+support/fetch-wheels.sh --stage -iphoneos /path/to/app_packages
+support/fetch-wheels.sh --stage -iphonesimulator /path/to/app_packages
+```
+
+Staging validates or rebuilds the caches and synchronizes the selected complete
+payload into the destination while holding the same lock. Xcode uses this API;
+CI also stages a private snapshot before extracting its pure-Python references.
+The no-argument API still only fetches or reuses both caches.
+
 ## Pinned versions
 
 | Component               | Source                                                              | Version              |
