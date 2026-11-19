@@ -5,9 +5,8 @@
 //  The backend-agnostic protocol seam — iOS analog of Columba Android's
 //  `:rns-api` (`RnsCore` / `RnsTelephony` / `RnsTransportAdmin`). The UI talks to
 //  `AppServices` (the `:rns-host` facade); `AppServices` talks to `any RnsBackend`.
-//  Both backends conform and are selected at build time:
+//  The backend conforms and is selected at build time:
 //    • RNSBackendPy   — embedded canonical Python RNS/LXMF
-//    • RNSBackendSwift — native reticulum-swift / LXMF-swift
 //
 //  The neutral DTOs below replace the `PythonBridge.*`-namespaced ones so neither
 //  the UI nor `AppServices` reference a concrete backend. Each backend maps its

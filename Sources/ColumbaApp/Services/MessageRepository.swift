@@ -8,21 +8,21 @@
 //  ── ARCHITECTURE (Android-parity store — app-owned GRDB store) ──────────────
 //  This is the collector/boundary (Android's MessageCollector). It owns the
 //  app-side `MessageStore` (Sources/.../MessageStore/) — the GRDB store lifted
-//  out of LXMFSwift so the store no longer depends on the wire library. It opens
-//  the same shared `lxmf-swift.db` the Network-Extension's embedded Python node
-//  writes, so NE-delivered messages show up in the SwiftUI layer WITHOUT
-//  changing the UI or ViewModels — every public method still takes/returns the
-//  RNSAPI *Compat* types. `import LXMFSwift` is retained ONLY for the wire codec
-//  (`LXMessage.unpackFromBytes`) used to recover field maps from wire rows;
-//  the store itself (MessageStore / MessageRow / ConversationStoreRow / GRDBState /
-//  GRDBDeliveryMethod) is app-owned and has no LXMFSwift dependency.
+//  out of the retired LXMFSwift package so the store never depended on the
+//  wire library. It opens the same shared `lxmf-swift.db` the
+//  Network-Extension's embedded Python node writes, so NE-delivered messages
+//  show up in the SwiftUI layer WITHOUT changing the UI or ViewModels — every
+//  public method still takes/returns the RNSAPI *Compat* types. Wire-row
+//  field recovery goes through RNSAPI's own `LxmfWireCodec` (the decode-only
+//  port of LXMFSwift's `LXMessage.unpackFromBytes`); the store itself
+//  (MessageStore / MessageRow / ConversationStoreRow / GRDBState /
+//  GRDBDeliveryMethod) is app-owned.
 //
-//  `import LXMFSwift` MUST NOT be added to AppServices.swift / ColumbaApp.swift
-//  / MapView.swift or any other RNSAPI-dense file: LXMFSwift transitively
-//  re-exports ReticulumSwift, whose type names (Identity, Destination, Link,
-//  Packet, LXMRouter, …) collide with the RNSAPI Compat type names those files
-//  use, producing an un-fixable ambiguity cascade. Keep the LXMFSwift import
-//  walled off here.
+//  (The old "keep `import LXMFSwift` walled off here" rule is dissolved:
+//  LXMFSwift transitively re-exported ReticulumSwift, whose type names
+//  (Identity, Destination, Link, Packet, LXMRouter, …) collided with the
+//  RNSAPI Compat names — both packages are now unlinked, so that ambiguity
+//  cascade can no longer recur in any file.)
 //
 //  NOTE: this opens the store read-WRITE because the app's own raw SQL writes
 //  (drafts, retry staging, delivery-proof rekeying via `replacementPool`) need
@@ -31,7 +31,6 @@
 
 import Foundation
 import RNSAPI
-import LXMFSwift
 import GRDB
 
 struct PersistedDeliveryProof: Equatable {
@@ -588,12 +587,11 @@ public actor MessageRepository {
 
     /// Save a message (outbound from the app, or Python-path inbound).
     ///
-    /// Bridges the RNSAPI `LXMessage` into the GRDB store via a synthetic
-    /// `LXMFSwift.LXMessage` whose `packed` carries the MessagePack-encoded
-    /// field map (NOT the signed LXMF wire — the app doesn't have it). The GRDB
-    /// `MessageRecord` then stores that field map in its `packed_lxmf` column,
-    /// which `mapRecord` passes back through as the RNSAPI `packedLxmf` field
-    /// map so the chat UI's `LxmfFieldCodec.unpack` can recover attachments.
+    /// Builds the app-owned GRDB row directly from the RNSAPI domain type;
+    /// `packed_lxmf` carries the MessagePack-encoded field map (NOT the signed
+    /// LXMF wire — the app doesn't have it). `mapRecord` passes that field map
+    /// back through as the RNSAPI `packedLxmf` field map so the chat UI's
+    /// `LxmfFieldCodec.unpack` can recover attachments.
     public func saveMessage(_ message: RNSAPI.LXMessage) async throws {
         // Build the app-owned row directly from the RNSAPI domain type (no wire
         // type in the store). `.unknown` method persists as raw sentinel 0.
@@ -1009,7 +1007,7 @@ enum MessageRepositoryError: Error {
     case replacementSourceMissing
 }
 
-// MARK: - Adapters (LXMFSwift <- -> RNSAPI)
+// MARK: - Adapters (store row <- -> RNSAPI)
 //
 // Pure `static` functions so the round-trip mapping can be unit-tested
 // directly (see MessageRepositoryAdapterTests). Direction in the name reflects
@@ -1046,36 +1044,33 @@ extension MessageRepository {
     /// `LXMessage.packed`, the on-wire bytes, into `packed_lxmf`).
     ///
     /// ── Discriminator (wire vs field map) — order is load-bearing ──
-    /// We attempt the WIRE decode *first* (`LXMessage.unpackFromBytes`) and only
+    /// We attempt the WIRE decode *first* (`LxmfWireCodec.fields`) and only
     /// fall back to the field-map codec. This direction is deliberate:
     ///
-    ///   • `unpackFromBytes` is strict: it requires `count > 96` (dest 16 + src
-    ///     16 + sig 64) AND the trailing msgpack to be an *array* whose [0] is a
-    ///     numeric timestamp and [1]/[2] are binary/string title+content. A
-    ///     field map is a top-level msgpack *map*; small ones (text-only =
-    ///     empty `Data()`, or just an icon/reply) fail the size guard, and a
-    ///     large one (image/file ≥ 96 B) has its byte-tail-past-96 fed to the
-    ///     msgpack parser, which essentially never yields a 4+ element array
-    ///     with those exact element types. So a field map is not mistaken for
-    ///     wire.
+    ///   • `LxmfWireCodec.fields` is strict: it requires `count > 96` (dest 16
+    ///     + src 16 + sig 64) AND the trailing msgpack to be an *array* whose
+    ///     [0] is a numeric timestamp and [1]/[2] are binary/string
+    ///     title+content. A field map is a top-level msgpack *map*; small ones
+    ///     (text-only = empty `Data()`, or just an icon/reply) fail the size
+    ///     guard, and a large one (image/file ≥ 96 B) has its byte-tail-past-96
+    ///     fed to the msgpack parser, which essentially never yields a 4+
+    ///     element array with those exact element types. So a field map is not
+    ///     mistaken for wire.
     ///   • The reverse order would NOT be safe: `LxmfFieldCodec.unpack` reads a
     ///     single top-level msgpack value from byte 0 and *ignores trailing
     ///     bytes* (see `MsgPack.unpack`). On wire, byte 0 is an arbitrary
     ///     destination-hash byte; whenever it lands in the fixmap range
-    ///     (0x80–0x8f, ~1/16 of rows) `unpack` happily decodes a bogus map from
-    ///     the following hash/sig bytes — so a wire row would be misread as a
-    ///     field map and its attachments dropped.
+    ///     (0x80–0x8f, ~1/16 of rows) `unpack` happily decodes a bogus map
+    ///     from the following hash/sig bytes — so a wire row would be misread
+    ///     as a field map and its attachments dropped.
     ///
-    /// Signature is intentionally NOT re-validated here: `unpackFromBytes` only
-    /// verifies the signature when given a `sourceIdentity` (we pass `nil`), and
-    /// `LXMRouter` already validated it at receive time — at render time we only
-    /// need to *extract* fields. With `nil` identity, `unpackFromBytes` still
-    /// fully populates `.fields` (it just marks the message source-unverified).
+    /// Signature is intentionally NOT re-validated here: `LxmfWireCodec` does
+    /// no crypto at all — the backend validated the signature at receive time;
+    /// at render time we only need to *extract* fields.
     static func recoverFields(from packedLxmf: Data) -> [UInt8: Any]? {
         // WIRE first (strict). A wire row carries its fields inside the signed
         // payload; extract them without re-validating the signature.
-        if let wire = try? LXMFSwift.LXMessage.unpackFromBytes(packedLxmf, sourceIdentity: nil),
-           let fields = wire.fields, !fields.isEmpty {
+        if let fields = LxmfWireCodec.fields(fromWire: packedLxmf) {
             return fields
         }
         // Otherwise treat the bytes as a MessagePack field map (app / Python
@@ -1095,8 +1090,7 @@ extension MessageRepository {
         // map from a wire row whose leading hash byte is a fixmap marker
         // (~1/16) — which would leave the wire bytes un-normalized and the
         // attachments unrendered. Re-pack only genuine wire-with-fields.
-        if let wire = try? LXMFSwift.LXMessage.unpackFromBytes(packedLxmf, sourceIdentity: nil),
-           let fields = wire.fields, !fields.isEmpty {
+        if let fields = LxmfWireCodec.fields(fromWire: packedLxmf) {
             return LxmfFieldCodec.pack(fields)
         }
         // Field map (app / Python path), empty, or wire-without-fields: already

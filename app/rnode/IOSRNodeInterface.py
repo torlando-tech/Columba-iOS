@@ -2,8 +2,8 @@
 
 The KISS framing, frame parsing and RNode protocol are ported from the proven
 Android Columba interface. Only the byte-stream transport differs: iOS routes
-Nordic UART Service bytes through ``IOSRNodeDriver`` into ReticulumSwift's
-native ``BLETransport`` via C-ABI shims. CoreBluetooth remains Swift-owned;
+Nordic UART Service bytes through ``IOSRNodeDriver`` into the app's
+``PythonRNodeBLEBridge`` C-ABI shim. CoreBluetooth remains Swift-owned;
 Python remains the authoritative RNS/KISS owner.
 
 External-interface loader contract (Reticulum.py:919-937):

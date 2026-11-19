@@ -12,8 +12,9 @@ import Foundation
 /// can restore preserved peripherals to the wrong owner after a relaunch.
 ///
 /// These values are persistence keys and must not be renamed casually. The
-/// RNode value mirrors `ReticulumSwift.BLEConstants.RESTORE_IDENTIFIER_KEY`;
-/// the Model B native tests enforce that dependency boundary.
+/// RNode value historically mirrored `ReticulumSwift.BLEConstants.RESTORE_IDENTIFIER_KEY`
+/// (package retired); it stays frozen because CoreBluetooth's preserved state
+/// is keyed on it across relaunches.
 public enum CoreBluetoothRestoreIdentifiers {
     /// Direct BLE mesh central owned by SwiftBLEBridge.
     public static let meshCentral = "network.columba.ble.central"
@@ -21,7 +22,7 @@ public enum CoreBluetoothRestoreIdentifiers {
     /// Direct BLE mesh peripheral manager owned by SwiftBLEBridge.
     public static let meshPeripheral = "network.columba.ble.peripheral"
 
-    /// RNode/NUS central owned by ReticulumSwift.BLETransport.
+    /// RNode/NUS central owned by `PythonRNodeBLEBridge` (RNSHost).
     public static let rnodeCentral = "com.columba.ble.central"
 
     public static let all = [meshCentral, meshPeripheral, rnodeCentral]

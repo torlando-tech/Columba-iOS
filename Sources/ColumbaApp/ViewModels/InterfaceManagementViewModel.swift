@@ -681,7 +681,7 @@ public final class InterfaceManagementViewModel: TCPClientWizardSaveSink {
                 var bleState: InterfaceState?
                 var blePeerCount: Int?
 
-                    // Model B: reticulum-swift's `BLEInterface` runs in the NE, not
+                    // Model B: Python RNS's `BLEInterface` runs in the NE, not
                     // the app's Compat `bleIf`. This used to round-trip the NE every
                     // 1s (`appSvc.getBLEConnectionInfos()`) — part of the ~10/s app↔NE
                     // IPC flood we're eliminating. The badge is now EVENT-DRIVEN: the

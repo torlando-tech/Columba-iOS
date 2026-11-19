@@ -3,7 +3,7 @@
 //  Columba-iOS
 //
 //  ViewModel for messaging screen using @Observable macro.
-//  Provides async message loading and sending via LXMFSwift.
+//  Provides async message loading and sending via the RNSAPI backend seam.
 //
 
 import SwiftUI

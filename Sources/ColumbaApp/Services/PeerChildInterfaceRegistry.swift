@@ -9,7 +9,7 @@
 //  not the tcp-reconnect trigger.
 //
 //  Why a lock and not an actor: the peer-spawned and connected callbacks
-//  fire from independent reticulum-swift Tasks. If the registry were
+//  fire from independent backend callback Tasks. If the registry were
 //  actor-isolated, both record-and-lookup would require an `await` hop,
 //  and Swift's task scheduler does not guarantee record-before-lookup
 //  ordering between unrelated Tasks. By making the operations

@@ -153,7 +153,7 @@ enum PythonConfigWriter {
         case .rnode(let cfg):
             // Loaded from <configDir>/interfaces/IOSRNodeInterface.py. Python
             // owns KISS/RNode framing; IOSRNodeDriver calls the shipping app's
-            // PythonRNodeBLEBridge C ABI, which owns ReticulumSwift.BLETransport.
+            // PythonRNodeBLEBridge C ABI, which owns the native CoreBluetooth/NUS transport.
             lines.append("    type = IOSRNodeInterface")
             lines.append("    connection_mode = ble")
             appendValue("target_device_name", cfg.deviceName, to: &lines)

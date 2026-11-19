@@ -2,15 +2,18 @@
 //  RNodeSeam.swift
 //  Shared
 //
-//  The NE↔app marshaling for Model B RNode-over-Bluetooth. reticulum-swift ships
-//  the RNode protocol stack (`RNodeInterface` + `KISSFramedTransport`) and a real
-//  CoreBluetooth NUS client (`BLETransport`). The ONLY missing piece for Model B is
-//  the cross-process seam: RNS runs in the Network Extension, but CoreBluetooth must
-//  run in the app.
+//  The NE↔app marshaling types for RNode-over-Bluetooth. Python RNS ships the
+//  RNode protocol stack (`IOSRNodeInterface` + KISS framing) and the CoreBluetooth
+//  NUS client (`PythonRNodeBLEBridge`) — the latter must run in the app process,
+//  while the node may run in the Network Extension. The cross-process seam
+//  endpoints (the old Swift `AppGroupRNodeSeamTransport` / `AppGroupRNodeServer`)
+//  were retired with the Swift node; the live survivor here is `RNodeSeamConfig`
+//  (app → App-Group → Python node), and the wire types below remain for the
+//  RNodeSeam contract tests.
 //
-//      NE:  RNodeInterface ──KISS──▶ AppGroupRNodeSeamTransport : ReticulumSwift.Transport
-//                                              │  (App-Group)
-//      app: BLETransport (real NUS) ◀── AppGroupRNodeServer ─────┘
+//      node: IOSRNodeInterface ──KISS──▶ seam / in-process driver
+//                                              │  (App-Group or ctypes)
+//      app: PythonRNodeBLEBridge (real NUS) ◀──┘
 //
 //  Unlike the BLE *mesh* seam, RNode is a SINGLE raw serial stream with no
 //  multi-peer addressing, so this wire is tiny: the NE drives connect/send/disconnect
@@ -27,10 +30,10 @@ import Foundation
 
 // MARK: - Link state
 
-/// Compact wire form of `ReticulumSwift.TransportState`, carried app→NE on
-/// `stateChanged`. The NE-side seam transport maps this back to a `TransportState`
-/// for `RNodeInterface`; the app-side server maps `BLETransport`'s state to this.
-/// Kept here (Foundation-only) so the wire definition needs no ReticulumSwift import.
+/// Compact wire form of the transport link state, carried app→NE on
+/// `stateChanged`. The seam endpoints map their native transport states to and
+/// from this. Kept here (Foundation-only) so the wire definition needs no
+/// protocol-package import.
 public enum RNodeLinkState: UInt8, Sendable, Equatable {
     case disconnected = 0
     case connecting   = 1
@@ -125,9 +128,8 @@ public enum RNodeSeamMessage: Equatable, Sendable {
 // MARK: - Wire abstraction
 
 /// Carries `RNodeSeamMessage`s across the App-Group. NE: `send` → the NE→app queue,
-/// `inbound` ← the app→NE queue. App: reversed. Injected so both the NE-side
-/// `AppGroupRNodeSeamTransport` and the app-side `AppGroupRNodeServer` are
-/// unit-testable with an in-memory loopback. Mirrors `BLESeamTransport`.
+/// `inbound` ← the app→NE queue. App: reversed. Injected so both seam endpoints
+/// are unit-testable with an in-memory loopback. Mirrors `BLESeamTransport`.
 public protocol RNodeSeamWire: AnyObject, Sendable {
     func send(_ message: RNodeSeamMessage)
     /// Decoded messages arriving from the other process.
@@ -142,8 +144,8 @@ public protocol RNodeSeamWire: AnyObject, Sendable {
 
 /// Foundation-only snapshot of the RNode radio configuration, persisted by the app to
 /// the App-Group `rnodeConfigKey` and read by the NE. Fields mirror the app's
-/// `RNodeConfig` (in RNSAPI, which the NE does not link); the NE maps these to
-/// reticulum-swift's `RadioConfig`.
+/// `RNodeConfig` (in RNSAPI, which the NE does not link); the Python node maps
+/// these to RNS `RadioConfig`.
 public struct RNodeSeamConfig: Codable, Equatable, Sendable {
     public var deviceName: String
     public var frequency: UInt32

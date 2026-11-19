@@ -4,7 +4,7 @@
 //
 //  Production `BLESeamTransport` for the Model B BLE seam. Rides two dedicated
 //  App-Group `SharedFrameQueue`s (so the BLE control/data stream never intermixes
-//  with `AppGroupBridgeInterface`'s radio-frame a2e/e2a), each woken by its own
+//  with the radio-frame a2e/e2a queues), each woken by its own
 //  Darwin notification — the same proven file-lock + notify mechanism the rest of
 //  Model B uses.
 //

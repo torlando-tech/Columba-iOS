@@ -673,8 +673,7 @@ final class ColumbaApplicationRuntime {
             // sender-name lookups. `repo` is the GRDB-backed canonical store
             // (Track A0) the UI reads — built and held by AppServices during
             // initialize(), so reuse that single instance rather than opening a
-            // second handle to the same `lxmf-swift.db` (and keeping the
-            // LXMFSwift import walled off in MessageRepository.swift).
+            // second handle to the same `lxmf-swift.db`.
             guard let db = appServices.database,
                   let repo = appServices.messageRepository else {
                 throw AppServicesError.routerNotInitialized

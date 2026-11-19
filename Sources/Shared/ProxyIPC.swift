@@ -217,8 +217,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     /// caller) is a no-op on the wire.
     case lxmfSend(destHashHex: String, content: String, method: String, fieldsData: Data, sendId: String? = nil, failureFallbackMethod: String? = nil)
 
-    /// Native Model B BLE peer snapshot. The NE owns reticulum-swift's
-    /// `BLEInterface` in Model B (the app can't enumerate BLE peers itself), so
+    /// Native Model B BLE peer snapshot. The NE's Python RNS owns the BLE
+    /// interface in Model B (the app can't enumerate BLE peers itself), so
     /// the BLE connections screen polls this. Response payload: JSON
     /// `[BLEPeerSnapshot]`.
     case bleConnections
@@ -231,7 +231,7 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
 
     /// Fetch a NomadNet page over a one-shot RNS Link (mirrors
     /// `RnsNomadnet.fetchNomadNetPage`). Model B runs the fetch NE-side via the
-    /// shared `NomadNetFetch` helper (the NE owns transport/identity/pathTable);
+    /// Python node's `nomadnet_fetch_op` (the NE owns transport/identity/pathTable);
     /// the app is the proxy. `timeoutSeconds` bounds each per-step wait NE-side;
     /// the app applies a slightly larger IPC deadline on top so a never-arriving
     /// reply can't hang. Response payload: JSON-encoded `ProxyNomadNetOutcome`.
@@ -492,8 +492,8 @@ public enum ProxyRequest: Codable, Sendable, Equatable {
     }
 }
 
-/// Wire DTO for one native Model B BLE peer (the NE's reticulum-swift
-/// `BLEInterface.getConnectionInfos()` mapped to a `Codable` shape). The app maps
+/// Wire DTO for one native Model B BLE peer (the NE's Python BLE peer info
+/// mapped to a `Codable` shape). The app maps
 /// these onto its `BLEConnectionInfo` UI model in `ProxyRnsBackend.bleConnections()`.
 public struct BLEPeerSnapshot: Codable, Sendable, Equatable {
     public let identityHash: String
@@ -615,7 +615,7 @@ public struct ProxySendOutcome: Codable, Sendable, Equatable {
 }
 
 /// `Codable` mirror of a NomadNet fetch result for the `.nomadnetFetch` response
-/// payload. The NE encodes the `NomadNetFetch.Result` it produced; the app maps
+/// payload. The NE encodes the Python `nomadnet_fetch_op` result it produced; the app maps
 /// it back onto `RNSAPI.NomadNetFetchResult`. `status` is the
 /// `NomadNetFetchResult.Status` raw value; `data` (the page bytes) rides as
 /// base64 JSON.

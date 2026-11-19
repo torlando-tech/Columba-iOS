@@ -18,7 +18,7 @@ public enum ConversationPreviewKind: Equatable, Hashable, Sendable {
 }
 
 /// Represents a conversation in the chats list.
-/// Wraps ConversationRecord from LXMFSwift with UI-specific properties.
+/// Wraps an RNSAPI `ConversationRecord` with UI-specific properties.
 public struct Conversation: Identifiable, Equatable, Hashable {
     public let id: String
     public let destinationHash: Data
@@ -75,7 +75,7 @@ public struct Conversation: Identifiable, Equatable, Hashable {
         }
     }
 
-    /// Create from LXMFSwift ConversationRecord.
+    /// Create from an RNSAPI `ConversationRecord`.
     public init(from record: ConversationRecord) {
         self.id = record.destinationHash.map { String(format: "%02x", $0) }.joined()
         self.destinationHash = record.destinationHash

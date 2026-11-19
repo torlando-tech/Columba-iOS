@@ -44,8 +44,6 @@ To work against an in-progress local clone of any Reticulum-stack Swift library 
 {
   "version": 1,
   "object": [
-    { "original": "https://github.com/torlando-tech/reticulum-swift.git", "mirror": "/Users/you/repos/reticulum-swift" },
-    { "original": "https://github.com/torlando-tech/LXMF-swift.git",      "mirror": "/Users/you/repos/LXMF-swift"      },
     { "original": "https://github.com/torlando-tech/LXST-swift.git",      "mirror": "/Users/you/repos/LXST-swift"      }
   ]
 }
@@ -58,8 +56,6 @@ SPM resolves the listed URLs to local checkouts, so library changes are picked u
 ## Architecture
 
 - **Embedded Python RNS/LXMF** — one shared engine hosted in the selected process
-- **ReticulumSwift** — native Reticulum stack; not the messaging runtime. Carried as a compile-time link by the app for shared-source type compatibility
-- **LXMFSwift** — shared LXMF persistence/API surface
 - **LXSTSwift** — voice call transport
 - **MapLibre** — offline-capable map rendering
 
