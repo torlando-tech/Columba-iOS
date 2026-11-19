@@ -2501,7 +2501,11 @@ public final class AppServices {
                 // that looks successful to the interop harness.
                 var selected = true
                 if !node.isEmpty {
-                    selected = Data(hexString: node).map { await propManager.selectNode(hash: $0) } ?? false
+                    if let hash = Data(hexString: node) {
+                        selected = await propManager.selectNode(hash: hash)
+                    } else {
+                        selected = false
+                    }
                 }
                 await propManager.syncNow()
                 DiagLog.log("[TEST-PROP-SYNC] selected=\(selected) state=\(propManager.syncState.state)")
