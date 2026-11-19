@@ -170,14 +170,21 @@ def _seed_rnsd_once(udid: str) -> bool:
     # clobbers the seed we are about to write (observed when the seed runs while
     # a freshly-installed app is still mid-first-launch).
     gone = time.time() + 10.0
+    exited = False
     while time.time() < gone:
         ps = subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "list"],
                             capture_output=True, text=True)
         # A failed query says nothing about liveness — only a successful list
         # without the bundle id proves exit.
         if ps.returncode == 0 and BUNDLE_ID not in ps.stdout:
+            exited = True
             break
         time.sleep(0.5)
+    if not exited:
+        # Never edit prefs while the app may still be alive: its exit-time
+        # UserDefaults flush would clobber the seed. Fail this attempt so the
+        # caller's retry starts from a provably-dead app.
+        return False
 
     # Write to the standard sandbox plist AND the app-group plist if it exists.
     # First run: only standard exists → the app's migrateFromStandardDefaults
@@ -369,11 +376,15 @@ class Simulator:
         while time.time() < deadline:
             for line in reversed(self._read_diag_since(before_size)):
                 # Producer format since the Python-backend unification
-                # (7e160fb9): `node=<hex>` on URL receipt, then `state=<n>`
-                # once selectNode + syncNow complete — `state=` is the success
-                # edge; `no propagation manager` the only failure edge. (The
-                # old Swift backend's `set node` / `error=` lines are gone.)
-                if "[TEST-PROP-SYNC] state=" in line:
+                # (7e160fb9): `node=<hex>` on URL receipt, then
+                # `selected=<bool> state=<n>` once selectNode + syncNow
+                # complete. Success requires the relay actually got selected
+                # (state alone also prints for noPath/transferFailed);
+                # `selected=false` and `no propagation manager` are the
+                # failure edges.
+                if "[TEST-PROP-SYNC] selected=false" in line:
+                    pytest.fail(f"set_propagation_node({node_hex}) rejected by app: {line.strip()}")
+                if "[TEST-PROP-SYNC] state=" in line and "selected=true" in line:
                     return
                 if "[TEST-PROP-SYNC] no propagation manager" in line:
                     pytest.fail(f"set_propagation_node({node_hex}) failed: {line.strip()}")

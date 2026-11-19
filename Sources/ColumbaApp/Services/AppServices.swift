@@ -2495,11 +2495,16 @@ public final class AppServices {
                     DiagLog.log("[TEST-PROP-SYNC] no propagation manager")
                     return
                 }
-                if !node.isEmpty, let hash = Data(hexString: node) {
-                    await propManager.selectNode(hash: hash)
+                // Report whether the requested relay was actually selected:
+                // selectNode rejects hashes with no enabled lxmf.propagation
+                // path entry, and syncNow would otherwise still log a state
+                // that looks successful to the interop harness.
+                var selected = true
+                if !node.isEmpty {
+                    selected = Data(hexString: node).map { await propManager.selectNode(hash: $0) } ?? false
                 }
                 await propManager.syncNow()
-                DiagLog.log("[TEST-PROP-SYNC] state=\(propManager.syncState.state)")
+                DiagLog.log("[TEST-PROP-SYNC] selected=\(selected) state=\(propManager.syncState.state)")
             }
         }
 
