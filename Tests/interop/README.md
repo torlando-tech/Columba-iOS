@@ -102,8 +102,13 @@ xcrun simctl install booted \
 ```bash
 cd ~/repos/Columba-iOS/Tests/interop
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-python3 -m pytest -v
+export PATH="$HOME/.maestro/bin:/opt/homebrew/bin:$PATH"  # maestro + ffmpeg
+~/.reticulum-host/venv/bin/python3 -m pytest -v
 ```
+
+`maestro` (Maestro flows), `ffmpeg` (voice fixtures), and the RNS/LXMF venv
+python must be on `PATH` — a bare shell that has them under `~/.local/bin`
+only will fail the voice cases at fixture setup with `FileNotFoundError`.
 
 The session fixtures handle everything else: seed the sim's lxmd interface,
 boot the Sideband peer, bootstrap paths, pin the propagation node. Expect
