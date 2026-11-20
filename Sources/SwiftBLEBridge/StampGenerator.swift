@@ -128,7 +128,7 @@ enum StampGenerator {
             // A zero payload is not a keypair: the caller re-validates and
             // Link.py compares the public key, so return one real key.
             let key = Curve25519.KeyAgreement.PrivateKey()
-            return StampSearchResult(stamp: Self.keyPairPayload(key), rounds: 0)
+            return StampSearchResult(stamp: Data(Self.keyPairPayload(key)), rounds: 0)
         }
 
         let workers = max(1, min(ProcessInfo.processInfo.activeProcessorCount, 4))
