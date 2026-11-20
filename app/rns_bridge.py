@@ -137,6 +137,11 @@ _stamp_jobs_cancel_all_fn = _bind_stamp_fn(
     "columba_stamp_jobs_cancel_all",
     [],
 )
+_key_stamp_job_start_fn = _bind_stamp_fn(
+    "columba_key_stamp_job_start",
+    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32],
+    ctypes.c_uint64,
+)
 
 
 def _native_stamp_jobs_available() -> bool:
@@ -144,6 +149,19 @@ def _native_stamp_jobs_available() -> bool:
         fn is not None
         for fn in (
             _stamp_job_start_fn,
+            _stamp_job_poll_fn,
+            _stamp_job_cancel_fn,
+            _stamp_job_release_fn,
+            _stamp_jobs_cancel_all_fn,
+        )
+    )
+
+
+def _native_key_stamp_jobs_available() -> bool:
+    return all(
+        fn is not None
+        for fn in (
+            _key_stamp_job_start_fn,
             _stamp_job_poll_fn,
             _stamp_job_cancel_fn,
             _stamp_job_release_fn,
@@ -193,6 +211,47 @@ def _native_stamp_search(workblock, target, size, stop_check):
         _stamp_job_release_fn(job_id)
 
 
+def _native_key_search(material, target, stop_check):
+    """Search RNS's exact key-stamp target without moving job state into Python."""
+    if len(material) > 0x7FFFFFFF:
+        keypair, rounds, _ = RNS.Stamps._loop_key(material, target, stop_check)
+        return keypair, rounds
+    if _runtime_teardown_requested.is_set():
+        return None, 0
+
+    payload = bytes(material)
+    target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
+    job_id = int(_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
+    if job_id == 0:
+        return None, 0
+
+    try:
+        output = ctypes.create_string_buffer(64)
+        rounds = ctypes.c_uint64()
+        while True:
+            if _runtime_teardown_requested.is_set() or stop_check():
+                _stamp_job_cancel_fn(job_id)
+
+            status = int(_stamp_job_poll_fn(job_id, output, 64, ctypes.byref(rounds)))
+            if status == 64:
+                if _runtime_teardown_requested.is_set() or stop_check():
+                    _stamp_job_cancel_fn(job_id)
+                    return None, rounds.value
+                raw = output.raw[:status]
+                return ((raw[:32], raw[32:]), rounds.value)
+            if status < 0:
+                return None, rounds.value
+            if status != 0:
+                RNS.log(
+                    f"native key stamp search: unexpected poll status {status}",
+                    RNS.LOG_WARNING,
+                )
+                return None, rounds.value
+            time.sleep(0.01)
+    finally:
+        _stamp_job_release_fn(job_id)
+
+
 def _install_native_stamp_search() -> bool:
     """Install the RNS hash-search seam only after runtime startup."""
     if not _native_stamp_jobs_available():
@@ -210,12 +269,21 @@ def _install_native_stamp_search() -> bool:
         return False
     RNS.Stamps.native_stamp_search = _native_stamp_search
     RNS.log("native stamp search registered", RNS.LOG_INFO)
+    if _native_key_stamp_jobs_available() and hasattr(RNS.Stamps, "native_key_search"):
+        RNS.Stamps.native_key_search = _native_key_search
+        RNS.log("native key stamp search registered", RNS.LOG_INFO)
+    else:
+        RNS.log(
+            "native key stamp search: unavailable; key stamps stay on the Python loop",
+            RNS.LOG_WARNING,
+        )
     return True
 
 
 def _uninstall_native_stamp_search() -> None:
     """Detach the hook and cancel RNS jobs before draining native work."""
     RNS.Stamps.native_stamp_search = None
+    RNS.Stamps.native_key_search = None
     try:
         # RNS's cancellation state outlives the teardown event, so a search
         # paused before native start cannot escape a completed stop().

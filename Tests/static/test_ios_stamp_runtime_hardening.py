@@ -12,6 +12,9 @@ import types
 import unittest
 from unittest import mock
 
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "app" / "rns_bridge.py"
@@ -34,7 +37,8 @@ def load_bridge():
         return True
 
     rns.Stamps = types.SimpleNamespace(
-        native_stamp_search=None, active_jobs=active_jobs, cancel_work=cancel_work,
+        native_stamp_search=None, native_key_search=None, active_jobs=active_jobs,
+        cancel_work=cancel_work,
     )
     rns.Transport = types.SimpleNamespace(
         destinations=[], interfaces=[], path_table={}, destination_table={},
@@ -351,6 +355,95 @@ class NativeStampBridgeTests(unittest.TestCase):
                 self.bridge.reset_identity("/tmp/nonexistent-columba-test-identity")
         self.assertEqual(0, self.bridge._runtime_teardown_count)
         self.assertFalse(self.bridge._runtime_teardown_requested.is_set())
+
+
+class NativeKeyJobFixture(NativeJobFixture):
+    """Key-stamp variant: real X25519 keypairs behind the same signed-job poll."""
+
+    def start(self, material, length, target, target_length):
+        payload = ctypes.string_at(material, length)
+        target_bytes = ctypes.string_at(target, target_length)
+        self.starts.append((payload, target_bytes, 64))
+        if target_length != 32:
+            return 0
+        boundary = int.from_bytes(target_bytes, "big")
+        if boundary < (1 << 240):
+            return 0
+        for rounds in range(100_000):
+            private = X25519PrivateKey.generate()
+            public = private.public_key().public_bytes(
+                encoding=Encoding.Raw, format=PublicFormat.Raw
+            )
+            if int.from_bytes(hashlib.sha256(payload + public).digest(), "big") <= boundary:
+                job_id = len(self.starts)
+                self.jobs[job_id] = (
+                    private.private_bytes(
+                        encoding=Encoding.Raw,
+                        format=PrivateFormat.Raw,
+                        encryption_algorithm=NoEncryption(),
+                    ) + public,
+                    rounds,
+                )
+                if self.after_start is not None:
+                    self.after_start()
+                return job_id
+        raise AssertionError("fixture did not find an inexpensive keypair")
+
+
+class NativeKeyStampBridgeTests(unittest.TestCase):
+    def setUp(self):
+        self.bridge = load_bridge()
+        self.jobs = NativeKeyJobFixture()
+        self.bridge._key_stamp_job_start_fn = self.jobs.start
+        for suffix, function in (
+            ("poll", self.jobs.poll), ("cancel", self.jobs.cancel),
+            ("release", self.jobs.release),
+        ):
+            setattr(self.bridge, f"_stamp_job_{suffix}_fn", function)
+        self.bridge._stamp_jobs_cancel_all_fn = self.jobs.cancel_all
+        # The hash hook must stay installable: key search registers under an
+        # independent guard beside it.
+        self.bridge._stamp_job_start_fn = (
+            lambda workblock, length, target, target_length, size:
+            self.jobs.start(workblock, length, target, target_length)
+        )
+        self.assertTrue(self.bridge._install_native_stamp_search_unless_stopping())
+        self.search = self.bridge.RNS.Stamps.native_key_search
+
+    def test_registered_key_search_returns_real_derivable_keypair(self):
+        keypair, rounds = self.search(b"material", 1 << 248, lambda: False)
+        private, public = keypair
+        self.assertEqual(32, len(private))
+        self.assertEqual(32, len(public))
+        self.assertEqual(
+            X25519PrivateKey.from_private_bytes(private).public_key().public_bytes(
+                encoding=Encoding.Raw, format=PublicFormat.Raw
+            ),
+            public,
+        )
+        self.assertGreater(rounds, 0)
+        self.assertEqual([1], self.jobs.released)
+        self.assertEqual({}, self.jobs.jobs)
+
+    def test_key_stop_check_cancels_and_returns_none(self):
+        self.assertIsNone(self.search(b"material", 1 << 248, lambda: True)[0])
+        self.assertEqual([1], self.jobs.cancelled)
+        self.assertEqual([1], self.jobs.released)
+
+    def test_missing_key_symbol_keeps_hash_search_registered(self):
+        self.bridge._uninstall_native_stamp_search()
+        self.bridge._key_stamp_job_start_fn = None
+        self.assertTrue(self.bridge._install_native_stamp_search_unless_stopping())
+        self.assertIsNone(self.bridge.RNS.Stamps.native_key_search)
+        self.assertIsNotNone(self.bridge.RNS.Stamps.native_stamp_search)
+
+    def test_uninstall_clears_both_hooks_and_cancels_key_jobs(self):
+        self.search(b"material", 1 << 248, lambda: False)
+        self.bridge._uninstall_native_stamp_search()
+        self.assertIsNone(self.bridge.RNS.Stamps.native_key_search)
+        self.assertIsNone(self.bridge.RNS.Stamps.native_stamp_search)
+        self.assertEqual(1, self.jobs.cancel_all_calls)
+        self.assertEqual({}, self.jobs.jobs)
 
 
 if __name__ == "__main__":
