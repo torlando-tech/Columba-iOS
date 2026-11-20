@@ -538,7 +538,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     }
 
     public func bleConnections() async -> [BLEConnectionInfo] {
-        // Native Model B BLE peers live in the NE's reticulum-swift `BLEInterface`.
+        // Native Model B BLE peers live in the NE's Python RNS BLE interface.
         // Round-trip the snapshot DTO and map it onto the UI `BLEConnectionInfo`
         // (deriving displayName / connectionType / signalQuality the same way the
         // Model A path does in `AppServices.getBLEConnectionInfos`).
@@ -700,7 +700,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
     /// `sendId` (P1 #6) is the stable id this logical send was sent with over IPC;
     /// the NE's replay dedups on it. `messageHashHex` is stored `nil`: the real
     /// LXMF hash is computed NE-side at pack time and this proxy (RNSAPI-only, no
-    /// `Identity`/LXMF-swift) cannot derive it (see `OutboxEntry.messageHashHex`).
+    /// protocol `Identity`) cannot derive it (see `OutboxEntry.messageHashHex`).
     /// The returned `.queued` hash is therefore empty, matching the existing
     /// "no real hash yet" shape (the live path's `ProxySendOutcome.detail` is
     /// likewise empty until the NE packs).
@@ -859,7 +859,7 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
         formFields: [String: String]?
     ) async throws -> NomadNetFetchResult {
         // Model B: the NE owns transport/identity/pathTable, so the fetch runs
-        // NE-side via the shared `NomadNetFetch` helper and the result is
+        // NE-side via the Python node's `nomadnet_fetch_op` and the result is
         // marshaled back over the seam. The NE self-bounds every step (path 15s,
         // link/request/response timeouts) so it always replies; we add an IPC
         // deadline of `timeout + slack` as a backstop against a never-arriving
@@ -1002,8 +1002,8 @@ public final class ProxyRnsBackend: RnsBackend, @unchecked Sendable {
 
     // MARK: - Capabilities
 
-    /// Same backend-id as the native stack — under Model B the NE runs
-    /// reticulum-swift / LXMF-swift, so versions match `SwiftRNSBackend`.
+    /// Same backend-id as the embedded Python stack — under Model B the NE runs
+    /// Python RNS / LXMF, so the version strings come from the node.
     /// `hotReloadInterfaces` is now ON: Model B hot-attaches / hot-detaches
     /// interfaces over the NE (RNS 1.5.5 live interface management), so interface
     /// changes apply immediately without a restart. Telemetry collector-host mode

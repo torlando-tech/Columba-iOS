@@ -173,7 +173,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
     /// back via `willRestoreState`. These strings MUST be stable across launches
     /// — iOS keys its preserved manager state on them. Changing them orphans the
     /// preserved state. The process-wide registry also reserves the distinct
-    /// RNode central identifier owned by ReticulumSwift's BLETransport.
+    /// RNode central identifier owned by `PythonRNodeBLEBridge`.
 
     public override init() {
         super.init()
@@ -329,7 +329,7 @@ public final class SwiftBLEBridge: NSObject, @unchecked Sendable {
             // delivery is a deliberate follow-on; until it lands, treat C8's wake
             // as Python-backend-only for end-to-end delivery. Scope is BLE-direct;
             // RNode-over-iOS now runs Model B (radio hosted in the app via
-            // reticulum-swift BLETransport with its own CBCentralManager, RNS in
+            // PythonRNodeBLEBridge with its own CBCentralManager, RNS in
             // the Network Extension), outside this mesh restore-identifier scope.
             // ────────────────────────────────────────────────────────────────
             if self.centralManager == nil {

@@ -14,7 +14,6 @@
 
 import Foundation
 import RNSAPI
-import LXMFSwift
 import CoreLocation
 import os.log
 #if canImport(UIKit)
@@ -335,9 +334,9 @@ public final class LocationSharingManager: NSObject {
 
     public func handleIncomingTelemetry(from peerHash: Data, packet: RNSAPI.TelemetryPacket, displayName: String?, iconAppearance: RNSAPI.IconAppearance? = nil) {
         // `packet.payload` holds the raw FIELD_TELEMETRY bytes (IncomingMessageHandler
-        // wraps them in the Compat TelemetryPacket); decode with LXMF-swift's
-        // Sideband-compatible Telemeter codec to get the structured location.
-        guard let location = LXMFSwift.TelemetryPacket.decode(from: packet.payload)?.location else { return }
+        // wraps them in the Compat TelemetryPacket); decode with RNSAPI's
+        // Sideband-compatible TelemeterCodec to get the structured location.
+        guard let location = TelemeterCodec.unpack(packet.payload)?.location else { return }
 
         // A telemetry frame does not carry the sender's LXMF announce name.
         // Prefer the name resolved by IncomingMessageHandler, but do not let a
@@ -533,8 +532,8 @@ public final class LocationSharingManager: NSObject {
             radiusMeters: precisionRadius
         )
 
-        // Build the Sideband-compatible telemetry packet (LXMF-swift Telemeter codec).
-        let telemetry = LXMFSwift.LocationTelemetry(
+        // Build the Sideband-compatible telemetry packet (TelemeterCodec).
+        let telemetry = TelemeterCodec.Location(
             latitude: finalLat,
             longitude: finalLng,
             altitude: location.altitude,
@@ -543,11 +542,11 @@ public final class LocationSharingManager: NSObject {
             accuracy: precisionRadius > 0 ? Double(precisionRadius) : location.horizontalAccuracy,
             lastUpdate: Int(location.timestamp.timeIntervalSince1970)
         )
-        let packet = LXMFSwift.TelemetryPacket(
+        let packet = TelemeterCodec.Packet(
             timestamp: Int(Date().timeIntervalSince1970),
             location: telemetry
         )
-        let telemetryData = packet.encode()  // FIELD_TELEMETRY (0x02) payload bytes
+        let telemetryData = TelemeterCodec.pack(packet)  // FIELD_TELEMETRY (0x02) payload bytes
 
         // Send via the neutral telemetry facet — the backend assembles the LXMF
         // message (Swift implements it; Python is capability-gated → unsupported).

@@ -172,7 +172,8 @@ final class NetworkStatusViewModel {
         }
     }
 
-    /// Map a reticulum-swift `InterfaceType.rawValue` (the camelCase case name) to
+    /// Map a camelCase `InterfaceType` rawValue (case names inherited from the
+    /// retired reticulum-swift enum) to
     /// the display label the Model A path uses, so the UI reads identically either way.
     private static func displayType(forRaw raw: String?) -> String {
         switch raw {

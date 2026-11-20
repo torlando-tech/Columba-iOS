@@ -703,7 +703,7 @@ public final class AppServices {
     /// (`<configDir>/lxmf-swift.db`) the Swift / NE backend writes. Set during
     /// `initialize(...)`. External call sites (ColumbaApp / MapView) read this
     /// and pass it to `MessageRepository(grdbPath:)` so they don't have to
-    /// import LXMFSwift or re-derive the path.
+    /// re-derive the path.
     public private(set) var grdbDatabasePath: String?
 
     /// The repository over the GRDB canonical store, built once during
@@ -1020,7 +1020,7 @@ public final class AppServices {
     /// peer-spawned closure can commit a record before any `await`
     /// suspension. If both record and lookup hopped to the main actor,
     /// Swift's task scheduler would not guarantee record-before-lookup
-    /// ordering: both events fire from independent reticulum-swift Tasks,
+    /// ordering: both events fire from independent backend callback Tasks,
     /// and a connected-event Task could win the actor enqueue race even
     /// though peer-spawn fired first in wall-clock time. The lock makes
     /// the record a synchronous, atomic side-effect of the peer-spawned
@@ -1029,7 +1029,7 @@ public final class AppServices {
     /// Grows monotonically — entries are not removed on peer departure.
     /// Peer-children are typically dozens at most on a Columba mesh, so
     /// memory is a non-concern. If that ever becomes meaningful, add
-    /// removal in a `setOnInterfacePeerRemoved` callback when reticulum-swift
+    /// removal in a `setOnInterfacePeerRemoved` callback when the backend
     /// exposes one.
     private let peerChildRegistry = PeerChildInterfaceRegistry()
 
@@ -2495,11 +2495,20 @@ public final class AppServices {
                     DiagLog.log("[TEST-PROP-SYNC] no propagation manager")
                     return
                 }
-                if !node.isEmpty, let hash = Data(hexString: node) {
-                    await propManager.selectNode(hash: hash)
+                // Report whether the requested relay was actually selected:
+                // selectNode rejects hashes with no enabled lxmf.propagation
+                // path entry, and syncNow would otherwise still log a state
+                // that looks successful to the interop harness.
+                var selected = true
+                if !node.isEmpty {
+                    if let hash = Data(hexString: node) {
+                        selected = await propManager.selectNode(hash: hash)
+                    } else {
+                        selected = false
+                    }
                 }
                 await propManager.syncNow()
-                DiagLog.log("[TEST-PROP-SYNC] state=\(propManager.syncState.state)")
+                DiagLog.log("[TEST-PROP-SYNC] selected=\(selected) state=\(propManager.syncState.state)")
             }
         }
 
@@ -3166,8 +3175,8 @@ public final class AppServices {
         }
 
         // Model B: bring the app-side CoreBluetooth radio + seam up (or down) to
-        // match the new interface set BEFORE the hot ops: the NE's reticulum-swift
-        // BLEInterface drives the radio over that seam, so the seam must be
+        // match the new interface set BEFORE the hot ops: the NE's Python BLEInterface
+        // drives the radio over that seam, so the seam must be
         // listening first. A runtime BLE-interface enable would otherwise leave the
         // NE with a BLEInterface but no radio behind it, so peers could never connect.
 
@@ -3538,7 +3547,7 @@ public final class AppServices {
             // `saveMessage` must create/update the conversation before this
             // display-name enrichment. Pre-creating it stamps the conversation
             // with a slightly newer timestamp than the inbound event, causing
-            // LXMFSwift to preserve an empty lastMessagePreview and the Chats UI
+            // the store to preserve an empty lastMessagePreview and the Chats UI
             // to filter the otherwise-valid message out.
             try await repo.ensureConversation(sourceHash, displayName: displayName)
             DiagLog.log("[RNS] persistInbound saved msg=\(messageHash.prefix(4).map { String(format: "%02x", $0) }.joined())")
@@ -5435,7 +5444,7 @@ public final class AppServices {
 
     /// Wire transport callbacks that need app-layer context.
     ///
-    /// Auto-announce triggers are split across two reticulum-swift hooks
+    /// Auto-announce triggers are split across two backend hooks
     /// and gated independently behind user-facing settings:
     ///
     /// - `onInterfaceConnected` fires whenever any interface transitions to

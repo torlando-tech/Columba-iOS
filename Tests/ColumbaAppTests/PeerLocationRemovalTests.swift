@@ -11,7 +11,6 @@
 #if os(iOS)
 import CoreLocation
 import XCTest
-import LXMFSwift
 import RNSAPI
 @testable import ColumbaApp
 
@@ -21,15 +20,15 @@ final class PeerLocationRemovalTests: XCTestCase {
 
     private static let peerHash: Data = Data((0...15).map { _ in UInt8(0xAB) })
 
-    /// Encode a valid FIELD_TELEMETRY payload with LXMF-swift's
-    /// Sideband-compatible Telemeter codec - the same shape the inbound
+    /// Encode a valid FIELD_TELEMETRY payload with RNSAPI's
+    /// Sideband-compatible TelemeterCodec - the same shape the inbound
     /// decode path in `handleIncomingTelemetry` expects.
     private static func telemetryPayload(
         latitude: Double,
         longitude: Double,
         lastUpdate: Date
     ) -> Data {
-        let telemetry = LXMFSwift.LocationTelemetry(
+        let telemetry = TelemeterCodec.Location(
             latitude: latitude,
             longitude: longitude,
             altitude: 0,
@@ -38,10 +37,10 @@ final class PeerLocationRemovalTests: XCTestCase {
             accuracy: 5,
             lastUpdate: Int(lastUpdate.timeIntervalSince1970)
         )
-        return LXMFSwift.TelemetryPacket(
+        return TelemeterCodec.pack(TelemeterCodec.Packet(
             timestamp: Int(Date().timeIntervalSince1970),
             location: telemetry
-        ).encode()
+        ))
     }
 
     private func makeManager() -> LocationSharingManager {

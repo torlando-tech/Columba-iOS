@@ -65,13 +65,22 @@ sys.stdout = _SysLogStream("py-stdout")
 # layout. iOS' Python returns `platform.system() == "iOS"`, so netinfo
 # falls through to the Linux layout (sa_family at offset 0, 2 bytes wide)
 # and misreads every address. iOS is Darwin under the hood (sa_len at
-# byte 0, sa_family at byte 1, confirmed via raw getifaddrs probe), so
-# the Darwin path is the correct one — we just have to make netinfo
-# take it. No upstream RNS code branches on "iOS" specifically, so
-# nothing else cares about this rename.
+# byte 0, sa_family at byte 1, confirmed via raw getifaddrs probe), so the
+# Darwin path is the correct one — we just have to make netinfo take it.
+# No upstream RNS code branches on "iOS" specifically, so nothing else
+# cares about this rename.
+#
+# The replacement is UNCONDITIONAL and must never call the real
+# platform.system(): on a real device (unlike the simulator) the bundled
+# CPython's `platform.uname()` -> `ios_ver()` -> `_ios_support.get_platform_ios()`
+# raises `AttributeError: 'NoneType' object has no attribute 'decode'`
+# inside the C helper, so delegating to the original would crash the
+# import chain on every device start. It also makes the patch idempotent:
+# a failed `import rns_bridge` leaves this lambda installed, and the NE's
+# start-retry loop re-executes the module - a delegating wrapper would
+# wrap itself once per retry (observed: 118-deep lambda recursion).
 import platform as _platform
-_real_system = _platform.system
-_platform.system = lambda *a, **kw: "Darwin" if _real_system(*a, **kw) == "iOS" else _real_system(*a, **kw)
+_platform.system = lambda *a, **kw: "Darwin"
 
 import RNS
 import LXMF
@@ -4487,7 +4496,13 @@ def diagnose_auto_interface() -> str:
     # Also list the local IP interfaces visible to Python — confirms what
     # iOS is exposing. If en0 isn't here, AutoInterface has nothing to bind.
     import platform as _platform
-    lines.append(f"  platform.system()={_platform.system()!r} platform.platform()={_platform.platform()!r}")
+    # platform.platform() routes through platform.uname() -> ios_ver() ->
+    # _ios_support.get_platform_ios(), which raises on real devices (see the
+    # module-top platform.system patch) - keep the diag line best-effort.
+    try:
+        lines.append(f"  platform.system()={_platform.system()!r} platform.platform()={_platform.platform()!r}")
+    except Exception as e:
+        lines.append(f"  platform.system()={_platform.system()!r} platform.platform() failed: {e!r}")
     lines.append(f"  AF_INET={_socket.AF_INET} AF_INET6={_socket.AF_INET6}")
     # Try RNS' own netinfo first (uses libc getifaddrs via ctypes).
     try:

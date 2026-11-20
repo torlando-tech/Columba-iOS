@@ -20,7 +20,7 @@ UI / AppServices / Messaging / NodeNetworkTransport
 
 `BackendFactory` selects only the command transport. Foreground mode dispatches locally; background mode sends the same framed `ProxyRequest` to the extension. Both return the same `ProxyResponse`. There is one implementation of message fields, fallback, event mapping, replay acknowledgment, and voice link handling. UI code does not access the Python interpreter or a concrete Python backend.
 
-`Sources/RNSHost` compiles into both hosts. The shared engine imports Foundation/Security and exposes serialized data; it does not import RNSAPI, ReticulumSwift, or LXMFSwift. Each process bundles CPython and its resources, but only the selected host initializes RNS. Native BLE and RNode bindings execute inside that host; there is no app-owned BLE relay competing with the extension radio.
+`Sources/RNSHost` compiles into both hosts. The shared engine imports Foundation/Security and exposes serialized data; it does not import RNSAPI. Each process bundles CPython and its resources, but only the selected host initializes RNS. Native BLE and RNode bindings execute inside that host; there is no app-owned BLE relay competing with the extension radio.
 
 ## Ownership and lifecycle
 

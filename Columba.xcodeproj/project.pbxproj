@@ -114,10 +114,8 @@
 		2B3A3E3FB59D1E22B424E109 /* AudioRingBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE307E24C72DBA41D76C9A6C /* AudioRingBufferTests.swift */; };
 		2B5A40B3FC0EAA8FC42E26E7 /* MapStyleURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEE73C13850F3692AFE70F05 /* MapStyleURLTests.swift */; };
 		2BD6F16BEA0EC587E6433034 /* DiscoveredInterfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB8ACAE7518CFD5E0C149B9F /* DiscoveredInterfaceTests.swift */; };
-		2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2F8EC8222FC732AF00235991 /* LXMFSwift */; };
 		305643529FC896E321CD09BC /* SentIdStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIDSF /* SentIdStore.swift */; };
 		32BC1D5635CB39D011BB88B4 /* NodeHostingMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA496723275650AA3347CCB0 /* NodeHostingMode.swift */; };
-		35DF1F7406C71743BBE8C39B /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = DA31FE974552414C399D4949 /* ReticulumSwift */; };
 		3A7110A87B9C7EC48DFBB91C /* NodeCommandDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47C998ADDD3ACB6C645D38BD /* NodeCommandDispatcher.swift */; };
 		3A790961A270CBDE9A30BC04 /* VoiceCallScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D691F2029BDC2C1024AA9B01 /* VoiceCallScreen.swift */; };
 		3AC409F9EA38D7B621D7EE04 /* PythonNodeRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC2 /* PythonNodeRuntime.swift */; };
@@ -151,7 +149,6 @@
 		7BC38A40688391B27CAF196D /* PeerContactSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E000A64C153F97167050B87D /* PeerContactSheet.swift */; platformFilter = ios; };
 		7BE550B9F4D32F6346EBD2F2 /* CodecProfileInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */; };
 		7CE3523F6D1459A0A5CE76BE /* RNodeSeamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0AA6C472B1D4EFA2896086 /* RNodeSeamTests.swift */; };
-		83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A1380C075A9F67E1B173EA94 /* ReticulumSwift */; };
 		85C01EE558921012E4E057D6 /* NodeHostContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6FA51D689C6EEA75831D2C8 /* NodeHostContractTests.swift */; };
 		8768F2E6CD7941D82997A1BB /* CallControlButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71922EC204982A357F814F23 /* CallControlButton.swift */; };
 		886AB689C7699471510BAF9A /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E428836698BA8A8973A92F /* CallManager.swift */; };
@@ -168,7 +165,6 @@
 		94AC58EC55193B0CD274AB62 /* NodeCommandDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47C998ADDD3ACB6C645D38BD /* NodeCommandDispatcher.swift */; };
 		94D4FAD602532394D7F97744 /* OneShotLocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E284643CB4F95B1B3DBA965B /* OneShotLocationProvider.swift */; };
 		9566DCEF56FEFC97BAAA47BA /* MessageFormattedTimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4EF2D71A3D88C71D5BEDAD /* MessageFormattedTimeTests.swift */; };
-		98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 85B9530D8CAE0E16D5371319 /* LXMFSwift */; };
 		9CBDAC6F475388FEAED56D84 /* OutboxQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = OBQF /* OutboxQueue.swift */; };
 		9D9069A3F6302111A4727454 /* SwiftBLEBridge in Frameworks */ = {isa = PBXBuildFile; productRef = DD88CFE74E7E22427BC4D163 /* SwiftBLEBridge */; };
 		A0C0D9AE12F728A484F0F108 /* AudioManagerConfigChangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FE282FA3937E59BC026E072 /* AudioManagerConfigChangeTests.swift */; };
@@ -181,7 +177,6 @@
 		ABEE3CB05B416BFBC130DC76 /* TCPClientWizardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9158D917B99798FD205F1EA4 /* TCPClientWizardViewModelTests.swift */; };
 		AC4014BF281AD8BE6FF9E852 /* PeerChildInterfaceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */; };
 		ACT02 /* AnnounceClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACT01 /* AnnounceClassificationTests.swift */; };
-		AGB2B /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
 		AGP1B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
 		AGP2B /* AppGroupPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGPF /* AppGroupPaths.swift */; };
 		AMOD002 /* AudioModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AMOD001 /* AudioModeTests.swift */; };
@@ -199,8 +194,6 @@
 		C2RFT02 /* Codec2RawFileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2RFT01 /* Codec2RawFileTests.swift */; };
 		C3E7D8396C87CEB7F24CDD0A /* PythonRNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E59C40C0DF095105ECF040B /* PythonRNodeBLEBridge.swift */; };
 		C3EFE54636FAC9BEB5B43A37 /* AppGroupBLEServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBSV /* AppGroupBLEServer.swift */; };
-		C869345CF9A89E53FC44E5BD /* AppGroupBridgeInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGBF /* AppGroupBridgeInterface.swift */; };
-		CAB7B787E5B6DE24F18AEBCC /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		CB517262B7ADAEB1F9EF2036 /* OutboxEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5716A12800CCDCFF9D903FB /* OutboxEntry.swift */; };
 		CC067EE77A33341C829CBDE8 /* PeerLocationFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 498D7BF18FE3ACDE874B3E98 /* PeerLocationFormattingTests.swift */; };
 		CEC28B38CDB9477BCD8AB5A5 /* ProxyRnsBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = PRB002 /* ProxyRnsBackend.swift */; };
@@ -255,10 +248,10 @@
 		MSGROWBFMB /* MessageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGROWREF /* MessageRow.swift */; };
 		MSGSTOREBFMB /* MessageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSGSTOREREF /* MessageStore.swift */; };
 		MSTST002 /* MessageStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MSTST001 /* MessageStoreTests.swift */; };
+		NIRDT002 /* NodeInboundReplayDiagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = NIRDT001 /* NodeInboundReplayDiagTests.swift */; };
 		N0C3 /* PythonNodeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC3 /* PythonNodeEngine.swift */; };
 		N0C4 /* PythonNodeBLEBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC4 /* PythonNodeBLEBridge.swift */; };
 		NDDI_NE /* NERNodeDiagLogShim.swift in Sources */ = {isa = PBXBuildFile; fileRef = NDDI /* NERNodeDiagLogShim.swift */; };
-		NMF2B /* NomadNetFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMFF /* NomadNetFetch.swift */; };
 		NMH1B /* NEMemoryHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMHF /* NEMemoryHistory.swift */; };
 		NMT1B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
 		NMT2B /* NEMemoryTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = NMTF /* NEMemoryTrace.swift */; };
@@ -388,7 +381,6 @@
 		ACA6D4C7151A87D862FF9B8A /* CodecProfileInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Models/CodecProfileInfo.swift; sourceTree = SOURCE_ROOT; };
 		ACT01 /* AnnounceClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/AnnounceClassificationTests.swift; sourceTree = SOURCE_ROOT; };
 		AD87870C760723D7E77C87E9 /* TCPClientWizardViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/ViewModels/TCPClientWizardViewModel.swift; sourceTree = SOURCE_ROOT; };
-		AGBF /* AppGroupBridgeInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/AppGroupBridgeInterface.swift; sourceTree = SOURCE_ROOT; };
 		AGPF /* AppGroupPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/AppGroupPaths.swift; sourceTree = SOURCE_ROOT; };
 		AMOD001 /* AudioModeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/AudioModeTests.swift; sourceTree = SOURCE_ROOT; };
 		APV001 /* MessageAttachmentPreviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Messaging/MessageAttachmentPreviewItem.swift; sourceTree = SOURCE_ROOT; };
@@ -557,8 +549,8 @@
 		MSGROWREF /* MessageRow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessageRow.swift; path = Sources/ColumbaApp/Services/MessageStore/MessageRow.swift; sourceTree = SOURCE_ROOT; };
 		MSGSTOREREF /* MessageStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessageStore.swift; path = Sources/ColumbaApp/Services/MessageStore/MessageStore.swift; sourceTree = SOURCE_ROOT; };
 		MSTST001 /* MessageStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessageStoreTests.swift; path = Tests/ColumbaAppTests/MessageStoreTests.swift; sourceTree = SOURCE_ROOT; };
+		NIRDT001 /* NodeInboundReplayDiagTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NodeInboundReplayDiagTests.swift; path = Tests/ColumbaAppTests/NodeInboundReplayDiagTests.swift; sourceTree = SOURCE_ROOT; };
 		NDDI /* NERNodeDiagLogShim.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaNetworkExtension/NERNodeDiagLogShim.swift; sourceTree = SOURCE_ROOT; };
-		NMFF /* NomadNetFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NomadNetFetch.swift; sourceTree = SOURCE_ROOT; };
 		NMHF /* NEMemoryHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/NEMemoryHistory.swift; sourceTree = SOURCE_ROOT; };
 		NMTF /* NEMemoryTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Shared/NEMemoryTrace.swift; sourceTree = SOURCE_ROOT; };
 		NMTTSF /* NEMemoryTraceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/NEMemoryTraceTests.swift; sourceTree = SOURCE_ROOT; };
@@ -624,12 +616,10 @@
 				5254FC2433ED759989FB1094 /* LXSTSwift in Frameworks */,
 				F4CA7E2F745F05E21D45E11A /* RNSAPI in Frameworks */,
 				13F299C3C99F5D86B797FA11 /* SwiftBLEBridge in Frameworks */,
-				2F8EC8232FC732AF00235991 /* LXMFSwift in Frameworks */,
 				D4E5F60718293A4B5C6D7E8B /* GRDB in Frameworks */,
 				3F9FA949D941CBF04061C136 /* ColumbaNode in Frameworks */,
 				MDUIBLD1 /* MarkdownUI in Frameworks */,
 				SPLASHBLD1 /* Splash in Frameworks */,
-				83F513B2A83B444F977E44D9 /* ReticulumSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -641,8 +631,6 @@
 				92DDF4AE0AB493CC2AA0BA20 /* LXSTSwift in Frameworks */,
 				FB2F3248AE405614B36BC798 /* RNSAPI in Frameworks */,
 				9D9069A3F6302111A4727454 /* SwiftBLEBridge in Frameworks */,
-				35DF1F7406C71743BBE8C39B /* ReticulumSwift in Frameworks */,
-				98547ADE9B17DD692240E7F7 /* LXMFSwift in Frameworks */,
 				E5F60718293A4B5C6D7E8F91 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1084,7 +1072,6 @@
 				E85BA5BB165924E702EB877C /* BackgroundVPNExplainer.swift */,
 				56CFC5EC819F4ED82FCC4B07 /* BackgroundDeliveryGateView.swift */,
 				894C730FEB9AE4CDB4B949F8 /* BackgroundDeliveryPage.swift */,
-				AGBF /* AppGroupBridgeInterface.swift */,
 				FBST /* AppGroupBLESeamTransport.swift */,
 				FBSV /* AppGroupBLEServer.swift */,
 				FBDS /* BLEDriverSeam.swift */,
@@ -1094,7 +1081,6 @@
 				ORCF /* OutboxReplayCoordinator.swift */,
 				43A7FF6A056815712B1D13D9 /* RNodeSeam.swift */,
 				55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */,
-				NMFF /* NomadNetFetch.swift */,
 				MB02 /* NodeInboundReplay.swift */,
 				CBAA846B70BB773455CD5255 /* LocalNodeAdapter.swift */,
 				47C998ADDD3ACB6C645D38BD /* NodeCommandDispatcher.swift */,
@@ -1130,6 +1116,7 @@
 				RQP01 /* ReplyQuoteParityTests.swift */,
 				DRAFT001 /* DraftMessageTests.swift */,
 				MSTST001 /* MessageStoreTests.swift */,
+				NIRDT001 /* NodeInboundReplayDiagTests.swift */,
 				DIAGROT001 /* DiagLogRotationTests.swift */,
 				853F1E1C2B6E5305277FCB2A /* MigrationRoundTripTests.swift */,
 				B1C2D3E4F5061728394A5B6C /* IncomingMessageSizeLimitTests.swift */,
@@ -1195,8 +1182,6 @@
 			);
 			name = ColumbaNetworkExtension;
 			packageProductDependencies = (
-				021FA3D73B6F8B711A97D40F /* ReticulumSwift */,
-				B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */,
 				57110F986F2A3DFB3F95E483 /* ColumbaNode */,
 				A1B2C3D4E5F6A00000000001 /* SwiftBLEBridge */,
 			);
@@ -1226,9 +1211,7 @@
 				A49337EFC55C10979AEB702B /* LXSTSwift */,
 				0FD6A68A52A54D21FDB70324 /* RNSAPI */,
 				5BE4B79EB452909EE61ACE6C /* SwiftBLEBridge */,
-				2F8EC8222FC732AF00235991 /* LXMFSwift */,
 				D4E5F60718293A4B5C6D7E8A /* GRDB */,
-				A1380C075A9F67E1B173EA94 /* ReticulumSwift */,
 				57110F986F2A3DFB3F95E483 /* ColumbaNode */,
 				MDUIPROD1 /* MarkdownUI */,
 				SPLASHPROD1 /* Splash */,
@@ -1255,9 +1238,7 @@
 				6000D5CED2C3C89F74999BC1 /* LXSTSwift */,
 				E049A7D4D6D58690C0B674CE /* RNSAPI */,
 				DD88CFE74E7E22427BC4D163 /* SwiftBLEBridge */,
-				DA31FE974552414C399D4949 /* ReticulumSwift */,
 				E5F60718293A4B5C6D7E8F90 /* GRDB */,
-				85B9530D8CAE0E16D5371319 /* LXMFSwift */,
 			);
 			productName = ColumbaAppTests;
 			productReference = TPROD /* ColumbaAppTests.xctest */;
@@ -1305,10 +1286,9 @@
 				PKGREF2 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
 				PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */,
 				ACEF9566B3811B841D6E5672 /* XCLocalSwiftPackageReference "." */,
-				2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */,
-				2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */,
 				MDUIREF /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				SPLASHREF /* XCRemoteSwiftPackageReference "Splash" */,
+				GRDBPKGREF00000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 			);
 			productRefGroup = PRODS /* Products */;
 			projectDirPath = "";
@@ -1401,9 +1381,7 @@
 				NMT2B /* NEMemoryTrace.swift in Sources */,
 				NDC2B /* NEDiskCensus.swift in Sources */,
 				AGP2B /* AppGroupPaths.swift in Sources */,
-				AGB2B /* AppGroupBridgeInterface.swift in Sources */,
 				PXI2B /* ProxyIPC.swift in Sources */,
-				NMF2B /* NomadNetFetch.swift in Sources */,
 				OBQ2B /* OutboxQueue.swift in Sources */,
 				SIDSBN /* SentIdStore.swift in Sources */,
 				ORCBNE /* OutboxReplayCoordinator.swift in Sources */,
@@ -1585,7 +1563,6 @@
 				167B1C2588F79BA150D41CA1 /* BackgroundVPNExplainer.swift in Sources */,
 				02D2367C74604E40A827DCCD /* BackgroundDeliveryGateView.swift in Sources */,
 				5AD40EA2A4AA1D0173DE1062 /* BackgroundDeliveryPage.swift in Sources */,
-				C869345CF9A89E53FC44E5BD /* AppGroupBridgeInterface.swift in Sources */,
 				581B32CC36584C0648CBF43A /* AppGroupBLESeamTransport.swift in Sources */,
 				C3EFE54636FAC9BEB5B43A37 /* AppGroupBLEServer.swift in Sources */,
 				AB27E68D44988F0B1D82BF85 /* BLEDriverSeam.swift in Sources */,
@@ -1595,7 +1572,6 @@
 				483C8C635306DDB8DCCDBA4B /* OutboxReplayCoordinator.swift in Sources */,
 				44E108013920719ACDDC52AE /* RNodeSeam.swift in Sources */,
 				F5295D27D046D014778456B6 /* PropagationSeam.swift in Sources */,
-				CAB7B787E5B6DE24F18AEBCC /* NomadNetFetch.swift in Sources */,
 				B94D42232270A2B0DCF6C3F0 /* NodeInboundReplay.swift in Sources */,
 				90F9738818769E1EAB501476 /* LocalNodeAdapter.swift in Sources */,
 				3A7110A87B9C7EC48DFBB91C /* NodeCommandDispatcher.swift in Sources */,
@@ -1636,6 +1612,7 @@
 				RQP02 /* ReplyQuoteParityTests.swift in Sources */,
 				DRAFT002 /* DraftMessageTests.swift in Sources */,
 				MSTST002 /* MessageStoreTests.swift in Sources */,
+				NIRDT002 /* NodeInboundReplayDiagTests.swift in Sources */,
 				DIAGROT002 /* DiagLogRotationTests.swift in Sources */,
 				0FF6A5C5596A39C092AADA29 /* MigrationRoundTripTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* IncomingMessageSizeLimitTests.swift in Sources */,
@@ -2052,20 +2029,12 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */ = {
+		GRDBPKGREF00000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/torlando-tech/reticulum-swift.git";
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
 			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
-		2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/torlando-tech/LXMF-swift.git";
-			requirement = {
-				branch = main;
-				kind = branch;
+				kind = exactVersion;
+				version = 6.29.3;
 			};
 		};
 		MDUIREF /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
@@ -2103,19 +2072,9 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		021FA3D73B6F8B711A97D40F /* ReticulumSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
-			productName = ReticulumSwift;
-		};
 		0FD6A68A52A54D21FDB70324 /* RNSAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RNSAPI;
-		};
-		2F8EC8222FC732AF00235991 /* LXMFSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
-			productName = LXMFSwift;
 		};
 		57110F986F2A3DFB3F95E483 /* ColumbaNode */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -2130,16 +2089,6 @@
 			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
 			productName = LXSTSwift;
 		};
-		85B9530D8CAE0E16D5371319 /* LXMFSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
-			productName = LXMFSwift;
-		};
-		A1380C075A9F67E1B173EA94 /* ReticulumSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
-			productName = ReticulumSwift;
-		};
 		A1B2C3D4E5F6A00000000001 /* SwiftBLEBridge */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftBLEBridge;
@@ -2149,19 +2098,10 @@
 			package = PKGREF3 /* XCRemoteSwiftPackageReference "LXST-swift" */;
 			productName = LXSTSwift;
 		};
-		B528C71CCBFAB3CB30E0BFB2 /* LXMFSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2F8EC81F2FC7326600235991 /* XCRemoteSwiftPackageReference "LXMF-swift" */;
-			productName = LXMFSwift;
-		};
 		D4E5F60718293A4B5C6D7E8A /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = GRDBPKGREF00000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
-		};
-		DA31FE974552414C399D4949 /* ReticulumSwift */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2F8EC81E2FC7324D00235991 /* XCRemoteSwiftPackageReference "reticulum-swift" */;
-			productName = ReticulumSwift;
 		};
 		DBD8F3A253D413F087742BC0 /* MapLibre */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -2178,6 +2118,7 @@
 		};
 		E5F60718293A4B5C6D7E8F90 /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = GRDBPKGREF00000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
 		MDUIPROD1 /* MarkdownUI */ = {

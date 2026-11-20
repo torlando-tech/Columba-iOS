@@ -23,7 +23,6 @@
 
 import Foundation
 import RNSAPI
-import LXMFSwift
 
 enum CeaseTelemetry {
     /// The Android-shaped cease payload:
@@ -33,7 +32,7 @@ enum CeaseTelemetry {
     /// - `meta`: msgpack `{"cease": true}` (`FIELD_CUSTOM_META`).
     static func payload() -> (packed: Data, meta: Data) {
         let now = Int(Date().timeIntervalSince1970)
-        let zeroed = LXMFSwift.LocationTelemetry(
+        let zeroed = TelemeterCodec.Location(
             latitude: 0,
             longitude: 0,
             altitude: 0,
@@ -42,7 +41,7 @@ enum CeaseTelemetry {
             accuracy: 0,
             lastUpdate: now
         )
-        let packet = LXMFSwift.TelemetryPacket(timestamp: now, location: zeroed)
-        return (packet.encode(), ColumbaMetaCodec.packCease())
+        let packet = TelemeterCodec.Packet(timestamp: now, location: zeroed)
+        return (TelemeterCodec.pack(packet), ColumbaMetaCodec.packCease())
     }
 }

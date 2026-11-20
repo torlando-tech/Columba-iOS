@@ -5,7 +5,7 @@
 //  SwiftUI View that renders a unique visual identity from a hash.
 //  Displays colored dots in a symmetric grid pattern on a circular background.
 //
-//  Compatible with ReticulumSwift Identity type.
+//  Renders any Reticulum destination hash (16-byte Data).
 //
 
 import SwiftUI

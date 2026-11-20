@@ -57,6 +57,14 @@ public final class NodeInboundReplay {
     private static let batchCap = 200
     /// Per-conversation page size when scanning the store.
     private static let pageSize = 200
+    /// Only messages whose SENDER timestamp (`timestamp`, not local receipt —
+    /// the store exposes no created_at on `LXMessage`) is fresher than this are
+    /// echoed to diag.log as `[RNS] inbound` (live-arrival parity with the
+    /// legacy in-process path; a first-run catch-up replay of the historical
+    /// store must not reflood the log with months-old rows). Consequence: a
+    /// late-propagated message sent minutes ago is not echoed — acceptable,
+    /// the line is a live-arrival observability echo, not a delivery proof.
+    private static let liveInboundLogWindow: TimeInterval = 120
 
     private var draining = false
     private var rescanRequested = false
@@ -210,6 +218,16 @@ public final class NodeInboundReplay {
         var succeededAtMax: Set<String> = []
         for m in batch {
             let hex = Self.hex(m.hash)
+            // NO-PII: envelope/metadata only (prefixed hashes, byte counts,
+            // numeric radio metrics) — same contract as AppServices' legacy
+            // `[RNS] inbound` line, which the durable host path never reaches
+            // because inbound is persisted straight into the store here.
+            if Date().timeIntervalSince1970 - m.timestamp < Self.liveInboundLogWindow {
+                let rssiText = m.rssi.map { String(Int($0)) } ?? "-"
+                let snrText = m.snr.map { String(Int($0)) } ?? "-"
+                let fieldsBytes = m.fields.map { LxmfFieldCodec.pack($0) } ?? Data()
+                DiagLog.log("[RNS] inbound source=\(Self.hex(m.sourceHash).prefix(8)) message=\(Self.hex(m.hash).prefix(8)) len=\(m.content.count) fields=\(fieldsBytes.count)B rssi=\(rssiText) snr=\(snrText)")
+            }
             // AWAIT completion, and checkpoint by OUTCOME: on success the message is
             // done; on failure (a transient required-write error) keep it in `failed`
             // to retry, but still let the watermark advance past it so it never

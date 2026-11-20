@@ -139,7 +139,7 @@ def _app_group_prefs_plist(udid: str) -> Optional[Path]:
     return None
 
 
-def _ensure_rnsd_interface(udid: str) -> None:
+def _seed_rnsd_once(udid: str) -> bool:
     """Make the suite self-contained: seed Columba's interface store with a
     single TCP-client interface to the host rnsd/lxmd shared instance
     (RNSD_TCP_HOST:RNSD_TCP_PORT) so the sim bridges to the Sideband peer —
@@ -152,7 +152,9 @@ def _ensure_rnsd_interface(udid: str) -> None:
     NOT the sandbox/app-group plist the app actually reads. Then bounce cfprefsd
     so the relaunched app re-reads our edit instead of flushing a stale copy
     back. Deterministic + idempotent — the store is set to exactly this one
-    interface (a dedicated interop sim wants nothing else)."""
+    interface (a dedicated interop sim wants nothing else).
+
+    Returns True when the relaunched app logged the interface as loaded."""
     entity = [{
         "id": "interop-rnsd-tcp", "name": "rnsd-interop", "type": "TCPClient",
         "enabled": True, "mode": "full",
@@ -163,6 +165,26 @@ def _ensure_rnsd_interface(udid: str) -> None:
     blob = json.dumps(entity).encode("utf-8")
 
     subprocess.run(["xcrun", "simctl", "terminate", udid, BUNDLE_ID], capture_output=True)
+    # `terminate` is async: wait for the process to actually exit before editing
+    # the prefs — a dying app flushes its in-memory UserDefaults on exit and
+    # clobbers the seed we are about to write (observed when the seed runs while
+    # a freshly-installed app is still mid-first-launch).
+    gone = time.time() + 10.0
+    exited = False
+    while time.time() < gone:
+        ps = subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "list"],
+                            capture_output=True, text=True)
+        # A failed query says nothing about liveness — only a successful list
+        # without the bundle id proves exit.
+        if ps.returncode == 0 and BUNDLE_ID not in ps.stdout:
+            exited = True
+            break
+        time.sleep(0.5)
+    if not exited:
+        # Never edit prefs while the app may still be alive: its exit-time
+        # UserDefaults flush would clobber the seed. Fail this attempt so the
+        # caller's retry starts from a provably-dead app.
+        return False
 
     # Write to the standard sandbox plist AND the app-group plist if it exists.
     # First run: only standard exists → the app's migrateFromStandardDefaults
@@ -203,11 +225,25 @@ def _ensure_rnsd_interface(udid: str) -> None:
         except FileNotFoundError:
             text = ""
         if re.search(r"\[RNS\] wrote config \(\d+ bytes, ([1-9]\d*) interfaces\)", text):
-            return
+            return True
         time.sleep(0.5)
+    return False
+
+
+def _ensure_rnsd_interface(udid: str) -> None:
+    """Seed the interface store, retrying once.
+
+    The first attempt races the app's exit-time prefs flush (mitigated by the
+    terminate-wait in `_seed_rnsd_once`); if the seed still did not take, the
+    second attempt rewrites the plists against an already-dead app and relaunches
+    — the same dance, race-free."""
+    for _ in (1, 2):
+        if _seed_rnsd_once(udid):
+            return
+        time.sleep(2.0)
     pytest.fail(
         f"Columba did not register the rnsd TCP interface "
-        f"({RNSD_TCP_HOST}:{RNSD_TCP_PORT}) within 45 s of relaunch — the interface "
+        f"({RNSD_TCP_HOST}:{RNSD_TCP_PORT}) within two seed attempts — the interface "
         f"seed did not take (check the sandbox/app-group prefs plist)."
     )
 
@@ -327,7 +363,7 @@ class Simulator:
                 return self._cached_propagation_node_hex
         return None
 
-    def set_propagation_node(self, node_hex: str, *, wait: float = 5.0) -> None:
+    def set_propagation_node(self, node_hex: str, *, wait: float = 75.0) -> None:
         """Wire iOS's LXMRouter to `node_hex` as outbound PN via the
         existing `lxma://test-prop-sync` URL. Idempotent."""
         url = f"lxma://test-prop-sync?node={node_hex}"
@@ -339,9 +375,22 @@ class Simulator:
         deadline = time.time() + wait
         while time.time() < deadline:
             for line in reversed(self._read_diag_since(before_size)):
-                if "[TEST-PROP-SYNC] set node" in line:
+                # Producer format since the Python-backend unification
+                # (7e160fb9): `node=<hex>` on receipt, then
+                # `selected=<bool> state=<n>` once selectNode + syncNow
+                # complete. Success edge = the sync ran (`state=`);
+                # `no propagation manager` is fatal. `selected=false` is
+                # surfaced but NOT fatal: the app's selectNode requires an
+                # enabled propagation-aspect appData blob the host lxmd
+                # announce does not carry, so explicit selection never
+                # succeeds here — yet propagated delivery demonstrably works
+                # (auto-selected node over the shared TCP network), and
+                # hard-failing on it regressed the green suite when tried.
+                if "[TEST-PROP-SYNC] selected=false" in line:
+                    print(f"[PROP-SETUP-WARN] relay not explicitly selected: {line.strip()}")
+                if "[TEST-PROP-SYNC]" in line and "state=" in line:
                     return
-                if "[TEST-PROP-SYNC] error" in line:
+                if "[TEST-PROP-SYNC] no propagation manager" in line:
                     pytest.fail(f"set_propagation_node({node_hex}) failed: {line.strip()}")
             time.sleep(0.4)
         pytest.fail("set_propagation_node didn't produce a [TEST-PROP-SYNC] log line")

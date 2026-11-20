@@ -24,9 +24,8 @@
 //
 //  This file imports ONLY Foundation and is compiled into BOTH the ColumbaApp and
 //  ColumbaNetworkExtension targets (like `SharedFrameQueue` / `ExtensionDiagLog`).
-//  It MUST stay free of ReticulumSwift / LXMFSwift / RNSAPI so it compiles in the
-//  NE target (which links none of those) and so the app's `AppServices` can use it
-//  WITHOUT gaining an `import LXMFSwift` (the A0 collision rule).
+//  It MUST stay free of RNSAPI so it compiles in the NE target (which does not
+//  link it) and so the app's `AppServices` can use it without extra imports.
 //
 
 import Foundation

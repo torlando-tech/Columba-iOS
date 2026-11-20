@@ -5,7 +5,7 @@
 //  Actor that owns the `columba_call_history` table in the SAME `lxmf-swift.db`
 //  GRDB file the rest of the app uses. Mirrors MessageRepository's pattern
 //  (open a raw GRDB DatabasePool, create the table in init). GRDB-only — no
-//  LXMFSwift import (which is walled off to MessageRepository.swift).
+//  protocol-library imports.
 //
 //  On iOS the app-process CallManager is the SOLE writer (there is no
 //  out-of-process Python service here, unlike Android).

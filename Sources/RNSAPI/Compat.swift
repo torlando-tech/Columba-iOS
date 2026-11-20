@@ -509,9 +509,9 @@ public struct IconAppearance: Codable, Equatable, Sendable {
     /// colors as 6-char lowercase RGB hex (matching `ProfileIcon.swift`'s
     /// stored form, no `#` prefix); we decode them to 3 raw bytes so the wire
     /// shape matches what Sideband/Android send. Returns `[Any]` so the LXMF
-    /// MessagePack encoders (both `LxmfFieldCodec` and `LXMFSwift`'s
-    /// `convertArrayToMsgpack`) emit a proper msgpack array of `[string,
-    /// binary, binary]` rather than wrapping the whole thing as binary.
+    /// MessagePack encoder (`LxmfFieldCodec`) emits a proper msgpack array of
+    /// `[string, binary, binary]` rather than wrapping the whole thing as
+    /// binary.
     ///
     /// On malformed local hex the channel is filled with three zero bytes
     /// rather than dropped — keeps the array shape valid so the receiver
@@ -2073,11 +2073,11 @@ public final class AutoInterface: NetworkInterface, @unchecked Sendable {
     public func disconnect() async {}
 
     // No-op tunnel-mode stubs, mirroring TCPInterface (Compat.swift:1916-1917).
-    // The Compat façade has no underlying ReticulumSwift interface to install the
+    // The Compat façade has no underlying radio interface to install the
     // outbound hook on — the real tunnel-mode wiring (routing interface outbound
-    // through the App-Group NE bridge) lives on the Swift backend's ReticulumSwift
-    // interfaces and is wired NE-side (Track A5 / the app<->NE seam in C3). Present
-    // so the ENABLE_NETWORK_EXTENSION-gated applyTunnelModeToInterfaces compiles.
+    // through the App-Group NE bridge) lives on the NE's Python node and is
+    // wired NE-side (the app<->NE seam). Present so the
+    // ENABLE_NETWORK_EXTENSION-gated applyTunnelModeToInterfaces compiles.
     public func beginTunnelMode(send hook: @escaping @Sendable (Data) async -> Void) async {}
     public func endTunnelMode() async {}
 }
@@ -2327,19 +2327,6 @@ public struct TelemetryPacket: Equatable, Sendable {
 
     public static func decode(from data: Data) -> TelemetryPacket? {
         TelemetryPacket(timestamp: Date(), payload: data)
-    }
-}
-
-public struct LocationTelemetry: Equatable, Sendable {
-    public let latitude: Double
-    public let longitude: Double
-    public let altitude: Double?
-    public let timestamp: Date
-    public init(latitude: Double, longitude: Double, altitude: Double? = nil, timestamp: Date = Date()) {
-        self.latitude = latitude
-        self.longitude = longitude
-        self.altitude = altitude
-        self.timestamp = timestamp
     }
 }
 

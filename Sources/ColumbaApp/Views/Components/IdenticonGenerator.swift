@@ -5,7 +5,7 @@
 //  Algorithm for generating unique visual identities from hash bytes.
 //  Creates symmetric dot patterns with bright colors on dark backgrounds.
 //
-//  Compatible with ReticulumSwift Identity.hash (16-byte Data).
+//  Input is any Reticulum destination hash (16-byte Data).
 //
 
 import Foundation

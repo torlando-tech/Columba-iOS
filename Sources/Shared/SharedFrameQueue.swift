@@ -23,10 +23,10 @@
 //      radio. Backed by the `frame_queue_a2e` file name.
 //
 //  This file imports ONLY Foundation and is compiled into BOTH the ColumbaApp
-//  and ColumbaNetworkExtension targets. It must stay free of ReticulumSwift /
-//  RNSAPI so it can compile in the NE target (which does not link those). The
-//  `NetworkInterface`-conforming bridge lives in a separate file
-//  (`AppGroupBridgeInterface.swift`) that imports ReticulumSwift.
+//  and ColumbaNetworkExtension targets. It must stay free of RNSAPI so it can
+//  compile in the NE target (which does not link it). (The old `NetworkInterface`-conforming bridge,
+//  `AppGroupBridgeInterface.swift`, was retired with the Swift NE node — the
+//  NE's RNS instance is embedded Python.)
 //
 
 import Foundation
@@ -53,9 +53,8 @@ public enum SharedDefaultsConstants {
 
     /// Darwin notification posted by the app when radio-received frames
     /// have been written to the app→NE (`a2e`) `SharedFrameQueue`. The
-    /// extension observes this to drain the queue and inject the frames
-    /// into its RNS transport via `AppGroupBridgeInterface`. (Wiring of
-    /// the observer on the NE side is Track A5.)
+    /// NE-side observer was the retired `AppGroupBridgeInterface`; the
+    /// constant is kept so the queue contract stays documented.
     public static let radioFrameReadyNotificationName = "network.columba.radioFrameReady"
 
     /// Darwin notification posted when a `BLEDriverSeamMessage` is written to the
@@ -74,7 +73,8 @@ public enum SharedDefaultsConstants {
     /// Shared UserDefaults key holding the JSON-encoded `RNodeSeamConfig` for the
     /// Model B RNode interface (device name + radio params), or absent when no RNode
     /// is enabled. Written by the app (which owns the full `RNodeConfig`), read by the
-    /// NE (which is RNSAPI-free and maps it to reticulum-swift's `RadioConfig`).
+    /// NE (which is RNSAPI-free and hands the params to the Python node's
+    /// RNS `RadioConfig`).
     public static let rnodeConfigKey = "com.columba.rnodeConfig"
 
     /// Darwin notification posted by the app when the RNode config (`rnodeConfigKey`)
@@ -145,7 +145,7 @@ public enum SharedFrameQueueName {
 
     // Model B BLE driver seam (dedicated queues, separate from the radio-frame
     // a2e/e2a above so the BLE control/data stream never intermixes with — or
-    // double-drains against — `AppGroupBridgeInterface`).
+    // double-drains against — the radio-frame path).
     /// NE→app: `BLEDriver` commands + `sendFragment` (app drains).
     public static let bleSeamN2A = "ble_seam_n2a"
     /// app→NE: driver stream events + `receivedFragment` + reqId results (NE drains).

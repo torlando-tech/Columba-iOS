@@ -339,8 +339,14 @@ final class PythonNodeRuntime: @unchecked Sendable {
         let snippet = callBridgeSnippet(fn: fn, payload: payload)
         return withGIL {
             let rc = PyRun_SimpleString(snippet)
-            guard rc == 0 else { return nil }
+            guard rc == 0 else {
+                ExtensionDiagLog.log("[NE-PY] bridge rc=\(rc) fn=\(fn) (snippet escaped; stderr lost)")
+                return nil
+            }
             let out = readMainAttr("_call_out")
+            if out == nil {
+                ExtensionDiagLog.log("[NE-PY] bridge fn=\(fn): _call_out missing after rc=0")
+            }
             // [STARTUP] marker for the heavy first call (import chain) - the
             // snippet only sets _call_timing for `start` or slow imports so
             // routine bridge calls stay out of ext-diag (issue #229).
@@ -373,8 +379,7 @@ final class PythonNodeRuntime: @unchecked Sendable {
         def _call_entry():
             __main__._call_timing = ""
             _t0 = _time.perf_counter()
-            import rns_bridge
-            _t1 = _time.perf_counter()
+            _t1 = _t0
             def _dec(v):
                 if isinstance(v, dict) and set(v) == {'__b64__'}:
                     return base64.b64decode(v['__b64__'] or b'')
@@ -386,6 +391,15 @@ final class PythonNodeRuntime: @unchecked Sendable {
             _p = _dec(json.loads(\(payloadLit)))
             _fn = \(fnLit)
             try:
+                # The import lives INSIDE the try so an import-time failure
+                # (bad payload, missing native module, platform dlopen error)
+                # surfaces as {"ok":false,"error":<traceback>} and gets logged
+                # by the caller - previously it escaped _call_entry, made
+                # PyRun_SimpleString return non-zero, and the caller could
+                # only report "bridge call failed to build/dispatch" with the
+                # traceback lost to stderr (invisible on device).
+                import rns_bridge
+                _t1 = _time.perf_counter()
                 _res = getattr(rns_bridge, _fn)(*(_p.get('args') or []), **(_p.get('kwargs') or {}))
                 try:
                     _out = json.dumps(_res)
@@ -398,7 +412,12 @@ final class PythonNodeRuntime: @unchecked Sendable {
             _call_ms = (_time.perf_counter() - _t1) * 1000
             if _fn == 'start' or _import_ms >= 100:
                 __main__._call_timing = 'import_rns_bridge=%.0fms %s=%.0fms' % (_import_ms, _fn, _call_ms)
-        _call_entry()
+        try:
+            _call_entry()
+        except BaseException:
+            # Catch payload-parse / any pre-try escape so the failure reaches
+            # the caller as an error string instead of a bare rc != 0.
+            __main__._call_out = json.dumps({'ok': False, 'error': traceback.format_exc()})
         """
     }
 

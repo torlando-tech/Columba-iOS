@@ -21,7 +21,6 @@ class AttachmentPreviewContractTests < Minitest::Test
 
   def test_preview_boundary_is_shared_and_regressions_are_hosted
     assert_includes source_paths('ColumbaApp'), PREVIEW_SOURCE
-    assert_includes source_paths('ColumbaModelBApp'), PREVIEW_SOURCE
     assert_includes source_paths('ColumbaAppTests'), PREVIEW_TEST
   end
 

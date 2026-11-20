@@ -22,8 +22,6 @@ jobs:
       - name: Clone sibling packages
         run: |
           set -euo pipefail
-          git clone https://github.com/torlando-tech/reticulum-swift.git ../reticulum-swift
-          git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
 
       - name: Fetch Python framework + wheels
@@ -228,8 +226,6 @@ jobs:
       - name: Clone sibling packages
         run: |
           set -euo pipefail
-          git clone https://github.com/torlando-tech/reticulum-swift.git ../reticulum-swift
-          git clone https://github.com/torlando-tech/LXMF-swift.git ../LXMF-swift
           git clone https://github.com/torlando-tech/LXST-swift.git ../LXST-swift
 
       - name: Fetch Python framework + wheels

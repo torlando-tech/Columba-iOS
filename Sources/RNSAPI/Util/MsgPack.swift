@@ -5,8 +5,8 @@
 //  Minimal MessagePack implementation supporting the wire-format subset
 //  Reticulum / LXMF / LXST use:
 //    - nil, bool, ints (signed + unsigned, fixint and prefixed 1/2/4/8 byte),
-//      bin (binary blobs), str (utf-8), array, map
-//    - skipped: floats, ext types, timestamps (LXST wire format uses none)
+//      float32/float64, bin (binary blobs), str (utf-8), array, map
+//    - skipped: ext types, timestamps (LXST wire format uses none)
 //
 //  Public entry points:
 //    packMsgPack(_:) -> Data

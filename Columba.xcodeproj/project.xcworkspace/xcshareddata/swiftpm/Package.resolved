@@ -29,15 +29,6 @@
       }
     },
     {
-      "identity" : "lxmf-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/torlando-tech/LXMF-swift.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "60186710b9891d35dfb54e636935ddb506b581e6"
-      }
-    },
-    {
       "identity" : "lxst-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/torlando-tech/LXST-swift.git",
@@ -62,15 +53,6 @@
       "state" : {
         "revision" : "2849f5323265386e200484b0d0f896e73c3411b9",
         "version" : "6.0.1"
-      }
-    },
-    {
-      "identity" : "reticulum-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/torlando-tech/reticulum-swift.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "52e2a9a5107bf12545a0788ee637686815d47525"
       }
     },
     {
