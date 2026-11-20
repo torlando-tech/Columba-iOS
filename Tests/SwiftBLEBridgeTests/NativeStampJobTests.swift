@@ -199,12 +199,67 @@ final class NativeStampJobTests: XCTestCase {
         XCTAssertEqual(result.rounds, 0)
     }
 
+    func testKeyStampJobReturnsInteroperableKeypair() throws {
+        let material = Data("key-stamp-material".utf8)
+        // 32 bytes of 0xFF except the final 0xFE: satisfied after ~1 attempt.
+        let target = Data([UInt8](repeating: 0xFF, count: 31) + [0xFE])
+        let job = startKeyJob(material: material, target: target)
+        XCTAssertNotEqual(job, 0)
+        defer { XCTAssertEqual(columba_stamp_job_release(job), 0) }
+        let result = try waitForTerminalStatus(job, capacity: 64)
+        XCTAssertEqual(result.status, 64)
+        XCTAssertEqual(result.stamp.count, 64)
+        let privateKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: result.stamp.prefix(32)
+        )
+        XCTAssertEqual(privateKey.publicKey.rawRepresentation, result.stamp.suffix(32))
+        let digest = Data(SHA256.hash(data: material + result.stamp.suffix(32)))
+        XCTAssertTrue(digest == target || digest.lexicographicallyPrecedes(target))
+    }
+
+    func testKeyStampJobAcceptsEveryDigestBoundaryReturnsRealKeypair() throws {
+        let material = Data("key-stamp-boundary".utf8)
+        let job = startKeyJob(material: material, target: maximumTarget)
+        XCTAssertNotEqual(job, 0)
+        defer { XCTAssertEqual(columba_stamp_job_release(job), 0) }
+        let result = try waitForTerminalStatus(job, capacity: 64)
+        XCTAssertEqual(result.status, 64)
+        XCTAssertEqual(result.rounds, 0)
+        // A zero payload is not a keypair: Link.py compares the public half.
+        let privateKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: result.stamp.prefix(32)
+        )
+        XCTAssertEqual(privateKey.publicKey.rawRepresentation, result.stamp.suffix(32))
+    }
+
+    func testKeyStampJobCancelsWithTerminalStatus() throws {
+        // Last byte 0x01: never satisfiable at cost <= 255 bits in practice.
+        let target = Data(repeating: 0x00, count: 31) + Data([0x01])
+        let job = startKeyJob(material: Data("key-stamp-cancel".utf8), target: target)
+        XCTAssertNotEqual(job, 0)
+        defer { XCTAssertEqual(columba_stamp_job_release(job), 0) }
+        XCTAssertEqual(columba_stamp_job_cancel(job), 0)
+        XCTAssertEqual(try waitForTerminalStatus(job, capacity: 64).status, -2)
+        XCTAssertEqual(columba_stamp_job_cancel(job), -1)
+    }
+
     private func startJob(workblock: Data, target: Data, size: Int32 = 32) -> UInt64 {
         workblock.withUnsafeBytes { work in
             target.withUnsafeBytes { bytes in
                 columba_stamp_job_start(
                     work.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(work.count),
                     bytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(bytes.count), size
+                )
+            }
+        }
+    }
+
+    private func startKeyJob(material: Data, target: Data) -> UInt64 {
+        material.withUnsafeBytes { materialBytes in
+            target.withUnsafeBytes { bytes in
+                columba_key_stamp_job_start(
+                    materialBytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(materialBytes.count),
+                    bytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(bytes.count)
                 )
             }
         }
