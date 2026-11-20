@@ -237,9 +237,9 @@ final class NativeStampJobTests: XCTestCase {
         let target = Data(repeating: 0x00, count: 31) + Data([0x01])
         let job = startKeyJob(material: Data("key-stamp-cancel".utf8), target: target)
         XCTAssertNotEqual(job, 0)
-        defer { XCTAssertEqual(columba_stamp_job_release(job), 0) }
         XCTAssertEqual(columba_stamp_job_cancel(job), 0)
         XCTAssertEqual(try waitForTerminalStatus(job, capacity: 64).status, -2)
+        XCTAssertEqual(columba_stamp_job_release(job), 0)
         XCTAssertEqual(columba_stamp_job_cancel(job), -1)
     }
 
