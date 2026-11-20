@@ -206,19 +206,26 @@ def key_comparison(library_path, cost):
     import RNS
     import RNS.Stamps as stamps
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    def raw_public(key):
+        return key.public_key().public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
 
     material = RNS.Identity.full_hash(b"key-stamp-reference")
     target = stamps.target_from_cost(cost)
     library = ctypes.CDLL(library_path)
     native_calls = []
+    native_rounds = []
 
     def key_search(workblock, key_target, stop_check):
         native_calls.append((workblock, key_target))
-        return native_key_stamp(library, workblock, key_target, stop_check)
+        proof, rounds = native_key_stamp(library, workblock, key_target, stop_check)
+        native_rounds.append(rounds)
+        return proof, rounds
 
     stamps.native_key_search = key_search
     try:
-        native, native_rounds = stamps.generate_stamped_key(material, cost)
+        native, native_value = stamps.generate_stamped_key(material, cost)
     finally:
         stamps.native_key_search = None
 
@@ -228,19 +235,20 @@ def key_comparison(library_path, cost):
         raise RuntimeError("RNS did not release the native key search's active job")
 
     native_private, native_public = native
-    derived = X25519PrivateKey.from_private_bytes(native_private).public_key().public_bytes()
+    derived = raw_public(X25519PrivateKey.from_private_bytes(native_private))
     if derived != native_public:
         raise RuntimeError("Native key stamp is not a derivable X25519 keypair")
 
     # Reference: the same request through the pure-Python loop.
     reference, _ = stamps.generate_stamped_key(material, cost)
     reference_private, reference_public = reference
-    reference_derived = X25519PrivateKey.from_private_bytes(reference_private).public_key().public_bytes()
+    reference_derived = raw_public(X25519PrivateKey.from_private_bytes(reference_private))
 
     return {
         "cost": cost,
         "native_hook_calls": len(native_calls),
-        "native_rounds": native_rounds,
+        "native_rounds": native_rounds[0],
+        "native_value": native_value,
         "native_rns_valid": stamps.stamp_valid(native_public, cost, material),
         "native_keypair_derivable": derived == native_public,
         "reference_rns_valid": stamps.stamp_valid(reference_public, cost, material),
