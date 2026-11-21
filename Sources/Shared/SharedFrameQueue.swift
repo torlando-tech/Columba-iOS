@@ -199,6 +199,24 @@ public final class SharedFrameQueue: @unchecked Sendable {
     /// Path to the queue file in the shared container.
     private let fileURL: URL
 
+    /// POSIX `fcntl` locks belong to the process, so two threads of the same
+    /// process do not exclude each other. Every queue file therefore also gets
+    /// a process-local lock, shared by every instance that opens it — the
+    /// key-stamp seam tests legitimately drive both ends inside one process.
+    private let processLock: NSLock
+
+    private static let registryLock = NSLock()
+    private static var processLocks: [String: NSLock] = [:]
+
+    private static func processLock(forPath path: String) -> NSLock {
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        if let existing = processLocks[path] { return existing }
+        let lock = NSLock()
+        processLocks[path] = lock
+        return lock
+    }
+
     /// File descriptor for POSIX locking (kept open for the lifetime of this object).
     private var fd: Int32 = -1
 
@@ -215,14 +233,17 @@ public final class SharedFrameQueue: @unchecked Sendable {
     ///     name gets its own backing file and its own `.lock` file, so the two
     ///     directions never contend on the same POSIX lock.
     public init(appGroupIdentifier: String, name: String = SharedFrameQueueName.e2a) {
-        guard let containerURL = FileManager.default.containerURL(
+        let path: String
+        if let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
+        ) {
+            path = containerURL.appendingPathComponent(name).path
+        } else {
             // Fallback to tmp if app group not available (shouldn't happen in production)
-            self.fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-            return
+            path = FileManager.default.temporaryDirectory.appendingPathComponent(name).path
         }
-        self.fileURL = containerURL.appendingPathComponent(name)
+        self.fileURL = URL(fileURLWithPath: path)
+        self.processLock = Self.processLock(forPath: path)
     }
 
     deinit {
@@ -254,6 +275,8 @@ public final class SharedFrameQueue: @unchecked Sendable {
         header[4] = interfaceTag
 
         var wrote = false
+        processLock.lock()
+        defer { processLock.unlock() }
         withFileLock {
             let fh: FileHandle
             if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -287,6 +310,8 @@ public final class SharedFrameQueue: @unchecked Sendable {
     public func readAllAndClear() -> [QueuedFrame] {
         var frames: [QueuedFrame] = []
 
+        processLock.lock()
+        defer { processLock.unlock() }
         withFileLock {
             guard FileManager.default.fileExists(atPath: fileURL.path),
                   let data = try? Data(contentsOf: fileURL),
@@ -327,6 +352,8 @@ public final class SharedFrameQueue: @unchecked Sendable {
     ///
     /// - Returns: True if the queue file exists and is non-empty
     public var hasFrames: Bool {
+        processLock.lock()
+        defer { processLock.unlock() }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return false }
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
               let size = attrs[.size] as? UInt64 else { return false }

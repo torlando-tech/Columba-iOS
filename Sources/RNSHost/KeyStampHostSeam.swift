@@ -227,8 +227,11 @@ final class KeyStampHostBridge: @unchecked Sendable {
             drainResponses()
             Thread.sleep(forTimeInterval: 0.002)
         }
-        // No host answered: drop the request and let the caller run the search
-        // in-process. A late accept still finds no job and is discarded.
+        // No host answered: retract the request and let the caller run the
+        // search in-process. Without the cancel, a host that wakes later would
+        // begin a search nobody waits for and hold the queue. A late accept
+        // still finds no job and is discarded.
+        cancel(id)
         state.withLock { $0.jobs.removeValue(forKey: id) }
         return 0
     }
@@ -280,9 +283,17 @@ final class KeyStampHostBridge: @unchecked Sendable {
         return true
     }
 
+    /// Drop a job. A search the host is still running is cancelled first: the
+    /// caller has moved on (stalled-host fallback, deadline miss), so leaving it
+    /// running only burns cores and holds the host's serial queue.
     @discardableResult
     func release(_ id: UInt64) -> Bool {
-        state.withLock { $0.jobs.removeValue(forKey: id) } != nil
+        let abandoned = state.withLock { state -> Bool in
+            guard let job = state.jobs[id] else { return false }
+            return job.result == nil && !job.cancelled
+        }
+        if abandoned { cancel(id) }
+        return state.withLock { $0.jobs.removeValue(forKey: id) } != nil
     }
 
     private func drainResponses() {

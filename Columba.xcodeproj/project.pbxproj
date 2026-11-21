@@ -242,7 +242,6 @@
 		F5295D27D046D014778456B6 /* PropagationSeam.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FE6D8CFA13376BCD23AE86 /* PropagationSeam.swift */; };
 		F80B09722B3A7CCA7C99DE0C /* DiscoveredDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9630845DA60F57A34819CC4B /* DiscoveredDevice.swift */; };
 		FB2F3248AE405614B36BC798 /* RNSAPI in Frameworks */ = {isa = PBXBuildFile; productRef = E049A7D4D6D58690C0B674CE /* RNSAPI */; };
-		FBD8F65E15E8D4F3A59909A5 /* StampBenchDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F2405E5BF7242B236EDD81 /* StampBenchDeviceTests.swift */; };
 		LNP003 /* LocalNetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNP002 /* LocalNetworkProbe.swift */; };
 		MAFLD02 /* MessageAudioFieldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MAFLD01 /* MessageAudioFieldTests.swift */; };
 		MDB001 /* MessageBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDB003 /* MessageBody.swift */; };
@@ -378,7 +377,6 @@
 		9F87296BB580791A95C977B6 /* AutoAnnouncePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/AutoAnnouncePolicy.swift; sourceTree = SOURCE_ROOT; };
 		A1B2C3D4E5F60718293A4B5D /* MessageBubbleLayoutTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Tests/ColumbaAppTests/MessageBubbleLayoutTests.swift; sourceTree = SOURCE_ROOT; };
 		A2BA54B809AFB1AB900074CD /* DirectionsLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Map/DirectionsLauncher.swift; sourceTree = SOURCE_ROOT; };
-		A3F2405E5BF7242B236EDD81 /* StampBenchDeviceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StampBenchDeviceTests.swift; path = Tests/ColumbaAppTests/StampBenchDeviceTests.swift; sourceTree = SOURCE_ROOT; };
 		A41F10000000000000000003 /* MessageTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Views/Messaging/MessageTimelineView.swift; sourceTree = SOURCE_ROOT; };
 		A5716A12800CCDCFF9D903FB /* OutboxEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OutboxEntry.swift; path = Sources/Shared/OutboxEntry.swift; sourceTree = SOURCE_ROOT; };
 		A8A2F8952F6F036C94824552 /* PeerChildInterfaceRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Sources/ColumbaApp/Services/PeerChildInterfaceRegistry.swift; sourceTree = SOURCE_ROOT; };
@@ -1155,7 +1153,6 @@
 				4D58209FE6421B8FFA3FA289 /* PeerChildInterfaceRegistryTests.swift */,
 				9158D917B99798FD205F1EA4 /* TCPClientWizardViewModelTests.swift */,
 				594BCC31D253599859B2A975 /* KeyStampSeamTests.swift */,
-				A3F2405E5BF7242B236EDD81 /* StampBenchDeviceTests.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -1655,7 +1652,6 @@
 				568E489558D111023D5E3777 /* PeerChildInterfaceRegistryTests.swift in Sources */,
 				ABEE3CB05B416BFBC130DC76 /* TCPClientWizardViewModelTests.swift in Sources */,
 				2A2C6DF1AB084EC4214ED7D0 /* KeyStampSeamTests.swift in Sources */,
-				FBD8F65E15E8D4F3A59909A5 /* StampBenchDeviceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,4 +1,6 @@
 import CryptoKit
+import Foundation
+import os
 import XCTest
 @testable import ColumbaApp
 
@@ -115,6 +117,89 @@ final class KeyStampSeamTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.05)
         }
         XCTFail("stalled host never reported -4")
+    }
+
+    func testNoHostMeansTheStartRequestIsRetracted() {
+        // Requests outlive the accept window; a host that wakes later must not
+        // begin a search the caller already abandoned.
+        let requestName = "test_key_stamp_n2a_retract_\(UUID().uuidString)"
+        let responseName = "test_key_stamp_a2n_retract_\(UUID().uuidString)"
+        let orphan = KeyStampHostBridge(requestQueueName: requestName, responseQueueName: responseName)
+        let requests = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: requestName)
+        XCTAssertEqual(orphan.start(material: material, target: easyTarget), 0)
+
+        let frames = requests.readAllAndClear().compactMap { KeyStampSeamFrame.decoded($0.data) }
+        guard let start = frames.first(where: { $0.kind == .start }) else {
+            return XCTFail("start frame never reached the queue")
+        }
+        XCTAssertTrue(
+            frames.contains { $0.kind == .cancel && $0.id == start.id },
+            "abandoned start must be cancelled for the same id"
+        )
+    }
+
+    func testReleaseCancelsAJobTheHostAccepted() throws {
+        // The stalled-host fallback releases a job whose search is still alive
+        // in the app; the host has to be told to stop.
+        let requestName = "test_key_stamp_n2a_release_\(UUID().uuidString)"
+        let responseName = "test_key_stamp_a2n_release_\(UUID().uuidString)"
+        let bridge = KeyStampHostBridge(requestQueueName: requestName, responseQueueName: responseName)
+        let requests = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: requestName)
+        let responses = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: responseName)
+
+        var startResult: UInt64 = 0
+        let started = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            startResult = bridge.start(material: self.material, target: self.easyTarget)
+            started.signal()
+        }
+        var requestID: UInt64 = 0
+        let deadline = CFAbsoluteTimeGetCurrent() + 2
+        while requestID == 0 && CFAbsoluteTimeGetCurrent() < deadline {
+            for frame in requests.readAllAndClear() {
+                guard let message = KeyStampSeamFrame.decoded(frame.data), message.kind == .start else { continue }
+                requestID = message.id
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        XCTAssertNotEqual(requestID, 0)
+        let ack = KeyStampSeamFrame(kind: .accepted, id: requestID).encoded()!
+        XCTAssertTrue(responses.append(frame: ack, interfaceTag: FrameInterfaceTag.keyStamp.rawValue))
+        KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampResultNotificationName)
+        XCTAssertEqual(started.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(startResult, requestID)
+
+        bridge.release(requestID)
+        let cancels = requests.readAllAndClear()
+            .compactMap { KeyStampSeamFrame.decoded($0.data) }
+            .filter { $0.kind == .cancel && $0.id == requestID }
+        XCTAssertEqual(cancels.count, 1, "release must cancel a search the host still runs")
+    }
+
+    func testConcurrentAppendsKeepEveryFrameIntact() {
+        // `fcntl` locks are process-owned, so concurrent writers in one process
+        // used to interleave and erase each other's frames.
+        let name = "test_frame_queue_concurrent_\(UUID().uuidString)"
+        let queue = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: name)
+        let writers = 8
+        let perWriter = 50
+        let failures = OSAllocatedUnfairLock(initialState: 0)
+        let group = DispatchGroup()
+        for writer in 0..<writers {
+            DispatchQueue.global().async(group: group) {
+                for index in 0..<perWriter {
+                    let payload = Data([UInt8(truncatingIfNeeded: writer), UInt8(truncatingIfNeeded: index)])
+                    if !queue.append(frame: payload, interfaceTag: UInt8(writer)) {
+                        failures.withLock { $0 += 1 }
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(group.wait(timeout: .now() + 20), .success)
+        XCTAssertEqual(failures.withLock { $0 }, 0)
+        let frames = queue.readAllAndClear()
+        XCTAssertEqual(frames.count, writers * perWriter)
+        XCTAssertEqual(Set(frames.map { $0.data }).count, writers * perWriter)
     }
 
     func testNoHostMeansStartReportsUnavailablePromptly() {
