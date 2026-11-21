@@ -22,7 +22,14 @@ final class KeyStampSeamTests: XCTestCase {
         let suffix = UUID().uuidString
         requestName = "test_key_stamp_n2a_\(suffix)"
         responseName = "test_key_stamp_a2n_\(suffix)"
-        bridge = KeyStampHostBridge(requestQueueName: requestName, responseQueueName: responseName)
+        // Both ends run in this process, where the test's own main-thread work
+        // can delay the notification hop: accept on the service's timer instead
+        // of racing the production 120ms window.
+        bridge = KeyStampHostBridge(
+            requestQueueName: requestName,
+            responseQueueName: responseName,
+            acceptWindow: 2.0
+        )
         service = KeyStampHostService(
             requestQueueName: requestName,
             responseQueueName: responseName,

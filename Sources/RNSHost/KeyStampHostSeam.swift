@@ -93,8 +93,13 @@ enum KeyStampSeamNotify {
 
     /// Register `handler` for a Darwin notification. The relay is retained here
     /// until `remove`, because the CF callback keeps only a raw pointer.
-    static func observe(_ name: String, owner: AnyObject, handler: @escaping @Sendable () -> Void) {
-        let relay = KeyStampNotifyRelay(handler: handler)
+    static func observe(
+        _ name: String,
+        owner: AnyObject,
+        queue: DispatchQueue? = nil,
+        handler: @escaping @Sendable () -> Void
+    ) {
+        let relay = KeyStampNotifyRelay(queue: queue, handler: handler)
         let key = ObjectIdentifier(owner)
         relays.withLock { $0[key] = relay }
         CFNotificationCenterAddObserver(
@@ -127,16 +132,22 @@ enum KeyStampSeamNotify {
 }
 
 /// Holds the handler a Darwin callback reaches through its raw pointer. The
-/// notification can arrive on any thread; the handler is already `@Sendable`,
-/// so it is invoked directly rather than hopped to a queue.
+/// notification can arrive on any thread, including the main thread mid-request;
+/// an owner that drains a shared queue hands in its own serial queue so the
+/// drain cannot be delayed by unrelated main-thread work.
 final class KeyStampNotifyRelay: @unchecked Sendable {
+    private let queue: DispatchQueue?
     private let handler: @Sendable () -> Void
 
-    init(handler: @escaping @Sendable () -> Void) {
+    init(queue: DispatchQueue? = nil, handler: @escaping @Sendable () -> Void) {
+        self.queue = queue
         self.handler = handler
     }
 
-    func run() { handler() }
+    func run() {
+        guard let queue else { return handler() }
+        queue.async { [handler] in handler() }
+    }
 }
 
 /// NE side: owns in-flight remote jobs and exports them to Python.
@@ -178,12 +189,19 @@ final class KeyStampHostBridge: @unchecked Sendable {
     /// deadline) are mistaken for the new process's first job.
     private let idPrefix: UInt64
 
+    /// `acceptWindow` override for callers that drive both seam ends in one
+    /// process (tests), where main-thread work in the test can delay the
+    /// notification hop far past the production window.
+    private let acceptWindow: TimeInterval
+
     /// Queue names are parameters so a test can drive both seam ends over
     /// private files instead of competing with the live app/NE singletons.
     init(
         requestQueueName: String = SharedFrameQueueName.keyStampN2A,
-        responseQueueName: String = SharedFrameQueueName.keyStampA2N
+        responseQueueName: String = SharedFrameQueueName.keyStampA2N,
+        acceptWindow: TimeInterval = KeyStampHostBridge.acceptWindow
     ) {
+        self.acceptWindow = acceptWindow
         requests = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: requestQueueName)
         responses = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: responseQueueName)
         var generator = SystemRandomNumberGenerator()
@@ -221,7 +239,7 @@ final class KeyStampHostBridge: @unchecked Sendable {
         }
         KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampRequestNotificationName)
 
-        let deadline = CFAbsoluteTimeGetCurrent() + Self.acceptWindow
+        let deadline = CFAbsoluteTimeGetCurrent() + acceptWindow
         while CFAbsoluteTimeGetCurrent() < deadline {
             if state.withLock({ $0.jobs[id]?.accepted ?? false }) { return id }
             drainResponses()
@@ -370,7 +388,7 @@ final class KeyStampHostService: @unchecked Sendable {
             KeyStampHostBridge.shared.disableInProcess()
         }
         KeyStampSeamNotify.observe(
-            SharedDefaultsConstants.keyStampRequestNotificationName, owner: self
+            SharedDefaultsConstants.keyStampRequestNotificationName, owner: self, queue: pollQueue
         ) { [weak self] in
             self?.drain()
         }
