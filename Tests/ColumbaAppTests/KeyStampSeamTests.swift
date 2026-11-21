@@ -51,6 +51,72 @@ final class KeyStampSeamTests: XCTestCase {
         XCTAssertEqual(answer.status, -2)
     }
 
+    func testCancelReportsTheRoundsTheHostRan() throws {
+        // RNS cancels link stamps at its 15s deadline; the attempt count is the
+        // only measurement of how fast that run was, so progress frames must
+        // survive cancellation.
+        let id = bridge.start(material: material, target: Data(repeating: 0, count: 32))
+        XCTAssertNotEqual(id, 0)
+        defer { bridge.release(id) }
+        Thread.sleep(forTimeInterval: 0.6)
+        XCTAssertTrue(bridge.cancel(id))
+        var out = [Int8](repeating: 0, count: 64)
+        var rounds: UInt64 = 0
+        let status = out.withUnsafeMutableBufferPointer { buffer in
+            bridge.poll(id, into: buffer.baseAddress!, capacity: 64, rounds: &rounds)
+        }
+        XCTAssertEqual(status, -2)
+        XCTAssertGreaterThan(rounds, 0)
+    }
+
+    func testSilentHostIsReportedAsStalled() throws {
+        // A suspended app accepts and then reports nothing; the NE must learn
+        // that before RNS's 15s deadline so it can search locally.
+        let stallRequest = requestName + "_stall"
+        let stallResponse = responseName + "_stall"
+        let stalling = KeyStampHostBridge(requestQueueName: stallRequest, responseQueueName: stallResponse)
+        let requests = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: stallRequest)
+        let responses = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: stallResponse)
+        let material = self.material
+        let target = self.easyTarget
+
+        var startResult: UInt64 = 0
+        let started = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            startResult = stalling.start(material: material, target: target)
+            started.signal()
+        }
+
+        // Acknowledge the request inside the accept window, then stay silent.
+        var requestID: UInt64 = 0
+        let requestDeadline = CFAbsoluteTimeGetCurrent() + 2
+        while requestID == 0 && CFAbsoluteTimeGetCurrent() < requestDeadline {
+            for frame in requests.readAllAndClear() {
+                guard let message = KeyStampSeamFrame.decoded(frame.data), message.kind == .start else { continue }
+                requestID = message.id
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        XCTAssertNotEqual(requestID, 0, "start frame never reached the seam")
+        let ack = KeyStampSeamFrame(kind: .accepted, id: requestID).encoded()!
+        XCTAssertTrue(responses.append(frame: ack, interfaceTag: FrameInterfaceTag.keyStamp.rawValue))
+        KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampResultNotificationName)
+        XCTAssertEqual(started.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(startResult, requestID)
+
+        var out = [Int8](repeating: 0, count: 64)
+        var rounds: UInt64 = 0
+        let deadline = CFAbsoluteTimeGetCurrent() + 5
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            let status = out.withUnsafeMutableBufferPointer { buffer in
+                stalling.poll(requestID, into: buffer.baseAddress!, capacity: 64, rounds: &rounds)
+            }
+            if status == -4 { return }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTFail("stalled host never reported -4")
+    }
+
     func testNoHostMeansStartReportsUnavailablePromptly() {
         // A second bridge whose queue nobody drains: `start` must give up inside
         // its accept window instead of blocking the page fetch.

@@ -121,7 +121,9 @@ enum StampGenerator {
     static func searchKeyPair(
         material: Data,
         target: StampTarget,
-        cancellation: StampCancellationState = StampCancellationState()
+        cancellation: StampCancellationState = StampCancellationState(),
+        workers requestedWorkers: Int? = nil,
+        progress: (@Sendable (Int, UInt64) -> Void)? = nil
     ) -> StampSearchResult {
         guard !cancellation.isCancelled else { return StampSearchResult(stamp: nil, rounds: 0) }
         if target.acceptsEveryDigest {
@@ -131,9 +133,12 @@ enum StampGenerator {
             return StampSearchResult(stamp: Data(Self.keyPairPayload(key)), rounds: 0)
         }
 
-        let workers = max(1, min(ProcessInfo.processInfo.activeProcessorCount, 4))
+        // Four is the extension's useful width: it is scheduled on efficiency
+        // cores and more workers only add contention. A host-process caller
+        // (the app) asks for every core instead.
+        let workers = requestedWorkers ?? max(1, min(ProcessInfo.processInfo.activeProcessorCount, 4))
         let result = StampResultBox()
-        DispatchQueue.concurrentPerform(iterations: workers) { _ in
+        let worker: @Sendable (Int) -> Void = { index in
             var combined = [UInt8](material)
             combined.append(contentsOf: [UInt8](repeating: 0, count: 32))
             var digest = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
@@ -154,9 +159,11 @@ enum StampGenerator {
                     return
                 }
                 rounds &+= 1
+                if rounds & 0xFFF == 0 { progress?(index, rounds) }
                 if rounds & 0x07 == 0, result.shouldStop(cancellation: cancellation) { return }
             }
         }
+        DispatchQueue.concurrentPerform(iterations: workers) { worker($0) }
         return result.get(cancellation: cancellation)
     }
 
@@ -173,19 +180,40 @@ enum StampGenerator {
 /// so the NE asks the app to search and only falls back to its own kernel when
 /// no host answers. `cancelled` is polled every eight attempts.
 public enum HostKeyStampSearch {
-    /// Returns the 64-byte payload (private seed then public key) and rounds, or
-    /// nil when the target is malformed, the search was cancelled, or no proof
-    /// was found.
+    /// The payload is the 64-byte proof (private seed then public key) or nil
+    /// when the search was cancelled, the target was malformed, or no proof was
+    /// found. `rounds` is reported even for a cancelled search: a link stamp
+    /// that runs into RNS's 15s `LINK_STAMP_TIMEOUT` is cancelled, and the
+    /// attempt count is the only measurement of the rate that ran it there.
     public static func run(
         material: Data,
         targetBytes: Data,
-        cancelled: @escaping @Sendable () -> Bool = { false }
-    ) -> (payload: Data, rounds: UInt64)? {
-        guard let target = StampTarget(bytes: [UInt8](targetBytes)) else { return nil }
+        workers: Int? = nil,
+        cancelled: @escaping @Sendable () -> Bool = { false },
+        progress: (@Sendable (UInt64) -> Void)? = nil
+    ) -> (payload: Data?, rounds: UInt64) {
+        guard let target = StampTarget(bytes: [UInt8](targetBytes)) else { return (nil, 0) }
         let state = StampCancellationState(predicate: cancelled)
-        let result = StampGenerator.searchKeyPair(material: material, target: target, cancellation: state)
-        guard let payload = result.stamp, !state.isCancelled else { return nil }
-        return (payload, result.rounds)
+        let count = max(1, workers ?? ProcessInfo.processInfo.activeProcessorCount)
+        // Workers report their own totals; the seam needs the sum, which is
+        // what a cancelled run's rate is computed from.
+        let perWorker = OSAllocatedUnfairLock(initialState: [UInt64](repeating: 0, count: count))
+        let result = StampGenerator.searchKeyPair(
+            material: material,
+            target: target,
+            cancellation: state,
+            workers: count,
+            progress: { index, rounds in
+                guard let progress else { return }
+                let total = perWorker.withLock { counts -> UInt64 in
+                    if index < counts.count { counts[index] = rounds }
+                    return counts.reduce(0, +)
+                }
+                progress(total)
+            }
+        )
+        guard !state.isCancelled else { return (nil, result.rounds) }
+        return (result.stamp, result.rounds)
     }
 }
 

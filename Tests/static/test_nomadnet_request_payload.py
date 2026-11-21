@@ -26,7 +26,9 @@ class NomadNetRequestPayloadTests(unittest.TestCase):
         function = next(
             node
             for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "fetch_nomadnet_page"
+            # The retry wrapper above this function needs module globals the
+            # harness does not stub, so exercise the single attempt body.
+            if isinstance(node, ast.FunctionDef) and node.name == "_fetch_nomadnet_page_once"
         )
 
         resolution = {"ready": initially_resolved}
@@ -120,7 +122,7 @@ class NomadNetRequestPayloadTests(unittest.TestCase):
             ),
             namespace,
         )
-        return namespace["fetch_nomadnet_page"], FakeLink, FakeTransport
+        return namespace["_fetch_nomadnet_page_once"], FakeLink, FakeTransport
 
     def test_link_request_receives_mapping_not_prepacked_bytes(self):
         fetch, fake_link, _ = self._load_fetch()

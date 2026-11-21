@@ -36,6 +36,9 @@ struct KeyStampSeamFrame: Codable {
         case accepted
         /// NE→app: stop the search with this id (the link was cancelled).
         case cancel
+        /// app→NE: attempts completed so far. Lets the NE measure a search that
+        /// RNS cancels at its 15s link deadline, and detect a suspended host.
+        case progress
         /// app→NE: terminal answer. `status` is the C-ABI poll value
         /// (64 = payload length, -2 = cancelled, -3 = failed).
         case result
@@ -145,6 +148,8 @@ final class KeyStampHostBridge: @unchecked Sendable {
     private struct JobState {
         var accepted = false
         var cancelled = false
+        var rounds: UInt64 = 0
+        var lastProgress: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
         var result: (status: Int32, payload: Data?, rounds: UInt64)?
     }
 
@@ -158,11 +163,20 @@ final class KeyStampHostBridge: @unchecked Sendable {
     /// covers the Darwin notification hop.
     static let acceptWindow: TimeInterval = 0.12
 
+    /// How long a host may report no progress before the NE stops waiting for
+    /// it. A suspended app freezes its search; a live one reports every 250ms.
+    static let stallWindow: TimeInterval = 1.5
+
     static let shared = KeyStampHostBridge()
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let requests: SharedFrameQueue
     private let responses: SharedFrameQueue
+    /// Random per-process id namespace. Job ids restart at 1 in every NE
+    /// process; without a prefix, answers left over from a previous process
+    /// (e.g. the 707k-round cancellation result of a stamp that hit the 15s
+    /// deadline) are mistaken for the new process's first job.
+    private let idPrefix: UInt64
 
     /// Queue names are parameters so a test can drive both seam ends over
     /// private files instead of competing with the live app/NE singletons.
@@ -172,6 +186,10 @@ final class KeyStampHostBridge: @unchecked Sendable {
     ) {
         requests = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: requestQueueName)
         responses = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: responseQueueName)
+        var generator = SystemRandomNumberGenerator()
+        idPrefix = UInt64.random(in: 1..<(1 << 32), using: &generator) << 32
+        // Answers for jobs this process never started are unusable.
+        _ = responses.readAllAndClear()
     }
 
     /// False in the app process (which is the host itself and must use its own
@@ -189,7 +207,7 @@ final class KeyStampHostBridge: @unchecked Sendable {
     func start(material: Data, target: Data) -> UInt64 {
         guard enabled.withLock({ $0 }), target.count == 32 else { return 0 }
         let id = state.withLock { state -> UInt64 in
-            let id = state.nextID
+            let id = idPrefix | (state.nextID & 0xFFFFFFFF)
             state.nextID = state.nextID == .max ? 1 : state.nextID + 1
             state.jobs[id] = JobState()
             return id
@@ -226,9 +244,14 @@ final class KeyStampHostBridge: @unchecked Sendable {
         drainResponses()
         let snapshot = state.withLock { state -> (Int32, UInt64, Data?)? in
             guard let job = state.jobs[id] else { return nil }
-            if job.cancelled { return (-2, job.result?.rounds ?? 0, nil) }
-            guard let result = job.result else { return (0, 0, nil) }
-            return (result.status, result.rounds, result.payload)
+            if job.cancelled { return (-2, job.rounds, nil) }
+            if let result = job.result { return (result.status, result.rounds, result.payload) }
+            if CFAbsoluteTimeGetCurrent() - job.lastProgress > Self.stallWindow {
+                // -4: the host stopped reporting. Python then runs the search
+                // in-process instead of waiting out the link's 15s deadline.
+                return (-4, job.rounds, nil)
+            }
+            return (0, job.rounds, nil)
         }
         guard let snapshot else { return -1 }
         rounds = snapshot.1
@@ -263,6 +286,7 @@ final class KeyStampHostBridge: @unchecked Sendable {
     }
 
     private func drainResponses() {
+        let now = CFAbsoluteTimeGetCurrent()
         for frame in responses.readAllAndClear() where frame.interfaceTag == FrameInterfaceTag.keyStamp.rawValue {
             guard let message = KeyStampSeamFrame.decoded(frame.data) else { continue }
             state.withLock { state in
@@ -270,13 +294,16 @@ final class KeyStampHostBridge: @unchecked Sendable {
                 switch message.kind {
                 case .accepted:
                     job.accepted = true
+                    job.lastProgress = now
+                case .progress:
+                    job.rounds = max(job.rounds, message.rounds ?? 0)
+                    job.lastProgress = now
                 case .result:
-                    guard !job.cancelled else { return }
-                    job.result = (
-                        message.status ?? -3,
-                        message.payload,
-                        message.rounds ?? 0
-                    )
+                    // Kept for a cancelled job too: the attempt count is the
+                    // only rate measurement for a stamp that hit the timeout.
+                    job.rounds = max(job.rounds, message.rounds ?? 0)
+                    job.result = (message.status ?? -3, message.payload, job.rounds)
+                    job.lastProgress = now
                 case .start, .cancel:
                     return
                 }
@@ -356,7 +383,7 @@ final class KeyStampHostService: @unchecked Sendable {
                 begin(id: message.id, material: material, target: target)
             case .cancel:
                 state.withLock { $0[message.id] }?.cancel()
-            case .accepted, .result:
+            case .accepted, .progress, .result:
                 continue
             }
         }
@@ -376,18 +403,38 @@ final class KeyStampHostService: @unchecked Sendable {
         KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampResultNotificationName)
 
         work.async { [self] in
+            // Four workers: the kernel scaled to the cores iOS actually gives
+            // this process (four efficiency cores on an iPhone 14: 58.8k
+            // rounds/s measured). Six measured worse (47k).
+            let throttle = OSAllocatedUnfairLock(initialState: CFAbsoluteTimeGetCurrent())
+            // Launch-time override so the worker count can be retuned on the
+            // phone without a rebuild (devicectl passes environment variables).
+            let workers = max(1, min(8, Int(ProcessInfo.processInfo.environment["COLUMBA_KEYSTAMP_WORKERS"] ?? "") ?? 4))
             let answer = HostKeyStampSearch.run(
                 material: material,
                 targetBytes: target,
-                cancelled: { flag.isCancelled }
+                workers: workers,
+                cancelled: { flag.isCancelled },
+                progress: { rounds in
+                    let now = CFAbsoluteTimeGetCurrent()
+                    let due = throttle.withLock { last -> Bool in
+                        guard now - last >= 0.25 else { return false }
+                        last = now
+                        return true
+                    }
+                    guard due,
+                          let frame = KeyStampSeamFrame(kind: .progress, id: id, rounds: rounds).encoded()
+                    else { return }
+                    responses.append(frame: frame, interfaceTag: FrameInterfaceTag.keyStamp.rawValue)
+                    KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampResultNotificationName)
+                }
             )
             let status: Int32
             let payload: Data?
-            var rounds: UInt64 = 0
-            if let answer {
-                status = Int32(answer.payload.count)
-                payload = answer.payload
-                rounds = answer.rounds
+            let rounds = answer.rounds
+            if let proof = answer.payload, !flag.isCancelled {
+                status = Int32(proof.count)
+                payload = proof
             } else {
                 status = flag.isCancelled ? -2 : -3
                 payload = nil

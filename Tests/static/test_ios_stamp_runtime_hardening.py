@@ -501,6 +501,13 @@ class KeyStampHostSeamContractTests(unittest.TestCase):
         self.assertIn('via = "app"', self.search)
         self.assertIn('via = "local"', self.search)
 
+    def test_stalled_host_falls_back_to_the_in_process_kernel(self) -> None:
+        # A suspended app accepts the job and then freezes; without -4 the NE
+        # would wait out the link's 15s deadline and fail the page.
+        self.assertIn("status == -4", self.search)
+        self.assertIn('via = "local-after-stall"', self.search)
+        self.assertIn("_diag_append", self.search)
+
     def test_poll_and_cancel_follow_the_selected_job(self) -> None:
         # Cancel and release must use the same side the job started on: polling
         # a remote id with the local registry reports failure instead of
@@ -509,6 +516,69 @@ class KeyStampHostSeamContractTests(unittest.TestCase):
         self.assertIn("cancel_fn(job_id)", self.search)
         self.assertIn("release_fn(job_id)", self.search)
         self.assertNotIn("_stamp_job_poll_fn(job_id", self.search)
+
+
+class NomadFetchStampRetryTests(unittest.TestCase):
+    """A page fetch retries only when our own key stamp missed the deadline.
+
+    The phone's key-stamp rate makes a 15s deadline miss a multi-percent coin
+    flip, and the caller sees it as a plain `link-failed`; a fresh attempt is
+    the difference between an occasional popup and none. A node that is simply
+    unreachable must not pay for that second attempt.
+    """
+
+    def setUp(self):
+        self.bridge = load_bridge()
+        self.bridge._state["started"] = True
+        self.calls = []
+
+    def install(self, statuses, note_failure=True):
+        def fake(dest_hash_hex, path, timeout, form_fields):
+            self.calls.append(path)
+            if note_failure and statuses[len(self.calls) - 1] == "link-failed":
+                self.bridge._state["key_stamp_failures"] += 1
+            status = statuses[len(self.calls) - 1]
+            return {"ok": status == "ok", "status": status, "data": b"page", "content_type": ""}
+
+        self.bridge._fetch_nomadnet_page_once = fake
+
+    def fetch(self):
+        return self.bridge.fetch_nomadnet_page("aa" * 16, "/page/index.mu")
+
+    def test_retries_once_after_our_stamp_miss(self):
+        self.install(["link-failed", "ok"])
+        result = self.fetch()
+        self.assertEqual(2, len(self.calls))
+        self.assertEqual("ok", result["status"])
+        self.assertEqual(b"page", result["data"])
+
+    def test_gives_up_after_one_retry(self):
+        self.install(["link-failed", "link-failed"])
+        result = self.fetch()
+        self.assertEqual(2, len(self.calls))
+        self.assertEqual("link-failed", result["status"])
+
+    def test_foreign_link_failure_is_not_retried(self):
+        self.install(["link-failed", "ok"], note_failure=False)
+        result = self.fetch()
+        self.assertEqual(1, len(self.calls))
+        self.assertEqual("link-failed", result["status"])
+
+    def test_other_failures_are_not_retried(self):
+        for status in ("no-path", "request-failed", "timeout"):
+            with self.subTest(status=status):
+                self.calls.clear()
+                self.install([status, "ok"])
+                result = self.fetch()
+                self.assertEqual(1, len(self.calls))
+                self.assertEqual(status, result["status"])
+
+    def test_not_started_skips_the_attempt(self):
+        self.install(["ok"])
+        self.bridge._state["started"] = False
+        result = self.fetch()
+        self.assertEqual([], self.calls)
+        self.assertEqual("not-started", result["status"])
 
 
 if __name__ == "__main__":
