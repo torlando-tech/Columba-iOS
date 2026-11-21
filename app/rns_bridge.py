@@ -221,8 +221,10 @@ def _native_key_search(material, target, stop_check):
 
     payload = bytes(material)
     target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
+    started = time.time()
     job_id = int(_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
     if job_id == 0:
+        _diag_append("[STAMP-KEY] start rejected")
         return None, 0
 
     try:
@@ -238,8 +240,15 @@ def _native_key_search(material, target, stop_check):
                     _stamp_job_cancel_fn(job_id)
                     return None, rounds.value
                 raw = output.raw[:status]
+                _diag_append(
+                    f"[STAMP-KEY] rounds={rounds.value} ms={int((time.time() - started) * 1000)} pid={os.getpid()}"
+                )
                 return ((raw[:32], raw[32:]), rounds.value)
             if status < 0:
+                _diag_append(
+                    f"[STAMP-KEY] failed status={status} rounds={rounds.value} "
+                    f"ms={int((time.time() - started) * 1000)} pid={os.getpid()}"
+                )
                 return None, rounds.value
             if status != 0:
                 RNS.log(
@@ -277,6 +286,16 @@ def _install_native_stamp_search() -> bool:
             "native key stamp search: unavailable; key stamps stay on the Python loop",
             RNS.LOG_WARNING,
         )
+    # RNS.log at this level never reaches diag.log, and which hook wins is the
+    # one fact needed to attribute slow link stamps, so record it there too.
+    _diag_append(
+        "[STAMP-HOOK] hash={} key={} cpus={} pid={}".format(
+            "native" if RNS.Stamps.native_stamp_search is not None else "python",
+            "native" if getattr(RNS.Stamps, "native_key_search", None) is not None else "python",
+            os.cpu_count(),
+            os.getpid(),
+        )
+    )
     return True
 
 

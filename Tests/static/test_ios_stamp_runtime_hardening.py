@@ -446,5 +446,28 @@ class NativeKeyStampBridgeTests(unittest.TestCase):
         self.assertEqual({}, self.jobs.jobs)
 
 
+class StampHookAttributionTests(unittest.TestCase):
+    """Which search hook wins must reach diag.log, not only RNS.log.
+
+    A cost-18 link stamp measured 39.4k rounds/s on device (about one core at
+    32.8k/core) and RNS's debug line never reaches diag.log, so the page-fetch
+    runtime had no way to show whether the native hook was even registered.
+    """
+
+    def test_install_records_which_hook_wins(self) -> None:
+        bridge = BRIDGE.read_text()
+        install = bridge.split("def _install_native_stamp_search", 1)[1]
+        install = install.split("def _uninstall_native_stamp_search", 1)[0]
+        self.assertIn('_diag_append(', install)
+        self.assertIn("[STAMP-HOOK]", install)
+
+    def test_key_search_records_rounds_and_duration(self) -> None:
+        bridge = BRIDGE.read_text()
+        search = bridge.split("def _native_key_search", 1)[1]
+        search = search.split("def _install_native_stamp_search", 1)[0]
+        self.assertIn("[STAMP-KEY]", search)
+        self.assertIn("rounds={rounds.value}", search)
+
+
 if __name__ == "__main__":
     unittest.main()
