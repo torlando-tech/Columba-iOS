@@ -166,12 +166,40 @@ enum StampGenerator {
     }
 }
 
+/// Blocking key-stamp search for the App-Group host seam.
+///
+/// A Network Extension is scheduled on efficiency cores (measured: 39.4k
+/// rounds/s on the same phone that runs 32.8k rounds/s per core in the app),
+/// so the NE asks the app to search and only falls back to its own kernel when
+/// no host answers. `cancelled` is polled every eight attempts.
+public enum HostKeyStampSearch {
+    /// Returns the 64-byte payload (private seed then public key) and rounds, or
+    /// nil when the target is malformed, the search was cancelled, or no proof
+    /// was found.
+    public static func run(
+        material: Data,
+        targetBytes: Data,
+        cancelled: @escaping @Sendable () -> Bool = { false }
+    ) -> (payload: Data, rounds: UInt64)? {
+        guard let target = StampTarget(bytes: [UInt8](targetBytes)) else { return nil }
+        let state = StampCancellationState(predicate: cancelled)
+        let result = StampGenerator.searchKeyPair(material: material, target: target, cancellation: state)
+        guard let payload = result.stamp, !state.isCancelled else { return nil }
+        return (payload, result.rounds)
+    }
+}
+
 /// Python requests cancellation through a signed entry point, never a callback.
 final class StampCancellationState: @unchecked Sendable {
     private let cancelled = OSAllocatedUnfairLock(initialState: false)
+    private let predicate: (@Sendable () -> Bool)?
+
+    init(predicate: (@Sendable () -> Bool)? = nil) {
+        self.predicate = predicate
+    }
 
     var isCancelled: Bool {
-        cancelled.withLock { $0 }
+        cancelled.withLock { $0 } || (predicate?() ?? false)
     }
 
     func cancel() {

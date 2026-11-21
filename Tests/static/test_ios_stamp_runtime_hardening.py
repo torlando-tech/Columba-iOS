@@ -469,5 +469,47 @@ class StampHookAttributionTests(unittest.TestCase):
         self.assertIn("rounds={rounds.value}", search)
 
 
+class KeyStampHostSeamContractTests(unittest.TestCase):
+    """Page-link key stamps must run where the cores are.
+
+    Measured on device: the NE's native kernel does 39.4k rounds/s (one
+    efficiency core's worth) while the app runs 32.8k rounds/s per core, so a
+    cost-18 link stamp cost ~7s inside the NE. `_native_key_search` asks the app
+    over the App-Group seam and only falls back to the in-process kernel when no
+    host answers.
+    """
+
+    def setUp(self) -> None:
+        self.source = BRIDGE.read_text()
+        self.search = self.source.split("def _native_key_search", 1)[1].split(
+            "def _install_native_stamp_search", 1
+        )[0]
+
+    def test_host_symbols_are_bound(self) -> None:
+        for symbol in (
+            "columba_host_key_stamp_job_start",
+            "columba_host_key_stamp_job_poll",
+            "columba_host_key_stamp_job_cancel",
+            "columba_host_key_stamp_job_release",
+        ):
+            self.assertIn('"%s"' % symbol, self.source)
+
+    def test_host_start_precedes_the_local_kernel(self) -> None:
+        host = self.search.index("_host_key_stamp_job_start_fn(")
+        local = self.search.index("_key_stamp_job_start_fn(payload")
+        self.assertLess(host, local)
+        self.assertIn('via = "app"', self.search)
+        self.assertIn('via = "local"', self.search)
+
+    def test_poll_and_cancel_follow_the_selected_job(self) -> None:
+        # Cancel and release must use the same side the job started on: polling
+        # a remote id with the local registry reports failure instead of
+        # waiting for the app.
+        self.assertIn("poll_fn(job_id", self.search)
+        self.assertIn("cancel_fn(job_id)", self.search)
+        self.assertIn("release_fn(job_id)", self.search)
+        self.assertNotIn("_stamp_job_poll_fn(job_id", self.search)
+
+
 if __name__ == "__main__":
     unittest.main()

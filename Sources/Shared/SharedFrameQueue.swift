@@ -112,6 +112,15 @@ public enum SharedDefaultsConstants {
     /// Darwin notification posted by the NE when `propagationSyncStateKey` updates. The
     /// app observes it to refresh `PropagationNodeManager.syncState` (the sync sheet).
     public static let propagationSyncStateChangedNotificationName = "network.columba.propagationSyncStateChanged"
+
+    /// Darwin notification posted by the NE when a key-stamp job request lands on
+    /// `keyStampN2A`. The app's `KeyStampHostService` observes it, runs the search
+    /// on its own (performance-core) scheduler, and answers on `keyStampA2N`.
+    public static let keyStampRequestNotificationName = "network.columba.keyStamp.n2a"
+
+    /// Darwin notification posted by the app when a key-stamp answer lands on
+    /// `keyStampA2N`. The NE's `KeyStampHostBridge` observes it and serves polls.
+    public static let keyStampResultNotificationName = "network.columba.keyStamp.a2n"
 }
 
 /// Interface tag identifying which network interface a frame is associated with.
@@ -130,6 +139,9 @@ public enum FrameInterfaceTag: UInt8 {
     /// A codec'd `BLEDriverSeamMessage` on the Model B BLE driver seam (the
     /// dedicated `bleSeam*` queues carry only these, so the tag is uniform).
     case bleControl = 0x20
+    /// A JSON `KeyStampSeamFrame` on the `keyStamp*` queues. Requests, cancels,
+    /// accepts and results share one tag; the frame's `kind` field separates them.
+    case keyStamp = 0x30
 }
 
 /// File names for the two directional App-Group frame queues.
@@ -150,6 +162,16 @@ public enum SharedFrameQueueName {
     public static let bleSeamN2A = "ble_seam_n2a"
     /// app→NE: driver stream events + `receivedFragment` + reqId results (NE drains).
     public static let bleSeamA2N = "ble_seam_a2n"
+
+    // Key-stamp host seam. The NE's process is scheduled on efficiency cores
+    // (measured 39.4k rounds/s versus 32.8k per core in the app), so a link's
+    // cost-18 key stamp takes ~7s inside the NE. The NE's Python asks the app
+    // for the keypair over these queues and only runs the search itself when no
+    // host answers within the accept window.
+    /// NE→app: key-stamp job starts and cancels (app drains).
+    public static let keyStampN2A = "key_stamp_n2a"
+    /// app→NE: job accepted acks and results (NE drains).
+    public static let keyStampA2N = "key_stamp_a2n"
 }
 
 /// A frame read from the shared queue, tagged with its source interface.

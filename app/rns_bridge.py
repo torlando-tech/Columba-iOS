@@ -143,6 +143,30 @@ _key_stamp_job_start_fn = _bind_stamp_fn(
     ctypes.c_uint64,
 )
 
+# NE-only offload: a link's key stamp inside the Network Extension measured
+# 39.4k rounds/s (about one efficiency core) against 32.8k rounds/s per
+# performance core in the app, so a cost-18 stamp took ~7s and page fetches ran
+# into the 20s link timeout. The app answers over the App-Group seam; zero from
+# `_host_key_stamp_job_start_fn` means no host is listening (the app is not
+# running, or this process is the app itself) and the in-process kernel runs.
+_host_key_stamp_job_start_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_start",
+    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32],
+    ctypes.c_uint64,
+)
+_host_key_stamp_job_poll_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_poll",
+    [ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_uint64)],
+)
+_host_key_stamp_job_cancel_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_cancel",
+    [ctypes.c_uint64],
+)
+_host_key_stamp_job_release_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_release",
+    [ctypes.c_uint64],
+)
+
 
 def _native_stamp_jobs_available() -> bool:
     return all(
@@ -211,6 +235,18 @@ def _native_stamp_search(workblock, target, size, stop_check):
         _stamp_job_release_fn(job_id)
 
 
+def _host_key_stamp_jobs_available() -> bool:
+    return all(
+        fn is not None
+        for fn in (
+            _host_key_stamp_job_start_fn,
+            _host_key_stamp_job_poll_fn,
+            _host_key_stamp_job_cancel_fn,
+            _host_key_stamp_job_release_fn,
+        )
+    )
+
+
 def _native_key_search(material, target, stop_check):
     """Search RNS's exact key-stamp target without moving job state into Python."""
     if len(material) > 0x7FFFFFFF:
@@ -222,7 +258,21 @@ def _native_key_search(material, target, stop_check):
     payload = bytes(material)
     target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
     started = time.time()
-    job_id = int(_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
+    via = "local"
+    job_id = 0
+    if _host_key_stamp_jobs_available():
+        job_id = int(_host_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
+        if job_id:
+            via = "app"
+    if job_id:
+        poll_fn = _host_key_stamp_job_poll_fn
+        cancel_fn = _host_key_stamp_job_cancel_fn
+        release_fn = _host_key_stamp_job_release_fn
+    else:
+        poll_fn = _stamp_job_poll_fn
+        cancel_fn = _stamp_job_cancel_fn
+        release_fn = _stamp_job_release_fn
+        job_id = int(_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
     if job_id == 0:
         _diag_append("[STAMP-KEY] start rejected")
         return None, 0
@@ -232,22 +282,23 @@ def _native_key_search(material, target, stop_check):
         rounds = ctypes.c_uint64()
         while True:
             if _runtime_teardown_requested.is_set() or stop_check():
-                _stamp_job_cancel_fn(job_id)
+                cancel_fn(job_id)
 
-            status = int(_stamp_job_poll_fn(job_id, output, 64, ctypes.byref(rounds)))
+            status = int(poll_fn(job_id, output, 64, ctypes.byref(rounds)))
             if status == 64:
                 if _runtime_teardown_requested.is_set() or stop_check():
-                    _stamp_job_cancel_fn(job_id)
+                    cancel_fn(job_id)
                     return None, rounds.value
                 raw = output.raw[:status]
                 _diag_append(
-                    f"[STAMP-KEY] rounds={rounds.value} ms={int((time.time() - started) * 1000)} pid={os.getpid()}"
+                    f"[STAMP-KEY] rounds={rounds.value} ms={int((time.time() - started) * 1000)} "
+                    f"via={via} pid={os.getpid()}"
                 )
                 return ((raw[:32], raw[32:]), rounds.value)
             if status < 0:
                 _diag_append(
                     f"[STAMP-KEY] failed status={status} rounds={rounds.value} "
-                    f"ms={int((time.time() - started) * 1000)} pid={os.getpid()}"
+                    f"ms={int((time.time() - started) * 1000)} via={via} pid={os.getpid()}"
                 )
                 return None, rounds.value
             if status != 0:
@@ -258,7 +309,7 @@ def _native_key_search(material, target, stop_check):
                 return None, rounds.value
             time.sleep(0.01)
     finally:
-        _stamp_job_release_fn(job_id)
+        release_fn(job_id)
 
 
 def _install_native_stamp_search() -> bool:

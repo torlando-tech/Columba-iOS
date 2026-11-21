@@ -22,6 +22,8 @@ UI / AppServices / Messaging / NodeNetworkTransport
 
 `Sources/RNSHost` compiles into both hosts. The shared engine imports Foundation/Security and exposes serialized data; it does not import RNSAPI. Each process bundles CPython and its resources, but only the selected host initializes RNS. Native BLE and RNode bindings execute inside that host; there is no app-owned BLE relay competing with the extension radio.
 
+Link key stamps are the one search the extension cannot run at speed: iOS schedules its threads on efficiency cores, and the native kernel measured 39.4k rounds/s there against 32.8k rounds/s per performance core in the app, so a cost-18 page-link stamp cost about 7s and pushed page fetches into the 20s link timeout. `KeyStampHostSeam` (`Sources/RNSHost`) forwards the search from the NE's Python over an App-Group queue pair, and the app's `KeyStampHostService` answers on its own user-initiated queue. A request that no host accepts inside 120ms (app not running, or the caller is the app itself, whose kernel already runs on the right cores) falls back to the in-process kernel, so a stamp never blocks on the seam. On device the seam measured 59.7k rounds/s against 39.4k in-process, cutting an instrumented page fetch from 14-15s to 3-6s.
+
 ## Ownership and lifecycle
 
 Background is the default. Onboarding can explicitly choose foreground without installing a VPN profile. Settings saves a choice for the next fresh application launch; it does not move live interfaces between interpreters. This preserves the existing AutoInterface restriction: same-process RNS restart may require relaunch because multicast sockets are not fully released.
