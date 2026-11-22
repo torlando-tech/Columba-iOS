@@ -50,7 +50,7 @@ The no-argument API still only fetches or reuses both caches.
 | Python-Apple-support    | github.com/beeware/Python-Apple-support                             | 3.13-b13             |
 | CPython                 | bundled                                                             | 3.13.11              |
 | OpenSSL                 | bundled                                                             | 3.0.18-1             |
-| rns                     | torlando-tech/Reticulum, immutable commit in fetch-wheels.sh          | 1.6.0                |
+| rns                     | torlando-tech/Reticulum, immutable commit in fetch-wheels.sh          | 1.6.1                |
 | lxmf                    | torlando-tech/LXMF, immutable commit in fetch-wheels.sh               | 1.3.0                |
 | cryptography (iOS)      | BeeWare anaconda channel (pypi.anaconda.org/beeware/simple)         | 47.0.0 (pinned)      |
 | cffi (iOS)              | BeeWare anaconda channel                                            | 2.0.0 (pinned)       |
