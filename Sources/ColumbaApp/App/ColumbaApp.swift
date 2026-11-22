@@ -547,6 +547,14 @@ final class ColumbaApplicationRuntime {
     func initializeServices() async {
         DiagLog.log("[STARTUP] initializeServices() ENTERED")
 
+        // Answer the NE's link key-stamp jobs. iOS schedules the extension's
+        // threads on efficiency cores (measured 39.4k rounds/s against 32.8k
+        // per core here), so a cost-18 page-link stamp cost ~7s in the NE and
+        // drove page fetches into the 20s link timeout. Answering also disables
+        // the in-app end of the seam, so this process's Python node keeps
+        // stamping in-process.
+        KeyStampHostService.shared.start()
+
         // Surface the Network Extension's App-Group diagnostic log into Documents
         // so it's retrievable via `devicectl ... copy from` alongside diag.log.
         // The NE (sandboxed) writes ext-diag.log to the shared container; the host

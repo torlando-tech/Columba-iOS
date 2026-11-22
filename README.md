@@ -65,7 +65,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for target ownership and dependency bound
 
 The embedded dependencies are immutable commits from the `torlando-tech` forks:
 
-- [Reticulum 1.6.0, `0816be02b5f43b643b980e8262c7c7f2a4fc3d56`](https://github.com/torlando-tech/Reticulum/commit/0816be02b5f43b643b980e8262c7c7f2a4fc3d56) is based directly on upstream 1.6.0 and retains only the native hash-search hook, AutoInterface lifecycle fixes and receive-assembly allocation reductions. Ratchet-file handling, TCP/backbone connection handling and PHY telemetry use unchanged upstream code.
+- [Reticulum 1.6.0, `0508cf127114f741b95b928518bcb536162b67bc`](https://github.com/torlando-tech/Reticulum/commit/0508cf127114f741b95b928518bcb536162b67bc) is based directly on upstream 1.6.0 and retains only the native hash-search hook, the native key-stamp search hook, AutoInterface lifecycle fixes, receive-assembly allocation reductions and iOS stamp dispatch. Ratchet-file handling, TCP/backbone connection handling and PHY telemetry use unchanged upstream code.
 - [LXMF 1.3.0, `09cd6be4324345ed07964e9f6e5372308f6d6883`](https://github.com/torlando-tech/LXMF/commit/09cd6be4324345ed07964e9f6e5372308f6d6883) retains opportunistic receiving metadata and mutex-serialized SQLite compatibility. `LXStamper` is the unchanged upstream wrapper around `RNS.Stamps`; there is no LXMF native-generator registration.
 
 Reticulum owns workblock expansion, fractional-cost quantization, proof validation
@@ -75,7 +75,15 @@ startup. Swift only searches for candidate bytes satisfying
 `SHA-256(workblock || stamp) <= target`, returning the proof and actual failed
 attempt count. The digest is always 32 bytes; candidate sizes are not restricted
 to LXMF's 32-byte proofs. There is no integer-cost compatibility path or cost-32
-ceiling. Reticulum's X25519 stamped-key search remains upstream.
+ceiling. Reticulum's X25519 stamped-key search remains upstream, but on iOS it
+now runs in-process: `is_ios()` sends both hash and stamped-key generation to
+`job_simple` instead of the pooled jobs, which need `_multiprocessing` and
+therefore cannot start in the embedded interpreter. Stamped-key generation also
+consults a native multi-core key search (`columba_key_stamp_job_start`): each
+attempt is a CryptoKit X25519 keypair hashed with CommonCrypto, and the 64-byte
+proof (private seed, then public key) is re-validated by RNS against the exact
+inclusive target. This keeps link stamps viable at the 18.0 that page servers
+may configure, where the single-core Python loop exceeds `LINK_STAMP_TIMEOUT`.
 
 The bridge passes the full 256-bit target to Swift, clamping Reticulum's
 cost-zero target of `2**256` to `2**256-1`, which accepts the same SHA-256 digests.

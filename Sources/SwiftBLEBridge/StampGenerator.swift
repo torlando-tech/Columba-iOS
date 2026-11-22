@@ -3,6 +3,7 @@
 
 import Foundation
 import CommonCrypto
+import CryptoKit
 import os
 
 /// An inclusive unsigned 256-bit threshold in network byte order.
@@ -113,14 +114,120 @@ enum StampGenerator {
         }
         return result.get(cancellation: cancellation)
     }
+
+    /// Key-stamp mode: the candidate is an X25519 keypair, not arbitrary bytes,
+    /// so no midstate is possible (the material is 32 bytes; the scalar
+    /// multiplication dominates the two-compression hash). Only cores scale.
+    static func searchKeyPair(
+        material: Data,
+        target: StampTarget,
+        cancellation: StampCancellationState = StampCancellationState(),
+        workers requestedWorkers: Int? = nil,
+        progress: (@Sendable (Int, UInt64) -> Void)? = nil
+    ) -> StampSearchResult {
+        guard !cancellation.isCancelled else { return StampSearchResult(stamp: nil, rounds: 0) }
+        if target.acceptsEveryDigest {
+            // A zero payload is not a keypair: the caller re-validates and
+            // Link.py compares the public key, so return one real key.
+            let key = Curve25519.KeyAgreement.PrivateKey()
+            return StampSearchResult(stamp: Data(Self.keyPairPayload(key)), rounds: 0)
+        }
+
+        // Four is the extension's useful width: it is scheduled on efficiency
+        // cores and more workers only add contention. A host-process caller
+        // (the app) asks for every core instead.
+        let workers = requestedWorkers ?? max(1, min(ProcessInfo.processInfo.activeProcessorCount, 4))
+        let result = StampResultBox()
+        let worker: @Sendable (Int) -> Void = { index in
+            var combined = [UInt8](material)
+            combined.append(contentsOf: [UInt8](repeating: 0, count: 32))
+            var digest = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+            var rounds: UInt64 = 0
+            var found: [UInt8]?
+            defer { result.finishWorker(stamp: found, rounds: rounds, cancellation: cancellation) }
+            if result.shouldStop(cancellation: cancellation) { return }
+
+            while true {
+                let key = Curve25519.KeyAgreement.PrivateKey()
+                let pub = key.publicKey.rawRepresentation
+                combined.replaceSubrange((combined.count - 32)..., with: pub)
+                combined.withUnsafeBytes { raw in
+                    _ = CC_SHA256(raw.baseAddress, CC_LONG(combined.count), &digest)
+                }
+                if target.accepts(digest) {
+                    found = Self.keyPairPayload(key)
+                    return
+                }
+                rounds &+= 1
+                if rounds & 0xFFF == 0 { progress?(index, rounds) }
+                if rounds & 0x07 == 0, result.shouldStop(cancellation: cancellation) { return }
+            }
+        }
+        DispatchQueue.concurrentPerform(iterations: workers) { worker($0) }
+        return result.get(cancellation: cancellation)
+    }
+
+    /// 64-byte wire payload: private seed then public key, both 32 bytes.
+    private static func keyPairPayload(_ key: Curve25519.KeyAgreement.PrivateKey) -> [UInt8] {
+        [UInt8](key.rawRepresentation) + [UInt8](key.publicKey.rawRepresentation)
+    }
+}
+
+/// Blocking key-stamp search for the App-Group host seam.
+///
+/// A Network Extension is scheduled on efficiency cores (measured: 39.4k
+/// rounds/s on the same phone that runs 32.8k rounds/s per core in the app),
+/// so the NE asks the app to search and only falls back to its own kernel when
+/// no host answers. `cancelled` is polled every eight attempts.
+public enum HostKeyStampSearch {
+    /// The payload is the 64-byte proof (private seed then public key) or nil
+    /// when the search was cancelled, the target was malformed, or no proof was
+    /// found. `rounds` is reported even for a cancelled search: a link stamp
+    /// that runs into RNS's 15s `LINK_STAMP_TIMEOUT` is cancelled, and the
+    /// attempt count is the only measurement of the rate that ran it there.
+    public static func run(
+        material: Data,
+        targetBytes: Data,
+        workers: Int? = nil,
+        cancelled: @escaping @Sendable () -> Bool = { false },
+        progress: (@Sendable (UInt64) -> Void)? = nil
+    ) -> (payload: Data?, rounds: UInt64) {
+        guard let target = StampTarget(bytes: [UInt8](targetBytes)) else { return (nil, 0) }
+        let state = StampCancellationState(predicate: cancelled)
+        let count = max(1, workers ?? ProcessInfo.processInfo.activeProcessorCount)
+        // Workers report their own totals; the seam needs the sum, which is
+        // what a cancelled run's rate is computed from.
+        let perWorker = OSAllocatedUnfairLock(initialState: [UInt64](repeating: 0, count: count))
+        let result = StampGenerator.searchKeyPair(
+            material: material,
+            target: target,
+            cancellation: state,
+            workers: count,
+            progress: { index, rounds in
+                guard let progress else { return }
+                let total = perWorker.withLock { counts -> UInt64 in
+                    if index < counts.count { counts[index] = rounds }
+                    return counts.reduce(0, +)
+                }
+                progress(total)
+            }
+        )
+        guard !state.isCancelled else { return (nil, result.rounds) }
+        return (result.stamp, result.rounds)
+    }
 }
 
 /// Python requests cancellation through a signed entry point, never a callback.
 final class StampCancellationState: @unchecked Sendable {
     private let cancelled = OSAllocatedUnfairLock(initialState: false)
+    private let predicate: (@Sendable () -> Bool)?
+
+    init(predicate: (@Sendable () -> Bool)? = nil) {
+        self.predicate = predicate
+    }
 
     var isCancelled: Bool {
-        cancelled.withLock { $0 }
+        cancelled.withLock { $0 } || (predicate?() ?? false)
     }
 
     func cancel() {
@@ -172,21 +279,25 @@ final class NativeStampJob: @unchecked Sendable {
 
     private let state = OSAllocatedUnfairLock(initialState: JobState())
     private let cancellation = StampCancellationState()
-    private let workblock: Data
-    private let target: StampTarget
-    private let size: Int
+    private let search: @Sendable (StampCancellationState) -> StampSearchResult
 
     init(workblock: Data, target: StampTarget, size: Int) {
-        self.workblock = workblock
-        self.target = target
-        self.size = size
+        search = { cancellation in
+            StampGenerator.search(
+                workblock: workblock, target: target, size: size, cancellation: cancellation
+            )
+        }
+    }
+
+    init(material: Data, target: StampTarget) {
+        search = { cancellation in
+            StampGenerator.searchKeyPair(material: material, target: target, cancellation: cancellation)
+        }
     }
 
     func start() {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let result = StampGenerator.search(
-                workblock: workblock, target: target, size: size, cancellation: cancellation
-            )
+            let result = search(cancellation)
             state.withLock {
                 $0.rounds = result.rounds
                 if cancellation.isCancelled {
@@ -247,7 +358,14 @@ enum NativeStampJobRegistry {
 
     static func start(workblock: Data, target: StampTarget, size: Int) -> UInt64 {
         guard size > 0, size <= Int32.max else { return 0 }
-        let job = NativeStampJob(workblock: workblock, target: target, size: size)
+        return insert(NativeStampJob(workblock: workblock, target: target, size: size))
+    }
+
+    static func startKeyPair(material: Data, target: StampTarget) -> UInt64 {
+        insert(NativeStampJob(material: material, target: target))
+    }
+
+    private static func insert(_ job: NativeStampJob) -> UInt64 {
         let jobID = state.withLock { registry -> UInt64 in
             var candidate = registry.nextID
             repeat {
@@ -316,6 +434,23 @@ public func columba_stamp_job_start(
     guard let threshold = StampTarget(bytes: bytes) else { return 0 }
     let data = Data(bytes: workblock, count: Int(workblockLen))
     return NativeStampJobRegistry.start(workblock: data, target: threshold, size: Int(size))
+}
+
+/// Start a key-stamp search. Material is the stamp material, the target is the
+/// same inclusive 32-byte threshold, and the 64-byte result is private seed
+/// followed by public key. Zero means invalid arguments.
+@_cdecl("columba_key_stamp_job_start")
+public func columba_key_stamp_job_start(
+    _ material: UnsafePointer<CChar>?,
+    _ materialLen: Int32,
+    _ target: UnsafePointer<CChar>?,
+    _ targetLen: Int32
+) -> UInt64 {
+    guard let material, materialLen >= 0, let target, targetLen == 32 else { return 0 }
+    let bytes = UnsafeRawBufferPointer(start: target, count: 32)
+    guard let threshold = StampTarget(bytes: bytes) else { return 0 }
+    let data = Data(bytes: material, count: Int(materialLen))
+    return NativeStampJobRegistry.startKeyPair(material: data, target: threshold)
 }
 
 /// Returns 0 while running, the copied proof length on success, -2 cancelled,

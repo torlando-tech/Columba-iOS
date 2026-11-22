@@ -12,6 +12,9 @@ import types
 import unittest
 from unittest import mock
 
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "app" / "rns_bridge.py"
@@ -34,7 +37,8 @@ def load_bridge():
         return True
 
     rns.Stamps = types.SimpleNamespace(
-        native_stamp_search=None, active_jobs=active_jobs, cancel_work=cancel_work,
+        native_stamp_search=None, native_key_search=None, active_jobs=active_jobs,
+        cancel_work=cancel_work,
     )
     rns.Transport = types.SimpleNamespace(
         destinations=[], interfaces=[], path_table={}, destination_table={},
@@ -351,6 +355,230 @@ class NativeStampBridgeTests(unittest.TestCase):
                 self.bridge.reset_identity("/tmp/nonexistent-columba-test-identity")
         self.assertEqual(0, self.bridge._runtime_teardown_count)
         self.assertFalse(self.bridge._runtime_teardown_requested.is_set())
+
+
+class NativeKeyJobFixture(NativeJobFixture):
+    """Key-stamp variant: real X25519 keypairs behind the same signed-job poll."""
+
+    def start(self, material, length, target, target_length):
+        payload = ctypes.string_at(material, length)
+        target_bytes = ctypes.string_at(target, target_length)
+        self.starts.append((payload, target_bytes, 64))
+        if target_length != 32:
+            return 0
+        boundary = int.from_bytes(target_bytes, "big")
+        if boundary < (1 << 240):
+            return 0
+        for rounds in range(100_000):
+            private = X25519PrivateKey.generate()
+            public = private.public_key().public_bytes(
+                encoding=Encoding.Raw, format=PublicFormat.Raw
+            )
+            if int.from_bytes(hashlib.sha256(payload + public).digest(), "big") <= boundary:
+                job_id = len(self.starts)
+                self.jobs[job_id] = (
+                    private.private_bytes(
+                        encoding=Encoding.Raw,
+                        format=PrivateFormat.Raw,
+                        encryption_algorithm=NoEncryption(),
+                    ) + public,
+                    rounds,
+                )
+                if self.after_start is not None:
+                    self.after_start()
+                return job_id
+        raise AssertionError("fixture did not find an inexpensive keypair")
+
+
+class NativeKeyStampBridgeTests(unittest.TestCase):
+    def setUp(self):
+        self.bridge = load_bridge()
+        self.jobs = NativeKeyJobFixture()
+        self.bridge._key_stamp_job_start_fn = self.jobs.start
+        for suffix, function in (
+            ("poll", self.jobs.poll), ("cancel", self.jobs.cancel),
+            ("release", self.jobs.release),
+        ):
+            setattr(self.bridge, f"_stamp_job_{suffix}_fn", function)
+        self.bridge._stamp_jobs_cancel_all_fn = self.jobs.cancel_all
+        # The hash hook must stay installable: key search registers under an
+        # independent guard beside it.
+        self.bridge._stamp_job_start_fn = (
+            lambda workblock, length, target, target_length, size:
+            self.jobs.start(workblock, length, target, target_length)
+        )
+        self.assertTrue(self.bridge._install_native_stamp_search_unless_stopping())
+        self.search = self.bridge.RNS.Stamps.native_key_search
+
+    def test_registered_key_search_returns_real_derivable_keypair(self):
+        keypair, rounds = self.search(b"material", 1 << 248, lambda: False)
+        private, public = keypair
+        self.assertEqual(32, len(private))
+        self.assertEqual(32, len(public))
+        self.assertEqual(
+            X25519PrivateKey.from_private_bytes(private).public_key().public_bytes(
+                encoding=Encoding.Raw, format=PublicFormat.Raw
+            ),
+            public,
+        )
+        self.assertGreater(rounds, 0)
+        self.assertEqual([1], self.jobs.released)
+        self.assertEqual({}, self.jobs.jobs)
+
+    def test_key_stop_check_cancels_and_returns_none(self):
+        self.assertIsNone(self.search(b"material", 1 << 248, lambda: True)[0])
+        self.assertEqual([1], self.jobs.cancelled)
+        self.assertEqual([1], self.jobs.released)
+
+    def test_missing_key_symbol_keeps_hash_search_registered(self):
+        self.bridge._uninstall_native_stamp_search()
+        self.bridge._key_stamp_job_start_fn = None
+        self.assertTrue(self.bridge._install_native_stamp_search_unless_stopping())
+        self.assertIsNone(self.bridge.RNS.Stamps.native_key_search)
+        self.assertIsNotNone(self.bridge.RNS.Stamps.native_stamp_search)
+
+    def test_uninstall_clears_both_hooks_and_cancels_key_jobs(self):
+        self.search(b"material", 1 << 248, lambda: False)
+        self.bridge._uninstall_native_stamp_search()
+        self.assertIsNone(self.bridge.RNS.Stamps.native_key_search)
+        self.assertIsNone(self.bridge.RNS.Stamps.native_stamp_search)
+        self.assertEqual(1, self.jobs.cancel_all_calls)
+        self.assertEqual({}, self.jobs.jobs)
+
+
+class StampHookAttributionTests(unittest.TestCase):
+    """Which search hook wins must reach diag.log, not only RNS.log.
+
+    A cost-18 link stamp measured 39.4k rounds/s on device (about one core at
+    32.8k/core) and RNS's debug line never reaches diag.log, so the page-fetch
+    runtime had no way to show whether the native hook was even registered.
+    """
+
+    def test_install_records_which_hook_wins(self) -> None:
+        bridge = BRIDGE.read_text()
+        install = bridge.split("def _install_native_stamp_search", 1)[1]
+        install = install.split("def _uninstall_native_stamp_search", 1)[0]
+        self.assertIn('_diag_append(', install)
+        self.assertIn("[STAMP-HOOK]", install)
+
+    def test_key_search_records_rounds_and_duration(self) -> None:
+        bridge = BRIDGE.read_text()
+        search = bridge.split("def _native_key_search", 1)[1]
+        search = search.split("def _install_native_stamp_search", 1)[0]
+        self.assertIn("[STAMP-KEY]", search)
+        self.assertIn("rounds={rounds.value}", search)
+
+
+class KeyStampHostSeamContractTests(unittest.TestCase):
+    """Page-link key stamps must run where the cores are.
+
+    Measured on device: the NE's native kernel does 39.4k rounds/s (one
+    efficiency core's worth) while the app runs 32.8k rounds/s per core, so a
+    cost-18 link stamp cost ~7s inside the NE. `_native_key_search` asks the app
+    over the App-Group seam and only falls back to the in-process kernel when no
+    host answers.
+    """
+
+    def setUp(self) -> None:
+        self.source = BRIDGE.read_text()
+        self.search = self.source.split("def _native_key_search", 1)[1].split(
+            "def _install_native_stamp_search", 1
+        )[0]
+
+    def test_host_symbols_are_bound(self) -> None:
+        for symbol in (
+            "columba_host_key_stamp_job_start",
+            "columba_host_key_stamp_job_poll",
+            "columba_host_key_stamp_job_cancel",
+            "columba_host_key_stamp_job_release",
+        ):
+            self.assertIn('"%s"' % symbol, self.source)
+
+    def test_host_start_precedes_the_local_kernel(self) -> None:
+        host = self.search.index("_host_key_stamp_job_start_fn(")
+        local = self.search.index("_key_stamp_job_start_fn(payload")
+        self.assertLess(host, local)
+        self.assertIn('via = "app"', self.search)
+        self.assertIn('via = "local"', self.search)
+
+    def test_stalled_host_falls_back_to_the_in_process_kernel(self) -> None:
+        # A suspended app accepts the job and then freezes; without -4 the NE
+        # would wait out the link's 15s deadline and fail the page.
+        self.assertIn("status == -4", self.search)
+        self.assertIn('via = "local-after-stall"', self.search)
+        self.assertIn("_diag_append", self.search)
+
+    def test_poll_and_cancel_follow_the_selected_job(self) -> None:
+        # Cancel and release must use the same side the job started on: polling
+        # a remote id with the local registry reports failure instead of
+        # waiting for the app.
+        self.assertIn("poll_fn(job_id", self.search)
+        self.assertIn("cancel_fn(job_id)", self.search)
+        self.assertIn("release_fn(job_id)", self.search)
+        self.assertNotIn("_stamp_job_poll_fn(job_id", self.search)
+
+
+class NomadFetchStampRetryTests(unittest.TestCase):
+    """A page fetch retries only when our own key stamp missed the deadline.
+
+    The phone's key-stamp rate makes a 15s deadline miss a multi-percent coin
+    flip, and the caller sees it as a plain `link-failed`; a fresh attempt is
+    the difference between an occasional popup and none. A node that is simply
+    unreachable must not pay for that second attempt.
+    """
+
+    def setUp(self):
+        self.bridge = load_bridge()
+        self.bridge._state["started"] = True
+        self.calls = []
+
+    def install(self, statuses, note_failure=True):
+        def fake(dest_hash_hex, path, timeout, form_fields):
+            self.calls.append(path)
+            if note_failure and statuses[len(self.calls) - 1] == "link-failed":
+                self.bridge._state["key_stamp_failures"] += 1
+            status = statuses[len(self.calls) - 1]
+            return {"ok": status == "ok", "status": status, "data": b"page", "content_type": ""}
+
+        self.bridge._fetch_nomadnet_page_once = fake
+
+    def fetch(self):
+        return self.bridge.fetch_nomadnet_page("aa" * 16, "/page/index.mu")
+
+    def test_retries_once_after_our_stamp_miss(self):
+        self.install(["link-failed", "ok"])
+        result = self.fetch()
+        self.assertEqual(2, len(self.calls))
+        self.assertEqual("ok", result["status"])
+        self.assertEqual(b"page", result["data"])
+
+    def test_gives_up_after_one_retry(self):
+        self.install(["link-failed", "link-failed"])
+        result = self.fetch()
+        self.assertEqual(2, len(self.calls))
+        self.assertEqual("link-failed", result["status"])
+
+    def test_foreign_link_failure_is_not_retried(self):
+        self.install(["link-failed", "ok"], note_failure=False)
+        result = self.fetch()
+        self.assertEqual(1, len(self.calls))
+        self.assertEqual("link-failed", result["status"])
+
+    def test_other_failures_are_not_retried(self):
+        for status in ("no-path", "request-failed", "timeout"):
+            with self.subTest(status=status):
+                self.calls.clear()
+                self.install([status, "ok"])
+                result = self.fetch()
+                self.assertEqual(1, len(self.calls))
+                self.assertEqual(status, result["status"])
+
+    def test_not_started_skips_the_attempt(self):
+        self.install(["ok"])
+        self.bridge._state["started"] = False
+        result = self.fetch()
+        self.assertEqual([], self.calls)
+        self.assertEqual("not-started", result["status"])
 
 
 if __name__ == "__main__":

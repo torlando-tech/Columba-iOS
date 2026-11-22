@@ -67,8 +67,13 @@ PLATFORM_DEV="ios_13_0_arm64_iphoneos"
 # Otherwise the pinned GitHub commit is used — a local checkout is never picked
 # up implicitly.
 #
-# RNS 1.6.0 plus native hash search, AutoInterface lifecycle fixes and reduced receive copies.
-RETICULUM_REF="${RETICULUM_REF:-0816be02b5f43b643b980e8262c7c7f2a4fc3d56}"
+# RNS 1.6.0 plus native hash search, native key-stamp search, AutoInterface
+# lifecycle fixes, reduced receive copies and iOS stamp dispatch (is_ios routes
+# both hash and stamped-key generation to the single-process path; the pooled
+# jobs need _multiprocessing, which CPython does not build for iOS). The native
+# key-stamp hook keeps iOS link stamps viable at the cost-18 default of rngit
+# page servers, where the single-core Python loop exceeds LINK_STAMP_TIMEOUT.
+RETICULUM_REF="${RETICULUM_REF:-0508cf127114f741b95b928518bcb536162b67bc}"
 if [ -n "${RETICULUM_LOCAL:-}" ]; then
     echo "==> RETICULUM_LOCAL set — using local Reticulum checkout: $RETICULUM_LOCAL"
     RNS_SPEC="$RETICULUM_LOCAL"

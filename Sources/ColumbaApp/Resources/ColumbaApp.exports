@@ -29,6 +29,13 @@ _columba_rnode_session_write
 _columba_rnode_set_online
 _columba_rnode_state
 _columba_rnode_write
+_columba_key_stamp_job_start
+# Key-stamp host seam: the NE asks the app to run a page-link key stamp (its own
+# process is scheduled on efficiency cores) and polls this job ABI.
+_columba_host_key_stamp_job_cancel
+_columba_host_key_stamp_job_poll
+_columba_host_key_stamp_job_release
+_columba_host_key_stamp_job_start
 _columba_stamp_job_cancel
 _columba_stamp_job_poll
 _columba_stamp_job_release

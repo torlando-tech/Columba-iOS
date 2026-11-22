@@ -1,0 +1,526 @@
+//
+//  KeyStampHostSeam.swift
+//  Columba Shared
+//
+//  Key-stamp search offload from the Network Extension to the app.
+//
+//  A link's stamped key uses the exact-target SHA-256 search in
+//  `HostKeyStampSearch`, and on iOS the process that runs it decides the rate:
+//  the app hits 32.8k rounds/s per core, while the same kernel inside the NE
+//  produced 39.4k rounds/s with four workers (one efficiency core's worth).
+//  A cost-18 link stamp therefore took ~7s inside the NE and pushed page
+//  fetches into the 20s link timeout. This seam lets the NE's Python ask the
+//  app for the keypair and only run the search itself when no host answers.
+//
+//      NE (`KeyStampHostBridge`)      app (`KeyStampHostService`)
+//      start  → keyStampN2A (notify N2A)   drain → accept + search
+//      poll   ← keyStampA2N (notify A2N)   result ← (accept, result)
+//      cancel → keyStampN2A
+//
+//  Frames are JSON `KeyStampSeamFrame`s on the dedicated `keyStamp*` queues,
+//  so the BLE and radio seams keep their own files and locks. Everything here is
+//  Foundation-only (no RNSAPI), because the file is compiled into both targets.
+//
+
+import Foundation
+import SwiftBLEBridge
+import os
+
+/// One seam message. `Data` fields ride as base64 inside the seam's JSON, which
+/// keeps a 64-byte keypair and a 32-byte target small enough for a single frame.
+struct KeyStampSeamFrame: Codable {
+    enum Kind: String, Codable {
+        /// NE→app: run this search. Carries `material` and `target`.
+        case start
+        /// app→NE: the search is queued; the NE may stop waiting for a host.
+        case accepted
+        /// NE→app: stop the search with this id (the link was cancelled).
+        case cancel
+        /// app→NE: attempts completed so far. Lets the NE measure a search that
+        /// RNS cancels at its 15s link deadline, and detect a suspended host.
+        case progress
+        /// app→NE: terminal answer. `status` is the C-ABI poll value
+        /// (64 = payload length, -2 = cancelled, -3 = failed).
+        case result
+    }
+
+    var kind: Kind
+    var id: UInt64
+    var material: Data?
+    var target: Data?
+    var payload: Data?
+    var rounds: UInt64?
+    var status: Int32?
+
+    init(
+        kind: Kind,
+        id: UInt64,
+        material: Data? = nil,
+        target: Data? = nil,
+        payload: Data? = nil,
+        rounds: UInt64? = nil,
+        status: Int32? = nil
+    ) {
+        self.kind = kind
+        self.id = id
+        self.material = material
+        self.target = target
+        self.payload = payload
+        self.rounds = rounds
+        self.status = status
+    }
+
+    func encoded() -> Data? {
+        // A fresh coder per frame: `JSONEncoder` keeps mutable state and the
+        // seam is written from the Python thread, the app worker, and test
+        // threads at once.
+        try? JSONEncoder().encode(self)
+    }
+
+    static func decoded(_ data: Data) -> KeyStampSeamFrame? {
+        try? JSONDecoder().decode(KeyStampSeamFrame.self, from: data)
+    }
+}
+
+enum KeyStampSeamNotify {
+    static func post(_ name: String) {
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(name as CFString),
+            nil, nil, true
+        )
+    }
+
+    /// Register `handler` for a Darwin notification. The relay is retained here
+    /// until `remove`, because the CF callback keeps only a raw pointer.
+    static func observe(
+        _ name: String,
+        owner: AnyObject,
+        queue: DispatchQueue? = nil,
+        handler: @escaping @Sendable () -> Void
+    ) {
+        let relay = KeyStampNotifyRelay(queue: queue, handler: handler)
+        let key = ObjectIdentifier(owner)
+        relays.withLock { $0[key] = relay }
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(relay).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                Unmanaged<KeyStampNotifyRelay>.fromOpaque(observer).takeUnretainedValue().run()
+            },
+            name as CFString,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    static func remove(_ name: String, owner: AnyObject) {
+        let key = ObjectIdentifier(owner)
+        guard let relay = relays.withLock({ $0.removeValue(forKey: key) }) else { return }
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(relay).toOpaque(),
+            CFNotificationName(name as CFString),
+            nil
+        )
+    }
+
+    private static let relays = OSAllocatedUnfairLock(
+        initialState: [ObjectIdentifier: KeyStampNotifyRelay]()
+    )
+}
+
+/// Holds the handler a Darwin callback reaches through its raw pointer. The
+/// notification can arrive on any thread, including the main thread mid-request;
+/// an owner that drains a shared queue hands in its own serial queue so the
+/// drain cannot be delayed by unrelated main-thread work.
+final class KeyStampNotifyRelay: @unchecked Sendable {
+    private let queue: DispatchQueue?
+    private let handler: @Sendable () -> Void
+
+    init(queue: DispatchQueue? = nil, handler: @escaping @Sendable () -> Void) {
+        self.queue = queue
+        self.handler = handler
+    }
+
+    func run() {
+        guard let queue else { return handler() }
+        queue.async { [handler] in handler() }
+    }
+}
+
+/// NE side: owns in-flight remote jobs and exports them to Python.
+///
+/// Python polls every 10ms, so nothing here needs a timer: `poll` drains the
+/// answer queue on each call. The one blocking wait is the accept window in
+/// `start`, which bounds the cost of asking a suspended app.
+final class KeyStampHostBridge: @unchecked Sendable {
+    private struct JobState {
+        var accepted = false
+        var cancelled = false
+        var rounds: UInt64 = 0
+        var lastProgress: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+        var result: (status: Int32, payload: Data?, rounds: UInt64)?
+    }
+
+    private struct State {
+        var nextID: UInt64 = 1
+        var jobs: [UInt64: JobState] = [:]
+    }
+
+    /// Longest wait for the app to accept a request before the NE falls back to
+    /// its own kernel. The app answers before it starts searching, so this only
+    /// covers the Darwin notification hop.
+    static let acceptWindow: TimeInterval = 0.12
+
+    /// How long a host may report no progress before the NE stops waiting for
+    /// it. A suspended app freezes its search; a live one reports every 250ms.
+    static let stallWindow: TimeInterval = 1.5
+
+    static let shared = KeyStampHostBridge()
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let requests: SharedFrameQueue
+    private let responses: SharedFrameQueue
+    /// Random per-process id namespace. Job ids restart at 1 in every NE
+    /// process; without a prefix, answers left over from a previous process
+    /// (e.g. the 707k-round cancellation result of a stamp that hit the 15s
+    /// deadline) are mistaken for the new process's first job.
+    private let idPrefix: UInt64
+
+    /// `acceptWindow` override for callers that drive both seam ends in one
+    /// process (tests), where main-thread work in the test can delay the
+    /// notification hop far past the production window.
+    private let acceptWindow: TimeInterval
+
+    /// Queue names are parameters so a test can drive both seam ends over
+    /// private files instead of competing with the live app/NE singletons.
+    init(
+        requestQueueName: String = SharedFrameQueueName.keyStampN2A,
+        responseQueueName: String = SharedFrameQueueName.keyStampA2N,
+        acceptWindow: TimeInterval = KeyStampHostBridge.acceptWindow
+    ) {
+        self.acceptWindow = acceptWindow
+        requests = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: requestQueueName)
+        responses = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: responseQueueName)
+        var generator = SystemRandomNumberGenerator()
+        idPrefix = UInt64.random(in: 1..<(1 << 32), using: &generator) << 32
+        // Answers for jobs this process never started are unusable.
+        _ = responses.readAllAndClear()
+    }
+
+    /// False in the app process (which is the host itself and must use its own
+    /// kernel). Read on every start; written once by `disableInProcess`.
+    private let enabled = OSAllocatedUnfairLock(initialState: true)
+
+    /// Called by the app's `KeyStampHostService.start()`: in the hosting process
+    /// the seam would loop back to the same scheduler, so route Python straight
+    /// to the local kernel instead.
+    func disableInProcess() {
+        state.withLock { $0 = State() }
+        enabled.withLock { $0 = false }
+    }
+
+    func start(material: Data, target: Data) -> UInt64 {
+        guard enabled.withLock({ $0 }), target.count == 32 else { return 0 }
+        let id = state.withLock { state -> UInt64 in
+            let id = idPrefix | (state.nextID & 0xFFFFFFFF)
+            state.nextID = state.nextID == .max ? 1 : state.nextID + 1
+            state.jobs[id] = JobState()
+            return id
+        }
+        guard let frame = KeyStampSeamFrame(
+            kind: .start, id: id, material: material, target: target
+        ).encoded(), requests.append(frame: frame, interfaceTag: FrameInterfaceTag.keyStamp.rawValue)
+        else {
+            state.withLock { $0.jobs.removeValue(forKey: id) }
+            return 0
+        }
+        KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampRequestNotificationName)
+
+        let deadline = CFAbsoluteTimeGetCurrent() + acceptWindow
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            if state.withLock({ $0.jobs[id]?.accepted ?? false }) { return id }
+            drainResponses()
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+        // No host answered: retract the request and let the caller run the
+        // search in-process. Without the cancel, a host that wakes later would
+        // begin a search nobody waits for and hold the queue. A late accept
+        // still finds no job and is discarded.
+        cancel(id)
+        state.withLock { $0.jobs.removeValue(forKey: id) }
+        return 0
+    }
+
+    /// Mirrors `NativeStampJob.poll`: 0 running, 64 = payload copied, -2
+    /// cancelled, -3 failed, -1 bad argument.
+    func poll(
+        _ id: UInt64,
+        into out: UnsafeMutablePointer<CChar>,
+        capacity: Int,
+        rounds: inout UInt64
+    ) -> Int32 {
+        drainResponses()
+        let snapshot = state.withLock { state -> (Int32, UInt64, Data?)? in
+            guard let job = state.jobs[id] else { return nil }
+            if job.cancelled { return (-2, job.rounds, nil) }
+            if let result = job.result { return (result.status, result.rounds, result.payload) }
+            if CFAbsoluteTimeGetCurrent() - job.lastProgress > Self.stallWindow {
+                // -4: the host stopped reporting. Python then runs the search
+                // in-process instead of waiting out the link's 15s deadline.
+                return (-4, job.rounds, nil)
+            }
+            return (0, job.rounds, nil)
+        }
+        guard let snapshot else { return -1 }
+        rounds = snapshot.1
+        guard snapshot.0 == 64, let payload = snapshot.2 else { return snapshot.0 }
+        guard payload.count <= capacity else { return -1 }
+        payload.withUnsafeBytes { raw in
+            if let base = raw.baseAddress { memcpy(out, base, payload.count) }
+        }
+        return Int32(payload.count)
+    }
+
+    @discardableResult
+    func cancel(_ id: UInt64) -> Bool {
+        let known = state.withLock { state -> Bool in
+            guard var job = state.jobs[id] else { return false }
+            job.cancelled = true
+            job.result = nil
+            state.jobs[id] = job
+            return true
+        }
+        guard known,
+              let frame = KeyStampSeamFrame(kind: .cancel, id: id).encoded()
+        else { return known }
+        requests.append(frame: frame, interfaceTag: FrameInterfaceTag.keyStamp.rawValue)
+        KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampRequestNotificationName)
+        return true
+    }
+
+    /// Drop a job. A search the host is still running is cancelled first: the
+    /// caller has moved on (stalled-host fallback, deadline miss), so leaving it
+    /// running only burns cores and holds the host's serial queue.
+    @discardableResult
+    func release(_ id: UInt64) -> Bool {
+        let abandoned = state.withLock { state -> Bool in
+            guard let job = state.jobs[id] else { return false }
+            return job.result == nil && !job.cancelled
+        }
+        if abandoned { cancel(id) }
+        return state.withLock { $0.jobs.removeValue(forKey: id) } != nil
+    }
+
+    private func drainResponses() {
+        let now = CFAbsoluteTimeGetCurrent()
+        for frame in responses.readAllAndClear() where frame.interfaceTag == FrameInterfaceTag.keyStamp.rawValue {
+            guard let message = KeyStampSeamFrame.decoded(frame.data) else { continue }
+            state.withLock { state in
+                guard var job = state.jobs[message.id] else { return }
+                switch message.kind {
+                case .accepted:
+                    job.accepted = true
+                    job.lastProgress = now
+                case .progress:
+                    job.rounds = max(job.rounds, message.rounds ?? 0)
+                    job.lastProgress = now
+                case .result:
+                    // Kept for a cancelled job too: the attempt count is the
+                    // only rate measurement for a stamp that hit the timeout.
+                    job.rounds = max(job.rounds, message.rounds ?? 0)
+                    job.result = (message.status ?? -3, message.payload, job.rounds)
+                    job.lastProgress = now
+                case .start, .cancel:
+                    return
+                }
+                state.jobs[message.id] = job
+            }
+        }
+    }
+}
+
+/// App side: answers the NE's key-stamp jobs on a user-initiated queue.
+///
+/// One search at a time: page fetches are serial and the kernel already spreads
+/// each search over the performance cores, so a second concurrent search would
+/// only compete for the same cores.
+final class KeyStampHostService: @unchecked Sendable {
+    final class CancelFlag: @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock(initialState: false)
+        var isCancelled: Bool { lock.withLock { $0 } }
+        func cancel() { lock.withLock { $0 = true } }
+    }
+
+    static let shared = KeyStampHostService()
+
+    private let state = OSAllocatedUnfairLock(
+        initialState: [UInt64: CancelFlag]()
+    )
+    private let requests: SharedFrameQueue
+    private let responses: SharedFrameQueue
+    private let work: DispatchQueue
+    private let pollQueue = DispatchQueue(label: "network.columba.keyStampHost.poll")
+    private var started = false
+    private var pollTimer: DispatchSourceTimer?
+
+    /// Queue names are parameters so a test can drive both seam ends over
+    /// private files instead of competing with the live app/NE singletons.
+    init(
+        requestQueueName: String = SharedFrameQueueName.keyStampN2A,
+        responseQueueName: String = SharedFrameQueueName.keyStampA2N,
+        label: String = "network.columba.keyStampHost"
+    ) {
+        requests = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: requestQueueName)
+        responses = SharedFrameQueue(appGroupIdentifier: appGroupIdentifier, name: responseQueueName)
+        work = DispatchQueue(label: label, qos: .userInitiated)
+    }
+
+    /// Start answering NE requests. Called once at app launch. `disableLocalBridge`
+    /// is on for the real app, whose Python node stamps faster in-process; tests
+    /// that drive both seam ends in one process turn it off.
+    func start(disableLocalBridge: Bool = true) {
+        guard !started else { return }
+        started = true
+        if disableLocalBridge {
+            KeyStampHostBridge.shared.disableInProcess()
+        }
+        KeyStampSeamNotify.observe(
+            SharedDefaultsConstants.keyStampRequestNotificationName, owner: self, queue: pollQueue
+        ) { [weak self] in
+            self?.drain()
+        }
+        // A Darwin notification can be coalesced or miss the observer's
+        // registration window, and an unanswered request would park the NE's
+        // page fetch; poll the queue as a floor under the notify path.
+        let timer = DispatchSource.makeTimerSource(queue: pollQueue)
+        timer.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(50), leeway: .milliseconds(10))
+        timer.setEventHandler { [weak self] in self?.drain() }
+        timer.resume()
+        pollTimer = timer
+        drain()
+    }
+
+    private func drain() {
+        for frame in requests.readAllAndClear() where frame.interfaceTag == FrameInterfaceTag.keyStamp.rawValue {
+            guard let message = KeyStampSeamFrame.decoded(frame.data) else { continue }
+            switch message.kind {
+            case .start:
+                guard let material = message.material, let target = message.target else { continue }
+                begin(id: message.id, material: material, target: target)
+            case .cancel:
+                state.withLock { $0[message.id] }?.cancel()
+            case .accepted, .progress, .result:
+                continue
+            }
+        }
+    }
+
+    private func begin(id: UInt64, material: Data, target: Data) {
+        let flag = CancelFlag()
+        let accepted = state.withLock { state -> Bool in
+            guard state[id] == nil else { return false }
+            state[id] = flag
+            return true
+        }
+        guard accepted,
+              let ack = KeyStampSeamFrame(kind: .accepted, id: id).encoded()
+        else { return }
+        responses.append(frame: ack, interfaceTag: FrameInterfaceTag.keyStamp.rawValue)
+        KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampResultNotificationName)
+
+        work.async { [self] in
+            // Four workers: the kernel scaled to the cores iOS actually gives
+            // this process (four efficiency cores on an iPhone 14: 58.8k
+            // rounds/s measured). Six measured worse (47k).
+            let throttle = OSAllocatedUnfairLock(initialState: CFAbsoluteTimeGetCurrent())
+            // Launch-time override so the worker count can be retuned on the
+            // phone without a rebuild (devicectl passes environment variables).
+            let workers = max(1, min(8, Int(ProcessInfo.processInfo.environment["COLUMBA_KEYSTAMP_WORKERS"] ?? "") ?? 4))
+            let answer = HostKeyStampSearch.run(
+                material: material,
+                targetBytes: target,
+                workers: workers,
+                cancelled: { flag.isCancelled },
+                progress: { rounds in
+                    let now = CFAbsoluteTimeGetCurrent()
+                    let due = throttle.withLock { last -> Bool in
+                        guard now - last >= 0.25 else { return false }
+                        last = now
+                        return true
+                    }
+                    guard due,
+                          let frame = KeyStampSeamFrame(kind: .progress, id: id, rounds: rounds).encoded()
+                    else { return }
+                    responses.append(frame: frame, interfaceTag: FrameInterfaceTag.keyStamp.rawValue)
+                    KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampResultNotificationName)
+                }
+            )
+            let status: Int32
+            let payload: Data?
+            let rounds = answer.rounds
+            if let proof = answer.payload, !flag.isCancelled {
+                status = Int32(proof.count)
+                payload = proof
+            } else {
+                status = flag.isCancelled ? -2 : -3
+                payload = nil
+            }
+            state.withLock { $0.removeValue(forKey: id) }
+            guard let frame = KeyStampSeamFrame(
+                kind: .result, id: id, payload: payload, rounds: rounds, status: status
+            ).encoded() else { return }
+            responses.append(frame: frame, interfaceTag: FrameInterfaceTag.keyStamp.rawValue)
+            KeyStampSeamNotify.post(SharedDefaultsConstants.keyStampResultNotificationName)
+        }
+    }
+}
+
+// MARK: - C ABI (bound by `app/rns_bridge.py`)
+
+/// Begin a remote key-stamp search. Zero means no host answered; the caller then
+/// runs `columba_key_stamp_job_start` in-process.
+@_used
+@_cdecl("columba_host_key_stamp_job_start")
+public func columba_host_key_stamp_job_start(
+    _ material: UnsafePointer<CChar>?,
+    _ materialLen: Int32,
+    _ target: UnsafePointer<CChar>?,
+    _ targetLen: Int32
+) -> UInt64 {
+    guard let material, materialLen >= 0, let target, targetLen == 32 else { return 0 }
+    let targetData = Data(bytes: target, count: 32)
+    let materialData = Data(bytes: material, count: Int(materialLen))
+    return KeyStampHostBridge.shared.start(material: materialData, target: targetData)
+}
+
+/// Same contract as `columba_stamp_job_poll`.
+@_used
+@_cdecl("columba_host_key_stamp_job_poll")
+public func columba_host_key_stamp_job_poll(
+    _ jobID: UInt64,
+    _ outStamp: UnsafeMutablePointer<CChar>,
+    _ capacity: Int32,
+    _ rounds: UnsafeMutablePointer<UInt64>
+) -> Int32 {
+    var roundsValue: UInt64 = 0
+    let status = KeyStampHostBridge.shared.poll(
+        jobID, into: outStamp, capacity: Int(capacity), rounds: &roundsValue
+    )
+    rounds.pointee = roundsValue
+    return status
+}
+
+@_used
+@_cdecl("columba_host_key_stamp_job_cancel")
+public func columba_host_key_stamp_job_cancel(_ jobID: UInt64) -> Int32 {
+    KeyStampHostBridge.shared.cancel(jobID) ? 1 : 0
+}
+
+@_used
+@_cdecl("columba_host_key_stamp_job_release")
+public func columba_host_key_stamp_job_release(_ jobID: UInt64) {
+    _ = KeyStampHostBridge.shared.release(jobID)
+}

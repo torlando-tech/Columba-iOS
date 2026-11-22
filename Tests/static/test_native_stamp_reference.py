@@ -160,6 +160,102 @@ def receiver_comparison(library_path, cost, insufficient=False):
                 sys.stdout, sys.stderr = output_streams
 
 
+def native_key_stamp(library, material, target, stop_check):
+    start = library.columba_key_stamp_job_start
+    start.argtypes = [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32]
+    start.restype = ctypes.c_uint64
+    poll = library.columba_stamp_job_poll
+    poll.argtypes = [
+        ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_uint64),
+    ]
+    poll.restype = ctypes.c_int32
+    cancel = library.columba_stamp_job_cancel
+    cancel.argtypes = [ctypes.c_uint64]
+    cancel.restype = ctypes.c_int32
+    release = library.columba_stamp_job_release
+    release.argtypes = [ctypes.c_uint64]
+    release.restype = ctypes.c_int32
+    target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
+    job = start(material, len(material), target_bytes, len(target_bytes))
+    if not job:
+        raise RuntimeError("Native key stamper refused the search")
+    try:
+        output = ctypes.create_string_buffer(64)
+        rounds = ctypes.c_uint64()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if stop_check():
+                cancel(job)
+            status = poll(job, output, 64, ctypes.byref(rounds))
+            if status > 0:
+                if status != 64:
+                    raise RuntimeError(f"Native key stamper returned an invalid size: {status}")
+                raw = output.raw[:status]
+                return (raw[:32], raw[32:]), rounds.value
+            if status == -2:
+                return None, rounds.value
+            if status != 0:
+                raise RuntimeError(f"Native key stamp job failed: {status}")
+            time.sleep(0.001)
+        raise TimeoutError("Native key stamp generation timed out")
+    finally:
+        release(job)
+
+
+def key_comparison(library_path, cost):
+    import RNS
+    import RNS.Stamps as stamps
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    def raw_public(key):
+        return key.public_key().public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
+
+    material = RNS.Identity.full_hash(b"key-stamp-reference")
+    target = stamps.target_from_cost(cost)
+    library = ctypes.CDLL(library_path)
+    native_calls = []
+    native_rounds = []
+
+    def key_search(workblock, key_target, stop_check):
+        native_calls.append((workblock, key_target))
+        proof, rounds = native_key_stamp(library, workblock, key_target, stop_check)
+        native_rounds.append(rounds)
+        return proof, rounds
+
+    stamps.native_key_search = key_search
+    try:
+        native, native_value = stamps.generate_stamped_key(material, cost)
+    finally:
+        stamps.native_key_search = None
+
+    if native_calls != [(material, target)]:
+        raise RuntimeError("RNS did not dispatch through the native key-search hook")
+    if material in stamps.active_jobs:
+        raise RuntimeError("RNS did not release the native key search's active job")
+
+    native_private, native_public = native
+    derived = raw_public(X25519PrivateKey.from_private_bytes(native_private))
+    if derived != native_public:
+        raise RuntimeError("Native key stamp is not a derivable X25519 keypair")
+
+    # Reference: the same request through the pure-Python loop.
+    reference, _ = stamps.generate_stamped_key(material, cost)
+    reference_private, reference_public = reference
+    reference_derived = raw_public(X25519PrivateKey.from_private_bytes(reference_private))
+
+    return {
+        "cost": cost,
+        "native_hook_calls": len(native_calls),
+        "native_rounds": native_rounds[0],
+        "native_value": native_value,
+        "native_rns_valid": stamps.stamp_valid(native_public, cost, material),
+        "native_keypair_derivable": derived == native_public,
+        "reference_rns_valid": stamps.stamp_valid(reference_public, cost, material),
+        "reference_keypair_derivable": reference_derived == reference_public,
+    }
+
+
 @unittest.skipUnless(sys.platform == "darwin", "Requires macOS CommonCrypto and Swift")
 class NativeStampReferenceTests(unittest.TestCase):
     @classmethod
@@ -210,9 +306,33 @@ class NativeStampReferenceTests(unittest.TestCase):
         self.assertFalse(result["receiver_accepted"], result)
         self.assertIsNone(result["delivered"], result)
 
+    def compare_key(self, cost):
+        result = subprocess.run([
+            sys.executable, "-B", str(Path(__file__).resolve()), "--key",
+            str(self.library), str(cost),
+        ], capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        print(json.dumps(report, sort_keys=True))
+        self.assertEqual(report["native_hook_calls"], 1)
+        return report
+
+    def test_native_and_python_key_stamps_are_equally_valid(self):
+        for cost in (8, 12.5):
+            with self.subTest(cost=cost):
+                report = self.compare_key(cost)
+                self.assertIsInstance(report["native_rounds"], int)
+                self.assertGreaterEqual(report["native_rounds"], 0)
+                self.assertTrue(report["native_keypair_derivable"], report)
+                self.assertTrue(report["native_rns_valid"], report)
+                self.assertTrue(report["reference_keypair_derivable"], report)
+                self.assertTrue(report["reference_rns_valid"], report)
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--receiver":
         print(json.dumps(receiver_comparison(sys.argv[2], float(sys.argv[3]), bool(int(sys.argv[4])))))
+    elif len(sys.argv) > 1 and sys.argv[1] == "--key":
+        print(json.dumps(key_comparison(sys.argv[2], float(sys.argv[3]))))
     else:
         unittest.main()

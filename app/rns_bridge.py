@@ -137,6 +137,35 @@ _stamp_jobs_cancel_all_fn = _bind_stamp_fn(
     "columba_stamp_jobs_cancel_all",
     [],
 )
+_key_stamp_job_start_fn = _bind_stamp_fn(
+    "columba_key_stamp_job_start",
+    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32],
+    ctypes.c_uint64,
+)
+
+# NE-only offload: a link's key stamp inside the Network Extension measured
+# 39.4k rounds/s (about one efficiency core) against 32.8k rounds/s per
+# performance core in the app, so a cost-18 stamp took ~7s and page fetches ran
+# into the 20s link timeout. The app answers over the App-Group seam; zero from
+# `_host_key_stamp_job_start_fn` means no host is listening (the app is not
+# running, or this process is the app itself) and the in-process kernel runs.
+_host_key_stamp_job_start_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_start",
+    [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_int32],
+    ctypes.c_uint64,
+)
+_host_key_stamp_job_poll_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_poll",
+    [ctypes.c_uint64, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_uint64)],
+)
+_host_key_stamp_job_cancel_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_cancel",
+    [ctypes.c_uint64],
+)
+_host_key_stamp_job_release_fn = _bind_stamp_fn(
+    "columba_host_key_stamp_job_release",
+    [ctypes.c_uint64],
+)
 
 
 def _native_stamp_jobs_available() -> bool:
@@ -144,6 +173,19 @@ def _native_stamp_jobs_available() -> bool:
         fn is not None
         for fn in (
             _stamp_job_start_fn,
+            _stamp_job_poll_fn,
+            _stamp_job_cancel_fn,
+            _stamp_job_release_fn,
+            _stamp_jobs_cancel_all_fn,
+        )
+    )
+
+
+def _native_key_stamp_jobs_available() -> bool:
+    return all(
+        fn is not None
+        for fn in (
+            _key_stamp_job_start_fn,
             _stamp_job_poll_fn,
             _stamp_job_cancel_fn,
             _stamp_job_release_fn,
@@ -193,6 +235,115 @@ def _native_stamp_search(workblock, target, size, stop_check):
         _stamp_job_release_fn(job_id)
 
 
+def _host_key_stamp_jobs_available() -> bool:
+    return all(
+        fn is not None
+        for fn in (
+            _host_key_stamp_job_start_fn,
+            _host_key_stamp_job_poll_fn,
+            _host_key_stamp_job_cancel_fn,
+            _host_key_stamp_job_release_fn,
+        )
+    )
+
+
+def _note_key_stamp_failure() -> None:
+    """Record that our own key-stamp proof missed the link's deadline.
+
+    Its own latch, not `_lock`: the search runs on an RNS link thread while
+    `_lock` may be held elsewhere, and a plain Lock would deadlock there."""
+    with _stamp_failure_lock:
+        _state["key_stamp_failures"] = _state.get("key_stamp_failures", 0) + 1
+
+
+def _native_key_search(material, target, stop_check):
+    """Search RNS's exact key-stamp target without moving job state into Python."""
+    if len(material) > 0x7FFFFFFF:
+        keypair, rounds, _ = RNS.Stamps._loop_key(material, target, stop_check)
+        return keypair, rounds
+    if _runtime_teardown_requested.is_set():
+        return None, 0
+
+    payload = bytes(material)
+    target_bytes = min(target, (1 << 256) - 1).to_bytes(32, "big")
+    started = time.time()
+    via = "local"
+    job_id = 0
+    if _host_key_stamp_jobs_available():
+        job_id = int(_host_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
+        if job_id:
+            via = "app"
+    if job_id:
+        poll_fn = _host_key_stamp_job_poll_fn
+        cancel_fn = _host_key_stamp_job_cancel_fn
+        release_fn = _host_key_stamp_job_release_fn
+    else:
+        poll_fn = _stamp_job_poll_fn
+        cancel_fn = _stamp_job_cancel_fn
+        release_fn = _stamp_job_release_fn
+        job_id = int(_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
+    if job_id == 0:
+        _diag_append("[STAMP-KEY] start rejected")
+        _note_key_stamp_failure()
+        return None, 0
+
+    host_job = via == "app"
+    try:
+        output = ctypes.create_string_buffer(64)
+        rounds = ctypes.c_uint64()
+        while True:
+            if _runtime_teardown_requested.is_set() or stop_check():
+                cancel_fn(job_id)
+
+            status = int(poll_fn(job_id, output, 64, ctypes.byref(rounds)))
+            if host_job and status == -4:
+                # The host stopped reporting progress: it is suspended, so its
+                # search is frozen. Run here rather than waiting out the link's
+                # 15s deadline; a suspended app spends no CPU on the abandoned
+                # job either.
+                _diag_append(
+                    f"[STAMP-KEY] host stalled rounds={rounds.value}; searching in-process"
+                )
+                release_fn(job_id)
+                via = "local-after-stall"
+                job_id = int(_key_stamp_job_start_fn(payload, len(payload), target_bytes, 32))
+                if job_id == 0:
+                    _diag_append("[STAMP-KEY] start rejected")
+                    _note_key_stamp_failure()
+                    return None, 0
+                poll_fn = _stamp_job_poll_fn
+                cancel_fn = _stamp_job_cancel_fn
+                release_fn = _stamp_job_release_fn
+                host_job = False
+                continue
+            if status == 64:
+                if _runtime_teardown_requested.is_set() or stop_check():
+                    cancel_fn(job_id)
+                    return None, rounds.value
+                raw = output.raw[:status]
+                _diag_append(
+                    f"[STAMP-KEY] rounds={rounds.value} ms={int((time.time() - started) * 1000)} "
+                    f"via={via} pid={os.getpid()}"
+                )
+                return ((raw[:32], raw[32:]), rounds.value)
+            if status < 0:
+                _diag_append(
+                    f"[STAMP-KEY] failed status={status} rounds={rounds.value} "
+                    f"ms={int((time.time() - started) * 1000)} via={via} pid={os.getpid()}"
+                )
+                _note_key_stamp_failure()
+                return None, rounds.value
+            if status != 0:
+                RNS.log(
+                    f"native key stamp search: unexpected poll status {status}",
+                    RNS.LOG_WARNING,
+                )
+                return None, rounds.value
+            time.sleep(0.01)
+    finally:
+        release_fn(job_id)
+
+
 def _install_native_stamp_search() -> bool:
     """Install the RNS hash-search seam only after runtime startup."""
     if not _native_stamp_jobs_available():
@@ -210,12 +361,31 @@ def _install_native_stamp_search() -> bool:
         return False
     RNS.Stamps.native_stamp_search = _native_stamp_search
     RNS.log("native stamp search registered", RNS.LOG_INFO)
+    if _native_key_stamp_jobs_available() and hasattr(RNS.Stamps, "native_key_search"):
+        RNS.Stamps.native_key_search = _native_key_search
+        RNS.log("native key stamp search registered", RNS.LOG_INFO)
+    else:
+        RNS.log(
+            "native key stamp search: unavailable; key stamps stay on the Python loop",
+            RNS.LOG_WARNING,
+        )
+    # RNS.log at this level never reaches diag.log, and which hook wins is the
+    # one fact needed to attribute slow link stamps, so record it there too.
+    _diag_append(
+        "[STAMP-HOOK] hash={} key={} cpus={} pid={}".format(
+            "native" if RNS.Stamps.native_stamp_search is not None else "python",
+            "native" if getattr(RNS.Stamps, "native_key_search", None) is not None else "python",
+            os.cpu_count(),
+            os.getpid(),
+        )
+    )
     return True
 
 
 def _uninstall_native_stamp_search() -> None:
     """Detach the hook and cancel RNS jobs before draining native work."""
     RNS.Stamps.native_stamp_search = None
+    RNS.Stamps.native_key_search = None
     try:
         # RNS's cancellation state outlives the teardown event, so a search
         # paused before native start cannot escape a completed stop().
@@ -255,6 +425,7 @@ def startup_timing() -> dict[str, float]:
     return dict(STARTUP_TIMING)
 
 _lock = threading.Lock()
+_stamp_failure_lock = threading.Lock()
 _propagation_sync_cancellation_lock = threading.Condition()
 _active_propagation_sync_cancellation: threading.Event | None = None
 # Teardown publishes intent without waiting for `_lock`, allowing a start that
@@ -296,6 +467,7 @@ _announce_generation = 0
 _events: "queue.Queue[dict]" = queue.Queue()
 _state: dict[str, Any] = {
     "started": False,
+    "key_stamp_failures": 0,
     "reticulum": None,
     "router": None,
     "identity": None,
@@ -3789,7 +3961,39 @@ def fetch_nomadnet_page(
     timeout: float = 30.0,
     form_fields: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """One-shot fetch of a NomadNet page over an RNS Link.
+    """Fetch a NomadNet page, retrying once if our own stamp missed the deadline.
+
+    A link stamp that overruns RNS's 15s deadline tears the link down before it
+    reaches ACTIVE, which the caller can only see as `link-failed`. Because that
+    outcome is a coin flip at the current key-stamp rate (~56-64k rounds/s on
+    the phone), a second attempt with a fresh target turns a multi-percent
+    failure rate into a rare one. Retries are allowed only when the key-stamp
+    search actually failed: an unreachable node still fails once, not twice.
+    """
+    with _lock:
+        if not _state["started"]:
+            return {"ok": False, "status": "not-started", "data": b"", "content_type": ""}
+    with _stamp_failure_lock:
+        stamp_failures = _state.get("key_stamp_failures", 0)
+    result = _fetch_nomadnet_page_once(dest_hash_hex, path, timeout, form_fields)
+    if result["status"] != "link-failed":
+        return result
+    with _stamp_failure_lock:
+        if _state.get("key_stamp_failures", 0) <= stamp_failures:
+            return result
+    _diag_append(
+        f"[NOMAD-FETCH] key stamp missed the deadline on {path}; retrying with a fresh stamp"
+    )
+    return _fetch_nomadnet_page_once(dest_hash_hex, path, timeout, form_fields)
+
+
+def _fetch_nomadnet_page_once(
+    dest_hash_hex: str,
+    path: str,
+    timeout: float = 30.0,
+    form_fields: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """One attempt at a NomadNet page fetch over an RNS Link.
 
     Walks the full RNS request cycle synchronously so the Swift caller
     doesn't have to manage Link / RequestReceipt lifecycles. Returns
@@ -3807,9 +4011,6 @@ def fetch_nomadnet_page(
     fetch. The mapping is passed directly to `RNS.Link.request`, which owns
     request framing. Pre-packing it turns the server-side request data into
     bytes instead of a dict, so node apps such as rngit reject the request."""
-    with _lock:
-        if not _state["started"]:
-            return {"ok": False, "status": "not-started", "data": b"", "content_type": ""}
     try:
         dest_hash = bytes.fromhex(dest_hash_hex)
     except ValueError:
