@@ -65,7 +65,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for target ownership and dependency bound
 
 The embedded dependencies are immutable commits from the `torlando-tech` forks:
 
-- [Reticulum 1.6.0, `0508cf127114f741b95b928518bcb536162b67bc`](https://github.com/torlando-tech/Reticulum/commit/0508cf127114f741b95b928518bcb536162b67bc) is based directly on upstream 1.6.0 and retains only the native hash-search hook, the native key-stamp search hook, AutoInterface lifecycle fixes, receive-assembly allocation reductions and iOS stamp dispatch. Ratchet-file handling, TCP/backbone connection handling and PHY telemetry use unchanged upstream code.
+- [Reticulum 1.6.1, `8c45ee57e1776d5176a1581d2a78a8b4abdb80ed`](https://github.com/torlando-tech/Reticulum/commit/8c45ee57e1776d5176a1581d2a78a8b4abdb80ed) is based directly on upstream 1.6.1 and retains only the native hash-search hook, the native key-stamp search hook, AutoInterface lifecycle fixes, receive-assembly allocation reductions and iOS stamp dispatch. Ratchet-file handling, TCP/backbone connection handling and PHY telemetry use unchanged upstream code.
 - [LXMF 1.3.0, `09cd6be4324345ed07964e9f6e5372308f6d6883`](https://github.com/torlando-tech/LXMF/commit/09cd6be4324345ed07964e9f6e5372308f6d6883) retains opportunistic receiving metadata and mutex-serialized SQLite compatibility. `LXStamper` is the unchanged upstream wrapper around `RNS.Stamps`; there is no LXMF native-generator registration.
 
 Reticulum owns workblock expansion, fractional-cost quantization, proof validation
