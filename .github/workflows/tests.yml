@@ -106,6 +106,7 @@ jobs:
             Tests.static.test_ios_rnode_driver \
             Tests.static.test_rns_bridge_persistence \
             Tests.static.test_rns_bridge_inbox \
+            Tests.static.test_rns_bridge_announce_rates \
             Tests.static.test_rns_memory_limits \
             Tests.static.test_memory_attribution \
             Tests.static.test_ne_sampler_retention \
@@ -325,7 +326,7 @@ jobs:
           export PATH="$HOME/.maestro/bin:$PATH"
           mkdir -p ui-screenshots
           screenshot_status=0
-          for flow in contacts-list.yml chats-list.yml settings.yml theme-persistence.yml map.yml interface-connectivity-banner.yml; do
+          for flow in contacts-list.yml chats-list.yml settings.yml theme-persistence.yml map.yml interface-connectivity-banner.yml network-interface-details.yml; do
             if ! (
               cd ui-screenshots
               maestro --device "$DEVICE_ID" test "$GITHUB_WORKSPACE/flows/$flow"

@@ -12,6 +12,7 @@ class UIScreenshotterReadinessContractTests(unittest.TestCase):
             "chats-list.yml": "screen_chats",
             "settings.yml": "screen_settings",
             "map.yml": "map_canvas_ready",
+            "network-interface-details.yml": "screen_network_status",
         }
 
     def test_each_flow_asserts_its_screen_landmark_before_capture(self):
@@ -45,6 +46,7 @@ class UIScreenshotterReadinessContractTests(unittest.TestCase):
             "Sources/ColumbaApp/Views/Chats/ChatsView.swift": "screen_chats",
             "Sources/ColumbaApp/Views/Contacts/ContactsView.swift": "screen_contacts",
             "Sources/ColumbaApp/Views/Settings/SettingsView.swift": "screen_settings",
+            "Sources/ColumbaApp/Views/Settings/NetworkStatusView.swift": "screen_network_status",
         }
         for relative_path, identifier in expected.items():
             with self.subTest(path=relative_path):
