@@ -1,0 +1,116 @@
+appId: network.columba.Columba
+name: network-interface-details
+tags:
+  - smoke
+  - screenshot
+---
+# Covers Network Status -> Interface Details with the RNS announce-rate rows.
+# A fresh screenshotter install has no interfaces, so the flow adds the
+# Auto Discovery (AutoInterface) type through the real Manage Interfaces
+# path first; the Add hot-attaches it and the status poll turns it into a
+# Network Status row. The rates are live RNS reads, so a quiet simulator
+# shows "<0.01 Hz" — the flow asserts the rows, not a specific rate.
+- launchApp:
+    clearState: true
+    clearKeychain: true
+    arguments:
+      ui-screenshotter: true
+- extendedWaitUntil:
+    visible:
+      id: "screen_chats"
+    timeout: 30000
+# The bottom bar mounts a few seconds after the chats content on a cold
+# launch, so wait for the tab itself instead of a single-shot tap.
+- extendedWaitUntil:
+    visible:
+      id: "tab_settings|gearshape.fill"
+    timeout: 30000
+- tapOn:
+    id: "tab_settings|gearshape.fill"
+- extendedWaitUntil:
+    visible:
+      id: "screen_settings"
+    timeout: 10000
+# Expand the collapsed Network Connectivity card.
+- scrollUntilVisible:
+    element:
+      text: "Network Connectivity"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "Network Connectivity"
+- extendedWaitUntil:
+    visible:
+      id: "settings_manage_interfaces"
+    timeout: 10000
+- tapOn:
+    id: "settings_manage_interfaces"
+- extendedWaitUntil:
+    visible:
+      id: "add_interface_button"
+    timeout: 10000
+- tapOn:
+    id: "add_interface_button"
+- extendedWaitUntil:
+    visible:
+      text: "Select Interface Type"
+    timeout: 10000
+- tapOn:
+    text: "Auto Discovery"
+- extendedWaitUntil:
+    visible:
+      text: "Add Auto Discovery"
+    timeout: 10000
+- tapOn:
+    id: "auto_interface_add_button"
+# A denied/undecided Local Network prompt can surface over the app; grant it
+# when present so the interface can bind. Simulators normally pre-grant.
+- tapOn:
+    text: "Allow"
+    optional: true
+# The interface row reads its user-facing name on the management screen.
+- extendedWaitUntil:
+    visible:
+      text: "Auto Discovery"
+    timeout: 30000
+# Binding the multicast socket can raise the Local Network prompt late.
+- tapOn:
+    text: "Allow"
+    optional: true
+- tapOn:
+    id: "BackButton"
+- extendedWaitUntil:
+    visible:
+      id: "settings_network_status"
+    timeout: 10000
+- tapOn:
+    id: "settings_network_status"
+- extendedWaitUntil:
+    visible:
+      id: "screen_network_status"
+    timeout: 10000
+# The status poll is asynchronous; the AutoInterface row can take a poll tick
+# after the hot-add settles.
+- extendedWaitUntil:
+    visible:
+      id: "interface_row"
+    timeout: 60000
+- tapOn:
+    id: "interface_row"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: "interface_details_sheet"
+    timeout: 10000
+- assertVisible:
+    id: "interface_details_sheet"
+- assertVisible:
+    text: "Interface Details"
+- assertVisible:
+    text: "Announce In"
+- assertVisible:
+    text: "Announce Out"
+# Both rows render a Hz value; a quiet simulator reads "<0.01 Hz".
+- assertVisible:
+    text: ".*Hz"
+- takeScreenshot: "network-interface-details"

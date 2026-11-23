@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 
 
-SCREENSHOTS = ("contacts-list", "chats-list", "settings", "map")
+SCREENSHOTS = ("contacts-list", "chats-list", "settings", "map", "network-interface-details")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 

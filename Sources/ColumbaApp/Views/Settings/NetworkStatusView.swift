@@ -9,6 +9,17 @@
 import SwiftUI
 import RNSAPI
 
+// MARK: - Interface Details selection
+
+/// Identity for the Interface Details sheet. Stores only the id (plus the
+/// tap-time snapshot as a fallback) so the open sheet reads the latest
+/// snapshot for that interface instead of frozen tap-time values.
+private struct SelectedInterface: Identifiable {
+    let id: String
+    /// Used only if the interface leaves the list while the sheet is open.
+    let snapshot: InterfaceInfo
+}
+
 // MARK: - Network Status View
 
 /// Network Status screen showing all registered interfaces with live status.
@@ -23,7 +34,7 @@ struct NetworkStatusView: View {
     // MARK: - State
 
     @State private var viewModel: NetworkStatusViewModel
-    @State private var selectedInterface: InterfaceInfo?
+    @State private var selectedInterface: SelectedInterface?
     private let appServices: AppServices
 
     // MARK: - Init
@@ -46,11 +57,23 @@ struct NetworkStatusView: View {
         }
         .background(Theme.backgroundPrimary)
         .navigationTitle("Network Status")
+        .accessibilityIdentifier("screen_network_status")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
-        .sheet(item: $selectedInterface) { info in
+        .sheet(item: $selectedInterface) { selected in
+            // Announce counters advance without a network-state push, so the
+            // open sheet refreshes itself and re-reads the live snapshot; the
+            // tap-time copy only covers an interface that has left the list.
+            let info = viewModel.interfaces.first { $0.id == selected.id } ?? selected.snapshot
+            let liveModel = viewModel
             interfaceDetailSheet(info)
+                .task(id: selected.id) {
+                    while !Task.isCancelled {
+                        await liveModel.refresh()
+                        try? await Task.sleep(for: .seconds(2))
+                    }
+                }
         }
     }
 
@@ -169,11 +192,12 @@ struct NetworkStatusView: View {
             } else {
                 ForEach(viewModel.interfaces) { info in
                     Button {
-                        selectedInterface = info
+                        selectedInterface = SelectedInterface(id: info.id, snapshot: info)
                     } label: {
                         interfaceRow(info)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("interface_row")
                     if info.id != viewModel.interfaces.last?.id {
                         Divider()
                             .overlay(Theme.divider)
@@ -303,6 +327,17 @@ struct NetworkStatusView: View {
                         if let addr = info.peerAddress {
                             detailRow(label: "Peer Address", value: addr)
                         }
+                        // Per-interface announce rates (RNS Interface.py).
+                        // Values are live RNS reads; a quiet node reads
+                        // "<0.01 Hz" instead of a fabricated number.
+                        detailRow(label: "Announce In", value: formatHz(info.announceRates.incomingHz))
+                        detailRow(label: "Announce Out", value: formatHz(info.announceRates.outgoingHz))
+                        if let target = info.announceRates.targetHz, target > 0 {
+                            detailRow(label: "Rate Target", value: formatHz(Double(target)))
+                        }
+                        if info.announceRates.heldCount > 0 {
+                            detailRow(label: "Held Announces", value: String(info.announceRates.heldCount))
+                        }
                     }
                     .padding(16)
                     .glassCard()
@@ -346,6 +381,7 @@ struct NetworkStatusView: View {
                 .padding(16)
             }
             .background(Theme.backgroundPrimary)
+            .accessibilityIdentifier("interface_details_sheet")
             .navigationTitle("Interface Details")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -357,6 +393,13 @@ struct NetworkStatusView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// Format an announce-rate value for display. RNS reports Hz; anything
+    /// below 0.01 renders as "<0.01 Hz" so a quiet interface (or one that has
+    /// not accumulated samples yet) doesn't claim a fabricated precise value.
+    private func formatHz(_ hz: Double) -> String {
+        hz < 0.01 ? "<0.01 Hz" : String(format: "%.2f Hz", hz)
     }
 
     private func detailRow(label: String, value: String) -> some View {

@@ -11,6 +11,20 @@ import Foundation
 import RNSAPI
 import SwiftUI
 
+// MARK: - Announce rates
+
+/// Per-interface announce-rate metrics from RNS `Interface.py`, read from the
+/// backend status poll. Frequencies stay 0 until RNS accumulates enough
+/// samples (`IC_DEQUE_MIN_SAMPLE`), which the UI renders as "<0.01 Hz".
+struct AnnounceRates: Equatable {
+    let incomingHz: Double
+    let outgoingHz: Double
+    /// Configured announce rate target (Hz); nil when the interface has none.
+    let targetHz: Int?
+    /// Announces currently held back by rate-limiting on this interface.
+    let heldCount: Int
+}
+
 // MARK: - Interface Info
 
 /// Snapshot of a single interface for display in the Network Status screen.
@@ -28,6 +42,8 @@ struct InterfaceInfo: Identifiable {
     let endpoint: String?
     /// True when RNS auto-connected this interface from a discovery announce.
     let isAutoconnect: Bool
+    /// Per-interface announce-rate metrics from the backend status poll.
+    let announceRates: AnnounceRates
 }
 
 // MARK: - Network Status ViewModel
@@ -38,6 +54,8 @@ struct InterfaceInfo: Identifiable {
 /// exposes them as observable state. Event-driven: refreshes once on init and then
 /// once per `NotificationObserver.networkStateChangedInApp` push (peer
 /// connect/disconnect, interface up/down) rather than polling on a timer.
+/// The Interface Details sheet is the one exception: it refreshes every 2 s
+/// while open, because announce counters advance without a state push.
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 final class NetworkStatusViewModel {
@@ -66,7 +84,8 @@ final class NetworkStatusViewModel {
 
     /// In-process observer token for `networkStateChangedInApp`. The NE pushes this
     /// on BLE/interface state change (peer connect/disconnect, interface up/down);
-    /// we refresh once per push instead of polling the NE on a timer.
+    /// we refresh once per push instead of polling the NE on a timer. The open
+    /// Interface Details sheet polls `refresh()` itself for its live rates.
     private var inProcessObserver: NSObjectProtocol?
 
     // MARK: - Init
@@ -142,8 +161,14 @@ final class NetworkStatusViewModel {
             let mappedState: InterfaceState = iface.online
                 ? .connected
                 : (err != nil ? .connectionFailed(underlying: err!) : .disconnected)
+            // Dynamically spawned peers (AutoInterfacePeer, BLEPeer) carry no
+            // config section, so their section_name is empty; several peers
+            // would then share one identity, and selecting any of them would
+            // resolve to the first. Their friendly name names the link
+            // (interface + address) and is stable and distinct per peer.
+            let rowID = iface.sectionName.isEmpty ? iface.name : iface.sectionName
             return InterfaceInfo(
-                id: iface.sectionName,
+                id: rowID,
                 name: iface.name,
                 type: typeName,
                 online: iface.online,
@@ -152,7 +177,13 @@ final class NetworkStatusViewModel {
                 peerAddress: addr,
                 lastErrorDescription: err,
                 endpoint: nil,
-                isAutoconnect: iface.isAutoconnect ?? false
+                isAutoconnect: iface.isAutoconnect ?? false,
+                announceRates: AnnounceRates(
+                    incomingHz: iface.incomingAnnounceFrequency,
+                    outgoingHz: iface.outgoingAnnounceFrequency,
+                    targetHz: iface.announceRateTarget,
+                    heldCount: iface.heldAnnounces
+                )
             )
         }
 

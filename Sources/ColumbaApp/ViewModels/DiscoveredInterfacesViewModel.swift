@@ -428,12 +428,9 @@ public final class DiscoveredInterfacesViewModel {
     /// stays set (button remains tappable to retry) and an error is
     /// surfaced. The user's in-flight control values are never clobbered.
     ///
-    /// AutoInterface (Greptile P1 #2): when an AutoInterface is configured the
-    /// in-process restart is REFUSED (its multicast sockets are not released
-    /// on detach, so same-process re-init is unsafe) and the settings take
-    /// effect on the next clean relaunch. That is a deliberate, safe
-    /// deferral — not a failure — so the pending flag is CLEARED and an
-    /// informational (non-alarming) message is shown instead of "failed".
+    /// A configured AutoInterface does not change this: the pinned RNS
+    /// fork's `AutoInterface.detach()` is a full teardown, so the in-process
+    /// restart runs and the change goes live without a relaunch.
     @MainActor
     public func applyDiscoverySettings() async {
         guard hasPendingDiscoveryChanges, !isRestarting else { return }
@@ -457,15 +454,6 @@ public final class DiscoveredInterfacesViewModel {
             // status dot, and the corrected `enabled` flag from the bridge.
             appliedDiscoverInterfacesEnabled = toEnable
             appliedAutoconnectCount = toCount
-        case .requiresRelaunch:
-            // Deliberate deferral: the settings were persisted and will be
-            // read at the next clean launch, so the pending flag is cleared
-            // (no retry loop) but an informational message tells the user
-            // when the change goes live.
-            appliedDiscoverInterfacesEnabled = toEnable
-            appliedAutoconnectCount = toCount
-            errorMessage = String(localized: "Saved. Applies on the next app relaunch because an AutoInterface is active.")
-            logger.info("Discovery settings persisted; in-process restart deferred (AutoInterface active)")
         case .skipped, .failed:
             // The backend is down / was never started: the settings were
             // persisted (so a future restart picks them up) but are NOT

@@ -396,6 +396,7 @@ struct InterfaceManagementScreen: View {
                 .clipShape(Circle())
                 .shadow(color: Theme.accentColor.opacity(0.4), radius: 8, y: 4)
         }
+        .accessibilityIdentifier("add_interface_button")
     }
 
     // MARK: - Message Card
@@ -1029,6 +1030,7 @@ struct AutoInterfaceConfigSheet: View {
                     }
                     .fontWeight(.semibold)
                     .disabled(!viewModel.isFormValid)
+                    .accessibilityIdentifier("auto_interface_add_button")
                 }
             }
             .toolbarBackground(Theme.backgroundPrimary, for: .navigationBar)

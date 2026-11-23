@@ -41,11 +41,14 @@ class UnifiedHostingContracts(unittest.TestCase):
         summary = source.split('private func refreshDiscoverySummary()')[1].split('guard let snapshot')[0]
         self.assertIn('await appServices.backend?.core.discovery()', summary)
 
-    def test_transport_toggle_restarts_node_and_reports_deferred_changes(self):
+    def test_transport_toggle_restarts_node_and_reports_outcomes(self):
         source = (ROOT / 'Sources/ColumbaApp/Views/Settings/SettingsView.swift').read_text()
         toggle = source.split('private func transportModeCard')[1].split('// MARK: - Background Transport Card')[0]
         self.assertIn('await appServices.restartPythonBackend()', toggle)
-        self.assertIn('case .requiresRelaunch:', toggle)
+        self.assertIn('case .applied: break', toggle)
+        self.assertIn('case .skipped:', toggle)
+        self.assertIn('case .failed:', toggle)
+        self.assertNotIn('requiresRelaunch', toggle)
         self.assertNotIn('setTransportEnabled(', toggle)
 
     def test_periodic_retrieval_is_owned_by_shared_node(self):
