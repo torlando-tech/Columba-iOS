@@ -161,8 +161,14 @@ final class NetworkStatusViewModel {
             let mappedState: InterfaceState = iface.online
                 ? .connected
                 : (err != nil ? .connectionFailed(underlying: err!) : .disconnected)
+            // Dynamically spawned peers (AutoInterfacePeer, BLEPeer) carry no
+            // config section, so their section_name is empty; several peers
+            // would then share one identity, and selecting any of them would
+            // resolve to the first. Their friendly name names the link
+            // (interface + address) and is stable and distinct per peer.
+            let rowID = iface.sectionName.isEmpty ? iface.name : iface.sectionName
             return InterfaceInfo(
-                id: iface.sectionName,
+                id: rowID,
                 name: iface.name,
                 type: typeName,
                 online: iface.online,
