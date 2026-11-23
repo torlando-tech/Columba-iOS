@@ -19,6 +19,12 @@ tags:
     visible:
       id: "screen_chats"
     timeout: 30000
+# The bottom bar mounts a few seconds after the chats content on a cold
+# launch, so wait for the tab itself instead of a single-shot tap.
+- extendedWaitUntil:
+    visible:
+      id: "tab_settings|gearshape.fill"
+    timeout: 30000
 - tapOn:
     id: "tab_settings|gearshape.fill"
 - extendedWaitUntil:

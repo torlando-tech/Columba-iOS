@@ -54,6 +54,8 @@ struct InterfaceInfo: Identifiable {
 /// exposes them as observable state. Event-driven: refreshes once on init and then
 /// once per `NotificationObserver.networkStateChangedInApp` push (peer
 /// connect/disconnect, interface up/down) rather than polling on a timer.
+/// The Interface Details sheet is the one exception: it refreshes every 2 s
+/// while open, because announce counters advance without a state push.
 @available(iOS 17.0, macOS 14.0, *)
 @Observable
 final class NetworkStatusViewModel {
@@ -82,7 +84,8 @@ final class NetworkStatusViewModel {
 
     /// In-process observer token for `networkStateChangedInApp`. The NE pushes this
     /// on BLE/interface state change (peer connect/disconnect, interface up/down);
-    /// we refresh once per push instead of polling the NE on a timer.
+    /// we refresh once per push instead of polling the NE on a timer. The open
+    /// Interface Details sheet polls `refresh()` itself for its live rates.
     private var inProcessObserver: NSObjectProtocol?
 
     // MARK: - Init

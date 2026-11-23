@@ -9,6 +9,17 @@
 import SwiftUI
 import RNSAPI
 
+// MARK: - Interface Details selection
+
+/// Identity for the Interface Details sheet. Stores only the id (plus the
+/// tap-time snapshot as a fallback) so the open sheet reads the latest
+/// snapshot for that interface instead of frozen tap-time values.
+private struct SelectedInterface: Identifiable {
+    let id: String
+    /// Used only if the interface leaves the list while the sheet is open.
+    let snapshot: InterfaceInfo
+}
+
 // MARK: - Network Status View
 
 /// Network Status screen showing all registered interfaces with live status.
@@ -23,7 +34,7 @@ struct NetworkStatusView: View {
     // MARK: - State
 
     @State private var viewModel: NetworkStatusViewModel
-    @State private var selectedInterface: InterfaceInfo?
+    @State private var selectedInterface: SelectedInterface?
     private let appServices: AppServices
 
     // MARK: - Init
@@ -50,8 +61,19 @@ struct NetworkStatusView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
-        .sheet(item: $selectedInterface) { info in
+        .sheet(item: $selectedInterface) { selected in
+            // Announce counters advance without a network-state push, so the
+            // open sheet refreshes itself and re-reads the live snapshot; the
+            // tap-time copy only covers an interface that has left the list.
+            let info = viewModel.interfaces.first { $0.id == selected.id } ?? selected.snapshot
+            let liveModel = viewModel
             interfaceDetailSheet(info)
+                .task(id: selected.id) {
+                    while !Task.isCancelled {
+                        await liveModel.refresh()
+                        try? await Task.sleep(for: .seconds(2))
+                    }
+                }
         }
     }
 
@@ -170,7 +192,7 @@ struct NetworkStatusView: View {
             } else {
                 ForEach(viewModel.interfaces) { info in
                     Button {
-                        selectedInterface = info
+                        selectedInterface = SelectedInterface(id: info.id, snapshot: info)
                     } label: {
                         interfaceRow(info)
                     }
