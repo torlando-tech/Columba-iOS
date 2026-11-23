@@ -429,6 +429,7 @@ struct SettingsView: View {
                     .background(Theme.accentColor)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                 }
+                .accessibilityIdentifier("settings_network_status")
 
                 // Manage Interfaces Button
                 Button(action: {
@@ -446,6 +447,7 @@ struct SettingsView: View {
                     .background(Theme.backgroundTertiary)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusMedium))
                 }
+                .accessibilityIdentifier("settings_manage_interfaces")
 
                 // BLE Connections Button
                 Button(action: {
@@ -506,8 +508,6 @@ struct SettingsView: View {
                     let outcome = await appServices.restartPythonBackend()
                     switch outcome {
                     case .applied: break
-                    case .requiresRelaunch:
-                        transportChangeNotice = "Transport Mode is saved. AutoInterface requires a fresh node process. Fully close and reopen Columba; in Background mode, stop and start Reticulum Network too."
                     case .skipped:
                         transportChangeNotice = "Transport Mode is saved and will apply when Reticulum starts."
                     case .failed:

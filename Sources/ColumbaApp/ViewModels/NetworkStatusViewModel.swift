@@ -11,6 +11,20 @@ import Foundation
 import RNSAPI
 import SwiftUI
 
+// MARK: - Announce rates
+
+/// Per-interface announce-rate metrics from RNS `Interface.py`, read from the
+/// backend status poll. Frequencies stay 0 until RNS accumulates enough
+/// samples (`IC_DEQUE_MIN_SAMPLE`), which the UI renders as "<0.01 Hz".
+struct AnnounceRates: Equatable {
+    let incomingHz: Double
+    let outgoingHz: Double
+    /// Configured announce rate target (Hz); nil when the interface has none.
+    let targetHz: Int?
+    /// Announces currently held back by rate-limiting on this interface.
+    let heldCount: Int
+}
+
 // MARK: - Interface Info
 
 /// Snapshot of a single interface for display in the Network Status screen.
@@ -28,6 +42,8 @@ struct InterfaceInfo: Identifiable {
     let endpoint: String?
     /// True when RNS auto-connected this interface from a discovery announce.
     let isAutoconnect: Bool
+    /// Per-interface announce-rate metrics from the backend status poll.
+    let announceRates: AnnounceRates
 }
 
 // MARK: - Network Status ViewModel
@@ -152,7 +168,13 @@ final class NetworkStatusViewModel {
                 peerAddress: addr,
                 lastErrorDescription: err,
                 endpoint: nil,
-                isAutoconnect: iface.isAutoconnect ?? false
+                isAutoconnect: iface.isAutoconnect ?? false,
+                announceRates: AnnounceRates(
+                    incomingHz: iface.incomingAnnounceFrequency,
+                    outgoingHz: iface.outgoingAnnounceFrequency,
+                    targetHz: iface.announceRateTarget,
+                    heldCount: iface.heldAnnounces
+                )
             )
         }
 
